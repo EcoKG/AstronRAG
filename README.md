@@ -168,6 +168,10 @@ npm run test:import       # 네이티브 이관
 npm run test:perf         # id 캐시·이력 상한·예약명
 ```
 
+## 웹 뷰어(읽기 전용)
+
+`npm run viewer:export`로 볼트(`BIGBRAIN_VAULT`, 없으면 `./vault`)의 `memories/`·`archive/` 원문을 `viewer/data.js`로 내보낸 뒤 `viewer/index.html`을 더블클릭해 여십시오. 서버나 빌드는 필요 없습니다. 전체 목록, 검색(title·description·tags·본문), type·status·project 필터, 본문 렌더, 위키링크·links·supersedes·derived_from 이동을 볼 수 있고 편집 기능은 없습니다. `data.js`가 없으면 범례의 "볼트 폴더 열기"로 볼트 폴더를 골라 같은 파서로 읽습니다. 3D 장면과 글꼴은 CDN에서 받으므로 오프라인에서는 빠지지만 목록과 상세는 그대로 동작합니다. `viewer/data.js`에는 개인 기억이 들어 있으므로 `.gitignore`로 커밋에서 제외합니다.
+
 ## 네이티브 메모리에서 이관
 
 Claude Code의 프로젝트별 메모리(`~/.claude/projects/<슬러그>/memory/*.md`)를 볼트로 옮깁니다.

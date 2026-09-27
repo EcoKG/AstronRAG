@@ -1,0 +1,891 @@
+<!doctype html><html><head><meta charset="utf8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>BigBrain Neural</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans+KR:wght@400;500;600&amp;family=Instrument+Serif&amp;display=swap">
+<style>
+  :root {
+    color-scheme: dark;
+    --void: #07090d; --void-raised: #0f141b; --void-line: #1f2833;
+    --ink: #e4eaf1; --ink-muted: #8a97a8;
+    --episodic: #e69f00; --semantic: #56b4e9; --procedural: #2fc59a; --preference: #d98ab8;
+    --signal: #f5f1e0; --dormant: #56606f; --link: #3d6f8f;
+    --font-display: "Instrument Serif", "Noto Serif KR", Georgia, serif;
+    --font-sans: "IBM Plex Sans KR", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px; --space-8: 32px;
+    --radius-sm: 4px; --radius-md: 10px; --radius-pill: 999px;
+    --edge: var(--space-6);
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--void); color: var(--ink); font: 14px/22px var(--font-sans); overflow: hidden; -webkit-font-smoothing: antialiased; }
+  #scene { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  #scene.dragging { cursor: grabbing; }
+  #scene.pointing { cursor: pointer; }
+
+  .panel { position: fixed; background: color-mix(in srgb, var(--void-raised) 88%, transparent); background: rgba(15,20,27,.88); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--void-line); border-radius: var(--radius-md); z-index: 2; }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .label { font: 500 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
+
+  /* head: title + recall */
+  #head { top: calc(var(--edge) + env(safe-area-inset-top, 0px)); left: var(--edge); width: 340px; max-width: calc(100% - 2 * var(--edge)); padding: var(--space-4); display: grid; gap: var(--space-3); }
+  #head h1 { margin: 0; font: 400 40px/40px var(--font-display); letter-spacing: -.01em; text-wrap: balance; }
+  #head h1 em { color: var(--ink-muted); font-style: italic; }
+  .stats { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); color: var(--ink-muted); font-size: 12px; line-height: 18px; }
+  .stats b { color: var(--ink); font-weight: 500; }
+  .src { display: inline-flex; align-items: center; gap: var(--space-1); }
+  .src::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--procedural); }
+  .src.sample::before { background: var(--episodic); }
+  form.recall { display: flex; gap: var(--space-2); }
+  .recall input { flex: 1; min-width: 0; background: var(--void); color: var(--ink); border: 1px solid var(--void-line); border-radius: var(--radius-sm); padding: 7px 10px; font: 14px/20px var(--font-sans); }
+  .recall input::placeholder { color: var(--ink-muted); }
+  button { font: 500 13px/18px var(--font-sans); color: var(--ink); background: var(--void); border: 1px solid var(--void-line); border-radius: var(--radius-sm); padding: 7px 12px; cursor: pointer; }
+  button:hover { border-color: var(--ink-muted); }
+  :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+  #results { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 30vh; overflow-y: auto; }
+  #results:empty { display: none; }
+  #inspector.idle-mobile { display: none; }
+  #results li button { width: 100%; text-align: left; display: grid; grid-template-columns: 10px 1fr auto; gap: var(--space-2); align-items: baseline; border: 0; background: transparent; padding: 6px 4px; border-radius: var(--radius-sm); font-weight: 400; }
+  #results li button:hover { background: var(--void); }
+  #results .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #results .s { font: 12px var(--font-mono); color: var(--ink-muted); }
+  #results .via { color: var(--ink-muted); font-size: 12px; }
+  .note { margin: 0; color: var(--ink-muted); font-size: 12px; line-height: 18px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+
+  /* legend + filters */
+  #legend { left: var(--edge); bottom: calc(var(--edge) + env(safe-area-inset-bottom, 0px)); width: 340px; max-width: calc(100% - 2 * var(--edge)); padding: var(--space-3) var(--space-4) var(--space-4); }
+  #legend summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: center; padding-block: 4px; }
+  #legend summary::-webkit-details-marker { display: none; }
+  #legend summary::after { content: "접기"; font: 12px var(--font-sans); color: var(--ink-muted); }
+  #legend:not([open]) summary::after { content: "펼치기"; }
+  .legend-body { display: grid; gap: var(--space-3); margin-top: var(--space-2); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; border-radius: var(--radius-pill); padding: 3px 10px 3px 8px; font: 12px/18px var(--font-mono); background: transparent; }
+  .chip[aria-pressed="false"] { opacity: .42; }
+  .chip .n { color: var(--ink-muted); }
+  .enc { display: grid; grid-template-columns: auto 1fr; gap: 4px var(--space-3); font-size: 12px; line-height: 18px; color: var(--ink-muted); margin: 0; }
+  .enc dt { font: 500 11px/18px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink); }
+  .enc dd { margin: 0; }
+  .row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+  select { font: 13px/18px var(--font-sans); color: var(--ink); background: var(--void); border: 1px solid var(--void-line); border-radius: var(--radius-sm); padding: 6px 8px; }
+  input[type=file] { display: none; }
+
+  /* inspector */
+  #inspector { top: calc(var(--edge) + env(safe-area-inset-top, 0px)); right: var(--edge); bottom: calc(var(--edge) + env(safe-area-inset-bottom, 0px)); width: 360px; display: flex; flex-direction: column; overflow: hidden; }
+  #inspector .scroll { overflow-y: auto; padding: var(--space-4); display: grid; gap: var(--space-4); align-content: start; }
+  .ins-top { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
+  .type-tag { display: inline-flex; align-items: center; gap: 6px; font: 500 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+  .status-tag { font: 11px/16px var(--font-mono); color: var(--ink-muted); border: 1px solid var(--void-line); border-radius: var(--radius-pill); padding: 1px 8px; }
+  #inspector h2 { margin: 0; font: 600 18px/26px var(--font-sans); text-wrap: balance; }
+  #inspector .desc { margin: 4px 0 0; color: var(--ink-muted); }
+  .slug { font: 12px/18px var(--font-mono); color: var(--ink-muted); word-break: break-all; }
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3) var(--space-4); margin: 0; }
+  .metrics div { display: grid; gap: 2px; }
+  .metrics dd { margin: 0; font: 500 20px/24px var(--font-mono); font-variant-numeric: tabular-nums; }
+  .metrics dd small { font-size: 12px; color: var(--ink-muted); font-weight: 400; }
+  .bar { height: 3px; background: var(--void-line); border-radius: 2px; overflow: hidden; margin-top: 4px; }
+  .bar i { display: block; height: 100%; background: var(--signal); }
+  .flags { display: grid; gap: 6px; }
+  .flag { font-size: 12px; line-height: 18px; padding: 6px 10px; border: 1px solid var(--void-line); border-radius: var(--radius-sm); color: var(--ink); }
+  .flag b { font: 500 11px var(--font-mono); letter-spacing: .06em; color: var(--episodic); margin-right: 6px; }
+  .sec { display: grid; gap: var(--space-2); }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tags span { font: 12px/18px var(--font-mono); color: var(--ink-muted); border: 1px solid var(--void-line); border-radius: var(--radius-pill); padding: 1px 8px; }
+  .nlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .nlist button { width: 100%; text-align: left; display: flex; gap: var(--space-2); align-items: center; border: 0; background: transparent; padding: 5px 4px; font-weight: 400; }
+  .nlist button:hover { background: var(--void); }
+  .nlist .k { margin-left: auto; font: 11px var(--font-mono); color: var(--ink-muted); }
+  .nlist .missing { color: var(--ink-muted); font: 12px var(--font-mono); padding: 5px 4px; display: block; }
+  .body { white-space: pre-wrap; font-size: 13px; line-height: 21px; color: var(--ink); background: var(--void); border: 1px solid var(--void-line); border-radius: var(--radius-sm); padding: var(--space-3); margin: 0; font-family: var(--font-sans); overflow-x: auto; }
+  .hist { list-style: none; margin: 0; padding: 0; font: 12px/19px var(--font-mono); color: var(--ink-muted); }
+  .empty-ins { color: var(--ink-muted); }
+  .empty-ins h2 { color: var(--ink); }
+  .close { padding: 4px 10px; }
+
+  #labels { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+  .nlabel { position: absolute; left: 0; top: 0; transform: translate(-50%, -100%); white-space: nowrap; font: 12px/16px var(--font-sans); color: var(--ink); background: rgba(7,9,13,.72); border: 1px solid var(--void-line); padding: 2px 8px; border-radius: var(--radius-pill); max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+  .nlabel.strong { border-color: var(--signal); }
+  #hint { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--edge) + env(safe-area-inset-bottom, 0px)); font-size: 12px; color: var(--ink-muted); z-index: 1; pointer-events: none; white-space: nowrap; }
+  #drop { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; background: rgba(7,9,13,.8); border: 2px dashed var(--signal); font: 400 32px/40px var(--font-display); }
+  #fail { position: fixed; inset: 0; display: grid; place-items: center; padding: var(--space-6); text-align: center; color: var(--ink-muted); z-index: 0; }
+
+  @media (max-width: 1100px) { #hint { display: none; } }
+  @media (max-width: 760px) {
+    :root { --edge: var(--space-4); }
+    #head { width: auto; right: var(--edge); }
+    #head h1 { font-size: 30px; line-height: 32px; }
+    #results { max-height: 22vh; }
+    #legend { width: auto; right: var(--edge); }
+    #inspector { top: auto; left: var(--edge); width: auto; max-height: 52vh; z-index: 3; }
+  }
+</style>
+
+<canvas id="scene" aria-label="기억 네트워크 3D 뷰"></canvas>
+<div id="labels" aria-hidden="true"></div>
+<div id="fail" hidden="">WebGL을 시작하지 못했습니다. 하드웨어 가속을 켠 브라우저에서 다시 열어 주십시오.</div>
+
+<section id="head" class="panel" aria-label="볼트와 회상">
+  <h1>BigBrain <em>Neural</em></h1>
+  <div class="stats" id="stats"></div>
+  <form class="recall" id="recallForm" role="search">
+    <label for="q" class="label" hidden="">recall 질의</label>
+    <input id="q" type="search" placeholder="recall 질의 — 예: 배포 장애" autocomplete="off">
+    <button type="submit">회상</button>
+  </form>
+  <ol id="results" aria-live="polite"></ol>
+</section>
+
+<details id="legend" class="panel" open="">
+  <summary><span class="label">범례 · 필터</span></summary>
+  <div class="legend-body">
+    <div class="chips" id="typeChips"></div>
+    <div class="chips" id="statusChips"></div>
+    <dl class="enc">
+      <dt>크기</dt><dd>storage_strength (저장강도 n)</dd>
+      <dt>밝기</dt><dd>기저활성 B → 인출강도 σ(B)</dd>
+      <dt>링</dt><dd>confidence, 0.5 미만은 점선</dd>
+      <dt>펄스</dt><dd>발화 · derived_from 방향 · 회상 확산</dd>
+    </dl>
+    <div class="row">
+      <label for="proj" class="label">project</label>
+      <select id="proj"></select>
+    </div>
+    <div class="row">
+      <button type="button" id="btnFolder">볼트 폴더 열기</button>
+      <button type="button" id="btnFiles">.md / .json</button>
+      <button type="button" id="btnSample">샘플</button>
+      <input id="fileFolder" type="file" webkitdirectory="" multiple="">
+      <input id="fileFiles" type="file" accept=".md,.json" multiple="">
+    </div>
+    <p class="note" id="loadNote">vault 폴더를 열거나 .md 파일을 화면에 끌어다 놓으면 실제 기억으로 바뀝니다. 파일은 브라우저 안에서만 읽습니다.</p>
+  </div>
+</details>
+
+<aside id="inspector" class="panel" aria-label="기억 상세"><div class="scroll" id="insBody"></div></aside>
+<div id="hint">드래그 회전 · 휠 확대 · 우클릭 이동 · 노드 클릭 선택 · / 검색 · Esc 해제</div>
+<div id="drop" hidden="">여기에 놓으면 볼트를 불러옵니다</div>
+
+<script>
+// [slug, title, type, tags, project|null, confidence, storage_strength, ageDays, lastReinforcedDays, links, description, extra]
+const SAMPLE_ROWS = [
+  ["user-java-primary","사용자는 Java 개발자이며 여러 언어를 다룬다","preference",["java","사용자"],null,0.95,7,140,3,["spring-boot-default-stack","java-record-dto","answer-style-direct"],"주 언어는 Java. Kotlin, TypeScript, Python도 필요에 따라 사용한다."],
+  ["answer-style-direct","답변은 돌려 말하지 않고 존댓말로","preference",["응답스타일"],null,0.9,9,150,1,["korean-response","search-before-guess"],"공적·전문적 문체, 실질적인 내용 우선. 반말 금지."],
+  ["korean-response","응답은 한국어로 작성한다","preference",["응답스타일","한국어"],null,0.95,8,150,2,["answer-style-direct"],"코드 주석과 커밋 본문도 한국어를 기본으로 한다."],
+  ["search-before-guess","에러 질문은 추측 전에 웹 검색부터","procedural",["디버깅","검색"],null,0.85,5,90,6,["answer-style-direct","flaky-test-2026-06"],"'~일 수 있습니다' 나열 금지. 검색 결과가 없을 때만 자체 분석."],
+  ["spring-boot-default-stack","기본 스택: Spring Boot 3.3 + Gradle Kotlin DSL","semantic",["spring","gradle"],null,0.85,6,120,9,["user-java-primary","order-api-structure","java-version-21","lombok-usage"],"새 서비스는 Spring Boot 3.3, Gradle Kotlin DSL, JUnit 5로 시작한다."],
+  ["lombok-usage","엔티티에 @Setter를 쓰지 않는다","preference",["lombok","jpa","코딩스타일"],null,0.8,4,100,14,["java-record-dto","spring-boot-default-stack","code-review-strict"],"엔티티 상태 변경은 의도가 드러나는 메서드로만 한다."],
+  ["java-record-dto","DTO는 Java record로 작성한다","preference",["java","dto","코딩스타일"],null,0.85,5,95,8,["lombok-usage","user-java-primary","api-error-format"],"요청·응답 DTO는 record. 검증 애노테이션은 compact constructor 대신 필드에 둔다."],
+  ["code-review-strict","PR 리뷰에서 null 안전성을 가장 먼저 본다","preference",["코드리뷰"],null,0.75,3,80,20,["lombok-usage","typescript-strict"],"Optional 반환, @NonNull 경계, 컬렉션은 빈 값 반환."],
+  ["typescript-strict","TypeScript는 strict 모드를 선호한다","preference",["typescript","코딩스타일"],null,0.75,2,70,35,["code-review-strict","bbm-project-structure"],"코드 리뷰에서 항상 strict: true 설정을 요구했다."],
+  ["timezone-seoul","사용자 시간대는 Asia/Seoul","semantic",["환경"],null,0.95,3,150,40,["weekly-review-habit"],"일정·로그 시각은 KST로 해석한다."],
+  ["mcp-server-list","사용 중인 MCP 서버 목록","semantic",["mcp","도구"],null,0.8,4,60,5,["bbm-project-structure","bbm-recall-trigger"],"BigBrainMemory, Context7, Notion, Google Drive."],
+  ["old-editor-vim","편집기는 Vim을 쓴다","preference",["편집기"],null,0.4,2,300,210,["intellij-keymap"],"과거 선호.",{status:"archived",archive_reason:"IntelliJ로 완전히 전환했다고 확인됨"}],
+  ["intellij-keymap","IntelliJ는 macOS 기본 키맵 + IdeaVim","preference",["편집기","intellij"],"dotfiles",0.85,4,200,12,["zsh-alias-gradle"],"IdeaVim 설정은 dotfiles/.ideavimrc에서 관리."],
+  ["weekly-review-habit","금요일 오후에 주간 회고를 쓴다","episodic",["습관"],null,0.6,1,110,110,[],"한 번 언급된 습관. 이후 재확인된 적 없음."],
+  ["docker-compose-local","로컬 인프라는 docker compose로 띄운다","procedural",["docker","로컬환경"],null,0.8,4,85,10,["order-api-db-postgres","kafka-topic-naming","test-testcontainers"],"postgres, redis, kafka를 compose.local.yml 하나로 관리."],
+  ["incident-postmortem-template","장애 회고 템플릿","procedural",["장애","문서"],null,0.8,3,75,18,["deploy-incident-2026-08-14","deploy-incident-2026-09-02","kafka-consumer-lag-2026-07"],"타임라인 → 원인 → 영향 → 재발 방지 → 액션 아이템 순서."],
+  ["flaky-test-2026-06","6월: 시간 의존 테스트가 간헐적으로 실패","episodic",["테스트","장애"],null,0.7,1,105,105,["search-before-guess"],"LocalDate.now() 직접 호출이 원인. Clock 주입으로 해결."],
+  ["meeting-2026-05-api-versioning","5월 회의: API 버전 정책 논의","episodic",["api","회의"],null,0.7,1,135,135,["api-error-format"],"URI 버전(/v1) 유지, 헤더 버전은 도입하지 않기로 함."],
+  ["api-versioning-rule","API 버전은 URI 경로(/v1)로만 표기","semantic",["api"],null,0.8,3,130,25,["api-error-format","order-api-structure"],"하위 호환이 깨질 때만 메이저 버전을 올린다.",{derived_from:["meeting-2026-05-api-versioning"]}],
+  ["api-error-format","에러 응답은 RFC 9457 problem+json","semantic",["api","에러"],null,0.85,5,125,7,["java-record-dto","api-versioning-rule"],"type, title, status, detail, instance + errorCode 확장 필드."],
+
+  ["order-api-structure","order-api 모듈 구조(헥사고날)","semantic",["아키텍처","order-api"],"order-api",0.85,8,120,2,["spring-boot-default-stack","order-status-enum","payment-webhook-idempotency","order-api-db-postgres","jpa-fetch-strategy","api-versioning-rule"],"domain / application / adapter-in / adapter-out 4개 모듈."],
+  ["order-api-build-gradle","order-api 빌드 명령","procedural",["gradle","빌드"],"order-api",0.9,6,110,4,["zsh-alias-gradle","test-testcontainers"],"./gradlew clean build. 통합테스트는 ./gradlew integrationTest."],
+  ["order-api-db-postgres","order-api DB: PostgreSQL 15 + Flyway","semantic",["db","postgres"],"order-api",0.9,5,118,6,["flyway-naming-rule","docker-compose-local","order-api-structure"],"스키마 변경은 Flyway 마이그레이션으로만."],
+  ["flyway-naming-rule","Flyway 파일명 규칙","procedural",["db","flyway"],"order-api",0.85,4,100,5,["order-api-db-postgres","deploy-incident-2026-08-14"],"V{yyyyMMddHHmm}__설명.sql. 적용된 파일은 절대 수정하지 않는다."],
+  ["order-api-deploy-procedure","order-api 배포 절차","procedural",["배포","ecs"],"order-api",0.85,6,100,3,["deploy-checklist","order-api-build-gradle"],"GitHub Actions → ECR 푸시 → ECS 롤링 배포. 수동 승인 1단계."],
+  ["deploy-incident-2026-08-14","8/14 배포 롤백: Flyway 체크섬 불일치","episodic",["배포","장애","flyway"],"order-api",0.9,2,45,30,["flyway-naming-rule","incident-postmortem-template"],"이미 적용된 V2026… 파일을 수정해 validate 실패. 롤백 후 새 버전 파일로 재작성."],
+  ["deploy-incident-2026-09-02","9/2 ECS 태스크 재시작 반복","episodic",["배포","장애","ecs"],"order-api",0.9,2,26,12,["incident-postmortem-template","order-api-deploy-procedure"],"actuator 헬스체크 경로 변경을 타깃 그룹에 반영하지 않음."],
+  ["deploy-checklist","배포 전 체크리스트","semantic",["배포"],"order-api",0.85,3,11,2,["order-api-deploy-procedure"],"마이그레이션 파일 불변 확인, 헬스체크 경로 대조, 롤백 태그 확인.",{derived_from:["deploy-incident-2026-08-14","deploy-incident-2026-09-02"]}],
+  ["jpa-n-plus-one-fix","주문 목록 API N+1 문제 해결","episodic",["jpa","성능"],"order-api",0.85,2,60,40,["jpa-fetch-strategy"],"OrderItem 지연 로딩으로 N+1 발생. fetch join + 페이징은 @BatchSize로 대체."],
+  ["jpa-fetch-strategy","JPA 연관관계는 LAZY 기본, 조회는 전용 쿼리","semantic",["jpa"],"order-api",0.85,4,55,9,["order-api-structure","lombok-usage"],"컬렉션 fetch join은 페이징과 함께 쓰지 않는다.",{derived_from:["jpa-n-plus-one-fix"]}],
+  ["order-status-enum","주문 상태 전이 규칙","semantic",["도메인","order-api"],"order-api",0.9,7,115,1,["order-api-structure","payment-webhook-idempotency","kafka-topic-naming"],"CREATED → PAID → SHIPPED → DELIVERED, CANCELED는 SHIPPED 이전에만."],
+  ["payment-webhook-idempotency","결제 웹훅은 idempotency key로 중복 차단","semantic",["결제","멱등성"],"order-api",0.85,4,90,15,["order-status-enum","redis-cache-ttl"],"PG의 transaction_id를 키로 unique 제약 + 24시간 보관."],
+  ["kafka-topic-naming","Kafka 토픽 이름 규칙","procedural",["kafka"],"order-api",0.8,3,95,22,["order-status-enum","kafka-consumer-lag-2026-07"],"{도메인}.events.v{n} 예: order.events.v1"],
+  ["kafka-consumer-lag-2026-07","7월 컨슈머 랙 폭증","episodic",["kafka","장애"],"order-api",0.8,1,70,70,["kafka-topic-naming","incident-postmortem-template"],"max.poll.records 500 + 외부 API 호출로 poll 간격 초과, 리밸런싱 반복."],
+  ["test-testcontainers","통합 테스트는 Testcontainers 사용","procedural",["테스트"],"order-api",0.85,4,100,11,["docker-compose-local","order-api-build-gradle"],"@ServiceConnection으로 postgres, kafka 컨테이너 연결."],
+  ["java-version-17","order-api는 Java 17","semantic",["java"],"order-api",0.6,3,160,150,["virtual-threads-pinning"],"LTS 17 사용.",{status:"superseded",superseded_by:"java-version-21"}],
+  ["java-version-21","order-api는 Java 21 + 가상 스레드","semantic",["java"],"order-api",0.9,5,80,5,["spring-boot-default-stack","virtual-threads-pinning"],"spring.threads.virtual.enabled=true.",{supersedes:"java-version-17"}],
+  ["virtual-threads-pinning","가상 스레드 pinning 이슈","episodic",["java","성능"],"order-api",0.75,2,50,33,["java-version-21"],"synchronized 블록 안의 JDBC 호출이 캐리어 스레드를 고정. ReentrantLock으로 교체."],
+  ["redis-cache-ttl","상품 캐시 TTL은 10분","semantic",["redis","캐시"],"order-api",0.45,1,65,65,["payment-webhook-idempotency"],"회의에서 구두로 들은 값. 코드와 대조 필요."],
+
+  ["bbm-project-structure","BigBrainMemory 코드 구조","semantic",["bigbrainmemory","아키텍처"],"bigbrainmemory",0.9,6,72,2,["bbm-activation-formula","bbm-spacing-rule","bbm-recall-trigger","typescript-strict","mcp-server-list"],"src/index.ts(MCP), store.ts(회상·강화), vault.ts(파일), types.ts."],
+  ["bbm-activation-formula","기저활성은 ACT-R 하이브리드 근사","semantic",["bigbrainmemory","act-r"],"bigbrainmemory",0.9,5,70,4,["bbm-spacing-rule","bbm-project-structure"],"B = ln((n−1)·L^−d/(1−d) + t_last^−d), d=0.5."],
+  ["bbm-spacing-rule","강화 간격은 확장 간격","semantic",["bigbrainmemory","간격효과"],"bigbrainmemory",0.85,4,68,6,["bbm-activation-formula"],"max(10분, 0.1 · 기억의 나이 / n)."],
+  ["bbm-no-embedding-decision","7/19 임베딩 도입 기각","episodic",["bigbrainmemory","검색"],"bigbrainmemory",0.9,2,71,50,["bbm-project-structure"],"순수 의미 격차 17건 중 3건, 비용 512MB·+1초. 한↔영 쌍 오작동."],
+  ["bbm-recall-trigger","회상 트리거 3중 채널 설정","procedural",["bigbrainmemory","훅"],"bigbrainmemory",0.85,4,60,8,["bbm-project-structure","mcp-server-list"],"서버 instructions + 세션 훅 + 네이티브 MEMORY.md 브리지."],
+  ["bbm-test-command","BigBrainMemory 테스트 실행","procedural",["bigbrainmemory","테스트"],"bigbrainmemory",0.9,3,66,16,["bbm-project-structure"],"npm test — 스모크 1종 + 회귀 14종."],
+  ["bbm-vault-path","볼트 위치는 BIGBRAIN_VAULT로 지정","procedural",["bigbrainmemory","설정"],"bigbrainmemory",0.85,3,64,20,["obsidian-graph-view"],"미지정 시 <저장소>/vault."],
+  ["obsidian-graph-view","Obsidian 그래프 뷰로 연상 네트워크 확인","semantic",["obsidian"],"bigbrainmemory",0.8,2,60,28,["bbm-vault-path","bbm-neural-viz-idea"],"archive/ 폴더는 필터로 제외해야 활성 기억만 보인다."],
+  ["bbm-neural-viz-idea","기억을 3D 뉴런 네트워크로 시각화","episodic",["bigbrainmemory","시각화"],"bigbrainmemory",0.8,1,0.05,0.05,["obsidian-graph-view","bbm-activation-formula"],"노드=기억, 시냅스=위키링크. 활성값을 밝기로."],
+
+  ["zsh-alias-gradle","zsh alias: gw = ./gradlew","procedural",["zsh","gradle"],"dotfiles",0.9,5,190,7,["order-api-build-gradle","intellij-keymap"],"gwb = ./gradlew build, gwt = ./gradlew test."],
+  ["git-commit-convention","커밋은 Conventional Commits, 본문은 한국어","procedural",["git"],"dotfiles",0.85,5,180,9,["git-rebase-preference","korean-response"],"feat/fix/refactor/test/chore 접두어."],
+  ["git-rebase-preference","브랜치 정리는 merge 대신 rebase","preference",["git"],"dotfiles",0.8,3,170,26,["git-commit-convention"],"공유 브랜치는 force-push 금지."],
+  ["brew-bundle","새 맥 세팅은 Brewfile로","procedural",["mac","설정"],"dotfiles",0.8,1,200,200,[],"brew bundle --file=dotfiles/Brewfile"]
+];
+
+function buildSample(now) {
+  const DAY = 864e5;
+  const iso = (d) => new Date(now - d * DAY).toISOString();
+  return SAMPLE_ROWS.map(([slug, title, type, tags, project, confidence, n, age, last, links, description, extra = {}]) => {
+    const created = iso(age), reinforced = iso(Math.min(last, age));
+    const r = {
+      id: "mem-" + slug.slice(0, 12), slug, title, description, type, tags, confidence,
+      storage_strength: n, status: "active", created, updated: iso(Math.min(age, last + 1 > age ? age : last + 1)),
+      last_accessed: iso(Math.max(0.02, last * 0.6)), last_reinforced: reinforced,
+      access_count: Math.round(n * 2.4 + (age % 5)), links,
+      history: [created.slice(0, 10) + ": created (source: 대화)"], project: project || undefined,
+      source: "대화", ...extra,
+    };
+    if (n > 1) r.history.push(reinforced.slice(0, 10) + ": reinforced (n=" + n + ")");
+    if (extra.status === "archived") r.history.push(iso(40).slice(0, 10) + ": forgotten — " + extra.archive_reason);
+    if (extra.status === "superseded") r.history.push(iso(80).slice(0, 10) + ": superseded by " + extra.superseded_by);
+    r.body = description + (links.length ? "\n\n## 연관 기억\n" + links.map((l) => "- [[" + l + "]]").join("\n") : "");
+    return r;
+  });
+}
+
+</script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+
+window.__bbStarted = true;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// ── Memory model (mirrors bigbrainmemory/src/store.ts) ────────────────────────
+const TYPES = ["episodic", "semantic", "procedural", "preference"];
+const TYPE_KO = { episodic: "일화", semantic: "의미", procedural: "절차", preference: "선호" };
+const STATUSES = ["active", "superseded", "archived"];
+const css = getComputedStyle(document.documentElement);
+const tok = (n) => new THREE.Color(css.getPropertyValue("--" + n).trim());
+const COL = { episodic: tok("episodic"), semantic: tok("semantic"), procedural: tok("procedural"), preference: tok("preference"), signal: tok("signal"), dormant: tok("dormant"), link: tok("link") };
+const HOUR = 36e5, DECAY_D = 0.5;
+const RETRIEVAL_THRESHOLD = -0.7 - Math.log(1 / (1 - 0.5));
+const HARD_RETRIEVAL = 0.5 - Math.log(1 / (1 - 0.5));
+function activation(m, now) {
+  const n = Math.max(1, m.storage_strength || 1);
+  const age = now - Date.parse(m.created), since = now - Date.parse(m.last_reinforced || m.created);
+  const L = Math.max(isFinite(age) ? age : 6e4, 6e4) / HOUR;
+  const raw = isFinite(since) ? Math.min(since, age) : age;
+  const tLast = Math.max(isFinite(raw) ? raw : 6e4, 6e4) / HOUR;
+  const tail = ((n - 1) * L ** -DECAY_D) / (1 - DECAY_D);
+  return Math.log(tail + tLast ** -DECAY_D);
+}
+const sigma = (B) => 1 / (1 + Math.exp(-(B - RETRIEVAL_THRESHOLD)));
+
+// ── Vault parsing ─────────────────────────────────────────────────────────────
+function unquote(v) {
+  v = v.trim();
+  if (v.startsWith("'") && v.endsWith("'") && v.length >= 2) return v.slice(1, -1).replace(/''/g, "'");
+  if (v.startsWith('"') && v.endsWith('"')) { try { return JSON.parse(v); } catch { return v.slice(1, -1); } }
+  return v;
+}
+function parseYaml(text) {
+  const out = {}, lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^([A-Za-z_][\w-]*):\s?(.*)$/);
+    if (!m) continue;
+    const key = m[1]; let val = m[2].trim();
+    if (val === "" || /^[>|][-+]?$/.test(val)) {
+      const block = /^[>|]/.test(val); const items = []; const buf = [];
+      while (i + 1 < lines.length && (/^\s+/.test(lines[i + 1]) || lines[i + 1].trim() === "")) {
+        const nx = lines[++i];
+        const li = nx.match(/^\s*-\s+(.*)$/);
+        if (!block && li) items.push(unquote(li[1])); else if (nx.trim()) buf.push(nx.trim());
+      }
+      out[key] = block ? buf.join(val.startsWith(">") ? " " : "\n") : items.length ? items : (buf.length ? unquote(buf.join(" ")) : "");
+    } else if (val === "[]") out[key] = [];
+    else if (/^\[.*\]$/.test(val)) out[key] = val.slice(1, -1).split(",").map((s) => unquote(s)).filter(Boolean);
+    else out[key] = unquote(val);
+  }
+  return out;
+}
+function normalize(raw, slugHint) {
+  const g = (a, b) => raw[a] ?? raw[b];
+  const arr = (v) => Array.isArray(v) ? v.map(String) : v ? [String(v)] : [];
+  const slug = String(raw.slug || slugHint || raw.id || "").replace(/\.md$/, "");
+  const status = STATUSES.includes(raw.status) ? raw.status : "active";
+  const type = TYPES.includes(raw.type) ? raw.type : "semantic";
+  const created = String(g("created", "createdAt") || new Date().toISOString());
+  return {
+    id: String(raw.id || slug), slug, title: String(raw.title || slug), description: String(raw.description || ""),
+    type, tags: arr(raw.tags), confidence: Math.max(0, Math.min(1, parseFloat(raw.confidence ?? 0.7) || 0)),
+    storage_strength: parseFloat(g("storage_strength", "storageStrength") ?? 1) || 1, status,
+    created, updated: String(raw.updated || created), last_accessed: String(g("last_accessed", "lastAccessed") || created),
+    last_reinforced: String(g("last_reinforced", "lastReinforced") || created),
+    access_count: parseInt(g("access_count", "accessCount") ?? 0) || 0,
+    source: raw.source ? String(raw.source) : undefined, project: raw.project ? String(raw.project) : undefined,
+    links: arr(raw.links), derived_from: arr(g("derived_from", "derivedFrom")),
+    supersedes: g("supersedes") ? String(raw.supersedes) : undefined, superseded_by: g("superseded_by", "supersededBy") ? String(g("superseded_by", "supersededBy")) : undefined,
+    archive_reason: g("archive_reason", "archiveReason") ? String(g("archive_reason", "archiveReason")) : undefined,
+    history: arr(raw.history), body: String(raw.body || ""),
+  };
+}
+function parseMarkdown(name, text) {
+  const m = text.match(/^﻿?---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!m) return null;
+  const fm = parseYaml(m[1]); fm.body = m[2].trim();
+  if (!fm.title && !fm.id) return null;
+  const rec = normalize(fm, name.split("/").pop().replace(/\.md$/, ""));
+  for (const w of rec.body.matchAll(/\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/g)) { const s = w[1].trim(); if (!rec.links.includes(s)) rec.links.push(s); }
+  return rec;
+}
+async function readFiles(files) {
+  const recs = []; let skipped = 0;
+  for (const f of files) {
+    const path = f.webkitRelativePath || f.relPath || f.name;
+    if (/(^|\/)(revisions|quarantine|\.obsidian|\.git)\//.test(path) || /(^|\/)MEMORY\.md$/.test(path)) { skipped++; continue; }
+    const text = await f.text();
+    if (/\.json$/i.test(path)) {
+      try {
+        const j = JSON.parse(text);
+        const list = Array.isArray(j) ? j : j.memories || j.results?.map((r) => r.record || r) || [];
+        list.forEach((r) => recs.push(normalize(r, r.slug)));
+      } catch { skipped++; }
+    } else if (/\.md$/i.test(path)) {
+      const r = parseMarkdown(path, text); r ? recs.push(r) : skipped++;
+    }
+  }
+  const bySlug = new Map(); recs.forEach((r) => bySlug.set(r.slug, r));
+  return { recs: [...bySlug.values()], skipped };
+}
+
+// ── Three.js scene ────────────────────────────────────────────────────────────
+const canvas = $("scene");
+let renderer;
+try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" }); }
+catch (e) { $("fail").hidden = false; throw e; }
+const PR = Math.min(devicePixelRatio || 1, 2);
+renderer.setPixelRatio(PR);
+renderer.setClearColor(new THREE.Color("#07090d"), 1);
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x07090d, 0.0015);
+const camera = new THREE.PerspectiveCamera(50, 1, 1, 4000);
+camera.position.set(0, 40, 330);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.autoRotate = !reduceMotion; controls.autoRotateSpeed = 0.35;
+controls.minDistance = 40; controls.maxDistance = 900;
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.75, 0.45, 0.22);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+const nodeMat = new THREE.ShaderMaterial({
+  uniforms: { uScale: { value: 1 }, uPR: { value: PR } },
+  vertexShader: `
+    attribute float size; attribute vec3 color; attribute float glow; attribute float conf; attribute float fade; attribute float flash;
+    uniform float uScale; uniform float uPR;
+    varying vec3 vColor; varying float vGlow; varying float vConf; varying float vFade; varying float vFlash;
+    void main(){
+      vColor=color; vGlow=glow; vConf=conf; vFade=fade; vFlash=flash;
+      vec4 mv=modelViewMatrix*vec4(position,1.0);
+      gl_PointSize=size*(1.0+flash*0.6)*uPR*(uScale/-mv.z);
+      gl_Position=projectionMatrix*mv;
+    }`,
+  fragmentShader: `
+    varying vec3 vColor; varying float vGlow; varying float vConf; varying float vFade; varying float vFlash;
+    void main(){
+      vec2 p=gl_PointCoord*2.0-1.0; float r=length(p); if(r>1.0) discard;
+      float core=smoothstep(0.34,0.28,r);
+      float halo=pow(max(0.0,1.0-r),3.0)*(0.08+0.35*vGlow);
+      float ringBand=smoothstep(0.41,0.44,r)*smoothstep(0.50,0.47,r);
+      float ang=atan(p.y,p.x);
+      float dash= vConf<0.5 ? step(0.0,sin(ang*9.0)) : 1.0;
+      float ring=ringBand*dash*(0.25+0.6*vConf);
+      vec3 c=vColor*(0.35+0.85*vGlow);
+      vec3 col=c*core + vColor*halo + vColor*ring*0.8 + vec3(1.0,0.97,0.9)*vFlash*(core*0.6+halo*0.8);
+      float a=(core+halo+ring)*vFade;
+      gl_FragColor=vec4(col*vFade,a);
+    }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+const pulseMat = new THREE.ShaderMaterial({
+  uniforms: { uScale: { value: 1 }, uPR: { value: PR }, uColor: { value: COL.signal } },
+  vertexShader: `attribute float life; uniform float uScale; uniform float uPR; varying float vLife;
+    void main(){ vLife=life; vec4 mv=modelViewMatrix*vec4(position,1.0); gl_PointSize=(life>0.0?5.0:0.0)*uPR*(uScale/-mv.z); gl_Position=projectionMatrix*mv; }`,
+  fragmentShader: `uniform vec3 uColor; varying float vLife;
+    void main(){ vec2 p=gl_PointCoord*2.0-1.0; float r=length(p); if(r>1.0||vLife<=0.0) discard;
+      float a=(smoothstep(0.35,0.0,r)*1.4+pow(1.0-r,2.0)*0.6)*min(1.0,vLife*3.0); gl_FragColor=vec4(uColor*a,a); }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+const edgeMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false });
+
+let nodes = [], edges = [], bySlug = new Map(), adj = new Map();
+let nodeGeo, nodePts, edgeGeo, edgeLines;
+const MAXP = 600;
+const pulseGeo = new THREE.BufferGeometry();
+pulseGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(MAXP * 3), 3));
+pulseGeo.setAttribute("life", new THREE.BufferAttribute(new Float32Array(MAXP), 1));
+const pulsePts = new THREE.Points(pulseGeo, pulseMat); pulsePts.frustumCulled = false; scene.add(pulsePts);
+const pulses = Array.from({ length: MAXP }, () => ({ on: false }));
+
+const state = { types: new Set(TYPES), statuses: new Set(STATUSES), project: "__all", selected: null, hover: null, recall: null, source: "sample", fileCount: 0, alpha: 1 };
+
+function build(records, now = Date.now()) {
+  records = records.map((r) => normalize(r, r.slug));
+  [nodePts, edgeLines].forEach((o) => { if (o) { scene.remove(o); o.geometry.dispose(); } });
+  bySlug = new Map(); adj = new Map();
+  const projects = [...new Set(records.map((r) => r.project).filter(Boolean))].sort();
+  const anchors = new Map();
+  projects.forEach((p, i) => {
+    const phi = Math.acos(1 - 2 * (i + 0.5) / projects.length), th = Math.PI * (1 + Math.sqrt(5)) * i;
+    anchors.set(p, new THREE.Vector3(Math.sin(phi) * Math.cos(th), Math.cos(phi) * 0.7, Math.sin(phi) * Math.sin(th)).multiplyScalar(85));
+  });
+  let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  nodes = records.map((r, i) => {
+    const B = activation(r, now), s = sigma(B);
+    const a = r.project ? anchors.get(r.project) : new THREE.Vector3();
+    const n = { i, r, B, s, anchor: a, radius: 2.4 + 2.0 * Math.log(1 + r.storage_strength),
+      p: new THREE.Vector3(a.x + (rnd() - .5) * 90, a.y + (rnd() - .5) * 90, a.z + (rnd() - .5) * 90), v: new THREE.Vector3(),
+      flash: 0, visible: true, dim: 0 };
+    bySlug.set(r.slug, n); adj.set(n, []);
+    return n;
+  });
+  const seen = new Set(); edges = []; let broken = 0;
+  const addEdge = (a, b, kind) => {
+    const key = kind === "link" ? [a.i, b.i].sort().join("-") + kind : a.i + ">" + b.i + kind;
+    if (a === b || seen.has(key)) return; seen.add(key);
+    const e = { a, b, kind }; edges.push(e);
+    adj.get(a).push({ n: b, e }); adj.get(b).push({ n: a, e });
+  };
+  for (const n of nodes) {
+    for (const l of n.r.links) { const t = bySlug.get(l); t ? addEdge(n, t, "link") : broken++; }
+    for (const d of n.r.derived_from) { const t = bySlug.get(d); if (t) addEdge(t, n, "derived"); }
+    if (n.r.supersedes) { const t = bySlug.get(n.r.supersedes); if (t) addEdge(n, t, "supersedes"); }
+    if (n.r.superseded_by) { const t = bySlug.get(n.r.superseded_by); if (t) addEdge(t, n, "supersedes"); }
+  }
+  state.broken = broken; state.projects = projects;
+
+  const N = nodes.length;
+  nodeGeo = new THREE.BufferGeometry();
+  nodeGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(N * 3), 3));
+  nodeGeo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(N * 3), 3));
+  ["size", "glow", "conf", "fade", "flash"].forEach((k) => nodeGeo.setAttribute(k, new THREE.BufferAttribute(new Float32Array(N), 1)));
+  nodes.forEach((n) => {
+    const c = n.r.status === "active" ? COL[n.r.type] : COL.dormant;
+    nodeGeo.attributes.color.setXYZ(n.i, c.r, c.g, c.b);
+    nodeGeo.attributes.size.setX(n.i, n.radius * 4.6);
+    nodeGeo.attributes.glow.setX(n.i, n.r.status === "active" ? n.s : 0.1);
+    nodeGeo.attributes.conf.setX(n.i, n.r.confidence);
+  });
+  nodePts = new THREE.Points(nodeGeo, nodeMat); nodePts.frustumCulled = false; scene.add(nodePts);
+
+  edgeGeo = new THREE.BufferGeometry();
+  edgeGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(edges.length * 6), 3));
+  edgeGeo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(edges.length * 6), 3));
+  edgeLines = new THREE.LineSegments(edgeGeo, edgeMat); edgeLines.frustumCulled = false; scene.add(edgeLines);
+
+  pulses.forEach((p) => (p.on = false));
+  state.selected = null; state.hover = null; state.recall = null;
+  state.alpha = 1; for (let k = 0; k < 260; k++) tick();
+  controls.target.set(0, 0, 0);
+  refreshUI(); applyVisibility(); writePositions();
+}
+
+// ── Force layout (3D) ─────────────────────────────────────────────────────────
+const tmp = new THREE.Vector3();
+function tick() {
+  const a = state.alpha; if (a < 0.004) return;
+  const N = nodes.length;
+  for (let i = 0; i < N; i++) {
+    const ni = nodes[i];
+    for (let j = i + 1; j < N; j++) {
+      const nj = nodes[j];
+      tmp.subVectors(ni.p, nj.p); let d2 = tmp.lengthSq(); if (d2 < 1) { tmp.set(Math.random() - .5, Math.random() - .5, Math.random() - .5); d2 = 1; }
+      if (d2 > 90000) continue;
+      const f = (1600 * a) / d2; const d = Math.sqrt(d2);
+      tmp.multiplyScalar(f / d); ni.v.add(tmp); nj.v.sub(tmp);
+    }
+  }
+  for (const e of edges) {
+    tmp.subVectors(e.b.p, e.a.p); const d = tmp.length() || 1;
+    const rest = e.kind === "link" ? 30 : 38;
+    const k = ((d - rest) / d) * 0.05 * a;
+    tmp.multiplyScalar(k); e.a.v.add(tmp); e.b.v.sub(tmp);
+  }
+  for (const n of nodes) {
+    tmp.subVectors(n.anchor, n.p).multiplyScalar(0.012 * a); n.v.add(tmp);
+    n.v.addScaledVector(n.p, -0.002 * a);
+    n.v.multiplyScalar(0.62); n.p.add(n.v);
+  }
+  state.alpha *= 0.985;
+}
+function writePositions() {
+  const pos = nodeGeo.attributes.position;
+  for (const n of nodes) pos.setXYZ(n.i, n.p.x, n.p.y, n.p.z);
+  pos.needsUpdate = true;
+  const ep = edgeGeo.attributes.position;
+  edges.forEach((e, k) => { ep.setXYZ(k * 2, e.a.p.x, e.a.p.y, e.a.p.z); ep.setXYZ(k * 2 + 1, e.b.p.x, e.b.p.y, e.b.p.z); });
+  ep.needsUpdate = true;
+}
+
+// ── Visibility, focus and colors ──────────────────────────────────────────────
+function neighborsOf(n) { return new Set(adj.get(n).map((x) => x.n)); }
+function applyVisibility() {
+  for (const n of nodes) n.visible = state.types.has(n.r.type) && state.statuses.has(n.r.status) && (state.project === "__all" || (state.project === "__global" ? !n.r.project : n.r.project === state.project));
+  const focus = state.selected || state.hover;
+  const fset = focus ? neighborsOf(focus).add(focus) : null;
+  const rset = state.recall ? new Set(state.recall.lit) : null;
+  const fade = nodeGeo.attributes.fade;
+  for (const n of nodes) {
+    let f = n.visible ? 1 : 0;
+    if (f && fset) f = fset.has(n) ? 1 : 0.14;
+    else if (f && rset) f = rset.has(n) ? 1 : 0.14;
+    fade.setX(n.i, f); n.dim = f;
+  }
+  fade.needsUpdate = true;
+  const col = edgeGeo.attributes.color;
+  edges.forEach((e, k) => {
+    let base = e.kind === "supersedes" || e.a.r.status !== "active" || e.b.r.status !== "active" ? COL.dormant : COL.link;
+    let s = e.kind === "derived" ? 0.75 : 0.55;
+    if (!e.a.visible || !e.b.visible) s = 0;
+    else if (fset) s = fset.has(e.a) && fset.has(e.b) && (e.a === focus || e.b === focus) ? 1.4 : 0.08;
+    else if (rset) s = rset.has(e.a) && rset.has(e.b) ? 1.2 : 0.08;
+    const hot = s > 1 ? COL.signal : base;
+    const c = hot === COL.signal ? base.clone().lerp(COL.signal, 0.45) : base;
+    col.setXYZ(k * 2, c.r * s, c.g * s, c.b * s); col.setXYZ(k * 2 + 1, c.r * s, c.g * s, c.b * s);
+  });
+  col.needsUpdate = true;
+}
+
+// ── Pulses ────────────────────────────────────────────────────────────────────
+function spawnPulse(from, to, delay = 0) {
+  const p = pulses.find((x) => !x.on); if (!p) return;
+  Object.assign(p, { on: true, from, to, t: -delay, dur: Math.max(0.5, from.p.distanceTo(to.p) / 70) });
+}
+function fire(n, max = 4, flash = 1) {
+  n.flash = Math.max(n.flash, flash);
+  adj.get(n).filter((x) => x.n.visible && x.e.kind !== "supersedes").slice(0, max).forEach((x, k) => spawnPulse(n, x.n, k * 0.08));
+}
+function updatePulses(dt) {
+  const pos = pulseGeo.attributes.position, life = pulseGeo.attributes.life;
+  pulses.forEach((p, i) => {
+    if (!p.on) { life.setX(i, 0); return; }
+    p.t += dt / p.dur;
+    if (p.t >= 1) { p.on = false; life.setX(i, 0); p.to.flash = Math.max(p.to.flash, 0.35); return; }
+    const t = Math.max(0, p.t); tmp.lerpVectors(p.from.p, p.to.p, t);
+    pos.setXYZ(i, tmp.x, tmp.y, tmp.z); life.setX(i, p.t < 0 ? 0 : 1 - Math.abs(t - 0.5) * 0.6);
+  });
+  pos.needsUpdate = true; life.needsUpdate = true;
+}
+let ambientT = 0, derivedT = 0;
+function ambient(dt) {
+  if (reduceMotion || document.hidden) return;
+  ambientT -= dt; derivedT -= dt;
+  const live = nodes.filter((n) => n.visible && n.r.status === "active");
+  if (ambientT <= 0 && live.length) {
+    ambientT = 0.5 + Math.random() * 0.6;
+    let tot = live.reduce((s, n) => s + n.s, 0), r = Math.random() * tot;
+    const pick = live.find((n) => (r -= n.s) <= 0) || live[0];
+    fire(pick, 3, 0.8);
+  }
+  if (derivedT <= 0) {
+    derivedT = 1.6;
+    edges.filter((e) => e.kind === "derived" && e.a.visible && e.b.visible).forEach((e) => spawnPulse(e.a, e.b));
+  }
+}
+
+// ── Recall (token approximation of store.ts search) ───────────────────────────
+function tokens(s) { return String(s).toLowerCase().split(/[^0-9a-z가-힣_+.#-]+/).filter((t) => t.length >= 2); }
+function recall(query) {
+  const q = tokens(query); if (!q.length) return clearRecall();
+  const now = Date.now();
+  const scored = [];
+  for (const n of nodes) {
+    if (!n.visible || n.r.status !== "active") continue;
+    const hay = [[n.r.title, 3], [n.r.description, 2], [n.r.tags.join(" "), 2], [n.r.body, 1]];
+    let score = 0;
+    for (const t of q) for (const [text, w] of hay) {
+      const toks = tokens(text);
+      if (toks.some((x) => x === t)) score += w;
+      else if (toks.some((x) => (x.startsWith(t) || t.startsWith(x)) && Math.min(x.length, t.length) >= 2 && Math.abs(x.length - t.length) <= 2)) score += w * 0.7;
+      else if (String(text).toLowerCase().includes(t)) score += w * 0.4;
+    }
+    if (score <= 0) continue;
+    score *= (0.5 + 0.5 * n.r.confidence) * (0.55 + 0.9 * sigma(activation(n.r, now)));
+    scored.push({ n, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  const direct = scored.slice(0, 5);
+  const seeds = direct.slice(0, 3).map((x) => x.n);
+  const linked = [];
+  const cap = Math.ceil(5 / 2);
+  for (const s of seeds) for (const { n } of adj.get(s)) {
+    if (linked.length >= cap) break;
+    if (n.visible && n.r.status === "active" && !direct.some((d) => d.n === n) && !linked.includes(n)) linked.push(n);
+  }
+  state.recall = { query, direct, linked, total: scored.length, lit: [...direct.map((d) => d.n), ...linked] };
+  state.selected = null;
+  seeds.forEach((s, k) => setTimeout(() => fire(s, 6, 1.6), k * 160));
+  renderResults(); applyVisibility(); renderInspector(); updateLabels(true);
+  if (direct.length && innerHeight < 1000) $("legend").open = false;
+  if (seeds.length) focusOn(centroid(seeds), false);
+}
+function clearRecall() { state.recall = null; renderResults(); applyVisibility(); }
+function centroid(ns) { const c = new THREE.Vector3(); ns.forEach((n) => c.add(n.p)); return c.multiplyScalar(1 / ns.length); }
+
+// ── Camera focus ──────────────────────────────────────────────────────────────
+let camAnim = null;
+function focusOn(target, zoom = true) {
+  const fromT = controls.target.clone(), fromC = camera.position.clone();
+  const dir = fromC.clone().sub(fromT); const dist = zoom ? Math.min(dir.length(), 190) : dir.length();
+  const toC = target.clone().add(dir.normalize().multiplyScalar(dist));
+  camAnim = { t: 0, fromT, toT: target.clone(), fromC, toC };
+}
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+function fmt(x, d = 2) { return Number.isFinite(x) ? x.toFixed(d) : "—"; }
+function daysSince(iso) { const t = Date.parse(iso); return Number.isFinite(t) ? (Date.now() - t) / 864e5 : NaN; }
+function refreshUI() {
+  const active = nodes.filter((n) => n.r.status === "active");
+  const avg = active.length ? active.reduce((s, n) => s + n.s, 0) / active.length : 0;
+  $("stats").innerHTML = `<span class="src ${state.source === "sample" ? "sample" : ""}">${state.source === "sample" ? "샘플 볼트" : "내 볼트 · 파일 " + state.fileCount}</span>
+    <span>기억 <b class="mono">${nodes.length}</b></span><span>시냅스 <b class="mono">${edges.length}</b></span>
+    <span>평균 σ <b class="mono">${fmt(avg)}</b></span>${state.broken ? `<span>끊긴 링크 <b class="mono">${state.broken}</b></span>` : ""}`;
+  const tc = $("typeChips"); tc.innerHTML = "";
+  TYPES.forEach((t) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "chip";
+    b.setAttribute("aria-pressed", state.types.has(t));
+    b.innerHTML = `<span class="dot" style="background:var(--${t})"></span>${t}<span class="n">${nodes.filter((n) => n.r.type === t).length}</span>`;
+    b.title = TYPE_KO[t] + " 기억 표시/숨김";
+    b.onclick = () => { state.types.has(t) ? state.types.delete(t) : state.types.add(t); refreshUI(); applyVisibility(); };
+    tc.append(b);
+  });
+  const sc = $("statusChips"); sc.innerHTML = "";
+  STATUSES.forEach((s) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "chip";
+    b.setAttribute("aria-pressed", state.statuses.has(s));
+    b.innerHTML = `<span class="dot" style="background:${s === "active" ? "var(--signal)" : "var(--dormant)"}"></span>${s}<span class="n">${nodes.filter((n) => n.r.status === s).length}</span>`;
+    b.onclick = () => { state.statuses.has(s) ? state.statuses.delete(s) : state.statuses.add(s); refreshUI(); applyVisibility(); };
+    sc.append(b);
+  });
+  const sel = $("proj"); const cur = state.project;
+  sel.innerHTML = `<option value="__all">전체</option><option value="__global">전역 기억만</option>` + (state.projects || []).map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
+  sel.value = [...sel.options].some((o) => o.value === cur) ? cur : "__all"; state.project = sel.value;
+  renderResults(); renderInspector();
+}
+function renderResults() {
+  const ol = $("results"); const rc = state.recall;
+  if (!rc) { ol.innerHTML = ""; return; }
+  if (!rc.direct.length) { ol.innerHTML = `<li><p class="note">"${esc(rc.query)}"에 맞는 기억이 없습니다. 다른 표현으로 다시 질의해 보십시오.</p></li>`; return; }
+  const row = (n, right, via) => `<li><button type="button" data-slug="${esc(n.r.slug)}"><span class="dot" style="background:var(--${n.r.type})"></span><span class="t">${esc(n.r.title)}</span><span class="s">${right}</span></button></li>`;
+  ol.innerHTML = rc.direct.map((d) => row(d.n, "score " + fmt(d.score))).join("") +
+    (rc.linked.length ? `<li class="via" style="padding:4px 4px 0">연상으로 딸려온 기억 (1-hop)</li>` + rc.linked.map((n) => row(n, "linked")).join("") : "") +
+    (rc.total > rc.direct.length ? `<li class="note" style="padding:4px">total_matched ${rc.total} · 상위 5건만 표시</li>` : "");
+}
+$("results").addEventListener("click", (e) => { const b = e.target.closest("button[data-slug]"); if (b) select(bySlug.get(b.dataset.slug)); });
+
+function renderInspector() {
+  const box = $("insBody"), n = state.selected;
+  $("inspector").classList.toggle("idle-mobile", !n && innerWidth <= 760);
+  if (!n) {
+    const top = nodes.filter((x) => x.r.status === "active").sort((a, b) => b.s - a.s).slice(0, 5);
+    const weak = nodes.filter((x) => x.r.status === "active" && daysSince(x.r.last_reinforced) > 3).sort((a, b) => a.B - b.B).slice(0, 4);
+    const li = (x) => `<li><button type="button" data-slug="${esc(x.r.slug)}"><span class="dot" style="background:var(--${x.r.type})"></span>${esc(x.r.title)}<span class="k">σ ${fmt(x.s)}</span></button></li>`;
+    box.innerHTML = `<div class="empty-ins sec"><span class="label">inspector</span><h2>기억을 선택하십시오</h2>
+      <p class="desc" style="margin:0">노드를 클릭하면 frontmatter 전체와 연결된 기억이 여기에 표시됩니다. 위 검색창의 회상은 서버의 recall처럼 상위 3건을 시드로 1-hop 연상을 퍼뜨립니다.</p></div>
+      <div class="sec"><span class="label">가장 활성이 높은 기억</span><ul class="nlist">${top.map(li).join("")}</ul></div>
+      <div class="sec"><span class="label">떠올리기 어려워진 기억</span><ul class="nlist">${weak.map(li).join("")}</ul></div>`;
+    return;
+  }
+  const r = n.r, age = daysSince(r.created), upd = daysSince(r.updated);
+  const flags = [];
+  if (upd > 30) flags.push(`<div class="flag"><b>STALE_HINT</b>${Math.floor(upd)}일 동안 갱신되지 않았습니다. 현재 코드와 대조한 뒤 사용하십시오.</div>`);
+  if (r.status === "active" && n.B < RETRIEVAL_THRESHOLD) flags.push(`<div class="flag"><b>BELOW THRESHOLD</b>기저활성이 인출 임계(−1.39) 아래입니다. 능동 회상 시 +0.5 보너스 대상입니다.</div>`);
+  else if (r.status === "active" && n.B < HARD_RETRIEVAL) flags.push(`<div class="flag"><b>HARD TO RECALL</b>활성이 낮아 회상 시 바람직한 어려움 보너스를 받습니다.</div>`);
+  if (r.confidence < 0.5) flags.push(`<div class="flag"><b>LOW CONFIDENCE</b>확신도 ${fmt(r.confidence)}. revise로 검증하거나 낮은 신뢰로 취급하십시오.</div>`);
+  if (r.archive_reason) flags.push(`<div class="flag"><b>ARCHIVED</b>${esc(r.archive_reason)}</div>`);
+  const rel = adj.get(n).map(({ n: m, e }) => {
+    const k = e.kind === "link" ? "link" : e.kind === "derived" ? (e.a === n ? "근거 → 파생" : "파생 ← 근거") : (e.a === n ? "supersedes" : "superseded_by");
+    return `<li><button type="button" data-slug="${esc(m.r.slug)}"><span class="dot" style="background:${m.r.status === "active" ? `var(--${m.r.type})` : "var(--dormant)"}"></span>${esc(m.r.title)}<span class="k">${k}</span></button></li>`;
+  }).join("");
+  const missing = r.links.filter((l) => !bySlug.has(l)).map((l) => `<li><span class="missing">[[${esc(l)}]] · 볼트에 없음</span></li>`).join("");
+  box.innerHTML = `
+    <div class="ins-top"><span class="type-tag" style="color:var(--${r.type})"><span class="dot" style="background:var(--${r.type})"></span>${r.type}</span>
+      <span style="display:flex;gap:8px;align-items:center"><span class="status-tag">${r.status}</span><button type="button" class="close" id="insClose" aria-label="선택 해제">닫기</button></span></div>
+    <div><h2>${esc(r.title)}</h2>${r.description ? `<p class="desc">${esc(r.description)}</p>` : ""}<div class="slug">${esc(r.slug)}${r.project ? " · project: " + esc(r.project) : " · 전역"}</div></div>
+    <dl class="metrics">
+      <div><dt class="label">confidence</dt><dd>${fmt(r.confidence)}</dd><div class="bar"><i style="width:${r.confidence * 100}%"></i></div></div>
+      <div><dt class="label">retrieval <span style="text-transform:none">σ</span></dt><dd>${fmt(n.s)}</dd><div class="bar"><i style="width:${n.s * 100}%"></i></div></div>
+      <div><dt class="label">activation B</dt><dd>${fmt(n.B)}</dd></div>
+      <div><dt class="label">storage_strength</dt><dd>${fmt(r.storage_strength, 0)}</dd></div>
+      <div><dt class="label">access_count</dt><dd>${r.access_count}</dd></div>
+      <div><dt class="label">age_days</dt><dd>${fmt(age, age < 1 ? 2 : 0)} <small>강화 ${fmt(daysSince(r.last_reinforced), 0)}일 전</small></dd></div>
+    </dl>
+    ${flags.length ? `<div class="flags">${flags.join("")}</div>` : ""}
+    ${r.tags.length ? `<div class="sec"><span class="label">tags</span><div class="tags">${r.tags.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : ""}
+    <div class="sec"><span class="label">연관 기억 · ${adj.get(n).length}</span>${rel || missing ? `<ul class="nlist">${rel}${missing}</ul>` : `<p class="note">연결 없음. reflect에서 orphans_without_links로 잡히는 기억입니다.</p>`}</div>
+    ${r.body ? `<div class="sec"><span class="label">본문</span><pre class="body">${esc(r.body)}</pre></div>` : ""}
+    ${r.history.length ? `<div class="sec"><span class="label">history</span><ul class="hist">${r.history.map((h) => `<li>${esc(h)}</li>`).join("")}</ul></div>` : ""}
+    ${r.source ? `<div class="sec"><span class="label">source</span><span class="slug">${esc(r.source)}</span></div>` : ""}`;
+  $("insClose").onclick = () => select(null);
+}
+$("insBody").addEventListener("click", (e) => { const b = e.target.closest("button[data-slug]"); if (b) select(bySlug.get(b.dataset.slug)); });
+
+function select(n) {
+  state.selected = n || null;
+  if (n) { state.recall = null; renderResults(); fire(n, 8, 1.4); focusOn(n.p); controls.autoRotate = false; }
+  applyVisibility(); renderInspector(); updateLabels(true);
+  if (n) $("inspector").querySelector(".scroll").scrollTop = 0;
+}
+
+// ── Labels overlay ────────────────────────────────────────────────────────────
+const labelBox = $("labels"); const labelPool = [];
+let labelSet = [];
+function updateLabels(rebuild) {
+  if (rebuild) {
+    const want = new Map();
+    if (state.selected) { want.set(state.selected, true); adj.get(state.selected).forEach(({ n }) => n.visible && want.set(n, false)); }
+    else if (state.recall) state.recall.lit.forEach((n, k) => want.set(n, k < 3));
+    if (state.hover && !want.has(state.hover)) want.set(state.hover, true);
+    labelSet = [...want.entries()];
+    while (labelPool.length < labelSet.length) { const d = document.createElement("div"); d.className = "nlabel"; labelBox.append(d); labelPool.push(d); }
+    labelPool.forEach((d, k) => {
+      if (k < labelSet.length) { d.hidden = false; d.textContent = labelSet[k][0].r.title; d.classList.toggle("strong", labelSet[k][1]); }
+      else d.hidden = true;
+    });
+  }
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  labelSet.forEach(([n], k) => {
+    tmp.copy(n.p).project(camera);
+    const d = labelPool[k];
+    if (tmp.z > 1) { d.style.visibility = "hidden"; return; }
+    d.style.visibility = "visible";
+    const px = (tmp.x * 0.5 + 0.5) * w, py = (-tmp.y * 0.5 + 0.5) * h - projRadius(n) - 6;
+    d.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%)`;
+  });
+}
+function projRadius(n) {
+  const d = camera.position.distanceTo(n.p);
+  return (n.radius * 1.9 * (canvas.clientHeight / 2)) / (Math.tan((camera.fov * Math.PI) / 360) * d) * 0.5;
+}
+
+// ── Picking ───────────────────────────────────────────────────────────────────
+function pick(cx, cy) {
+  const rect = canvas.getBoundingClientRect(); const x = cx - rect.left, y = cy - rect.top;
+  let best = null, bd = Infinity;
+  for (const n of nodes) {
+    if (!n.visible || n.dim < 0.5 && !state.selected) continue;
+    tmp.copy(n.p).project(camera); if (tmp.z > 1) continue;
+    const px = (tmp.x * 0.5 + 0.5) * rect.width, py = (-tmp.y * 0.5 + 0.5) * rect.height;
+    const d = Math.hypot(px - x, py - y), rr = Math.max(10, projRadius(n) * 1.3);
+    const depth = camera.position.distanceTo(n.p);
+    if (d < rr && d + depth * 0.001 < bd) { bd = d + depth * 0.001; best = n; }
+  }
+  return best;
+}
+let down = null;
+canvas.addEventListener("pointerdown", (e) => { down = { x: e.clientX, y: e.clientY }; canvas.classList.add("dragging"); controls.autoRotate = false; });
+addEventListener("pointerup", (e) => {
+  canvas.classList.remove("dragging");
+  if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 5 && e.target === canvas) select(pick(e.clientX, e.clientY));
+  down = null;
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (down || e.pointerType === "touch") return;
+  const n = pick(e.clientX, e.clientY);
+  if (n !== state.hover) {
+    state.hover = n; canvas.classList.toggle("pointing", !!n);
+    if (!state.selected && !state.recall) applyVisibility();
+    updateLabels(true);
+  }
+});
+canvas.addEventListener("pointerleave", () => { if (state.hover) { state.hover = null; if (!state.selected && !state.recall) applyVisibility(); updateLabels(true); } });
+
+// ── Controls wiring ───────────────────────────────────────────────────────────
+$("recallForm").addEventListener("submit", (e) => { e.preventDefault(); const q = $("q").value.trim(); q ? recall(q) : (clearRecall(), updateLabels(true)); });
+$("q").addEventListener("input", (e) => { if (!e.target.value.trim() && state.recall) { clearRecall(); updateLabels(true); } });
+$("proj").addEventListener("change", (e) => { state.project = e.target.value; applyVisibility(); });
+addEventListener("keydown", (e) => {
+  if (e.key === "/" && document.activeElement !== $("q")) { e.preventDefault(); $("q").focus(); }
+  if (e.key === "Escape") { select(null); if (state.recall) { $("q").value = ""; clearRecall(); updateLabels(true); } }
+});
+$("btnFolder").onclick = () => $("fileFolder").click();
+$("btnFiles").onclick = () => $("fileFiles").click();
+$("btnSample").onclick = () => { state.source = "sample"; state.fileCount = 0; $("loadNote").textContent = "샘플 볼트를 표시하고 있습니다. 슬러그와 필드는 BigBrainMemory 볼트 형식과 같습니다."; build(buildSample(Date.now())); };
+async function loadFiles(list) {
+  const files = [...list]; if (!files.length) return;
+  const { recs, skipped } = await readFiles(files);
+  if (!recs.length) { $("loadNote").textContent = `읽을 수 있는 기억이 없습니다. frontmatter(---)가 있는 memories/*.md 파일인지 확인하십시오. 건너뛴 파일 ${skipped}개.`; return; }
+  state.source = "vault"; state.fileCount = recs.length;
+  $("loadNote").textContent = `기억 ${recs.length}건을 불러왔습니다${skipped ? `, ${skipped}개 파일은 건너뛰었습니다(MEMORY.md, revisions, quarantine 등)` : ""}. 파일은 이 브라우저 밖으로 나가지 않습니다.`;
+  build(recs);
+}
+$("fileFolder").addEventListener("change", (e) => { loadFiles(e.target.files); e.target.value = ""; });
+$("fileFiles").addEventListener("change", (e) => { loadFiles(e.target.files); e.target.value = ""; });
+let dragDepth = 0;
+addEventListener("dragenter", (e) => { if ([...(e.dataTransfer?.types || [])].includes("Files")) { dragDepth++; $("drop").hidden = false; } });
+addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("drop").hidden = true; } });
+addEventListener("dragover", (e) => e.preventDefault());
+addEventListener("drop", async (e) => {
+  e.preventDefault(); dragDepth = 0; $("drop").hidden = true;
+  const items = [...(e.dataTransfer.items || [])].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+  if (!items.length) return loadFiles(e.dataTransfer.files);
+  const out = [];
+  const walk = (entry, path) => new Promise((res) => {
+    if (entry.isFile) entry.file((f) => { f.relPath = path + f.name; out.push(f); res(); }, res);
+    else if (entry.isDirectory) {
+      const rd = entry.createReader(); const all = [];
+      const more = () => rd.readEntries(async (ents) => { if (!ents.length) { for (const c of all) await walk(c, path + entry.name + "/"); res(); } else { all.push(...ents); more(); } }, res);
+      more();
+    } else res();
+  });
+  for (const it of items) await walk(it, "");
+  loadFiles(out);
+});
+
+// ── Loop ──────────────────────────────────────────────────────────────────────
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false); composer.setSize(w, h); bloom.setSize(w * PR, h * PR);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  const s = h / 2 / Math.tan((camera.fov * Math.PI) / 360);
+  nodeMat.uniforms.uScale.value = s; pulseMat.uniforms.uScale.value = s;
+}
+addEventListener("resize", resize);
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (state.alpha > 0.004) { tick(); writePositions(); }
+  if (camAnim) {
+    camAnim.t = Math.min(1, camAnim.t + dt / 0.7); const k = 1 - Math.pow(1 - camAnim.t, 3);
+    controls.target.lerpVectors(camAnim.fromT, camAnim.toT, k); camera.position.lerpVectors(camAnim.fromC, camAnim.toC, k);
+    if (camAnim.t >= 1) camAnim = null;
+  }
+  ambient(dt); updatePulses(dt);
+  const fl = nodeGeo.attributes.flash; let any = false;
+  for (const n of nodes) { if (n.flash > 0.001) { n.flash *= Math.pow(0.04, dt); any = true; } else n.flash = 0; fl.setX(n.i, n.flash); }
+  if (any || true) fl.needsUpdate = true;
+  controls.update();
+  composer.render();
+  updateLabels(false);
+  requestAnimationFrame(frame);
+}
+resize();
+if (innerWidth <= 760 || innerHeight < 700) $("legend").open = false;
+build(buildSample(Date.now()));
+requestAnimationFrame(frame);
+</script>
+<script>
+setTimeout(function () { if (!window.__bbStarted) { var f = document.getElementById("fail"); f.hidden = false; f.textContent = "3D 엔진을 불러오지 못했습니다. 네트워크 연결을 확인한 뒤 새로고침해 주십시오."; } }, 9000);
+</script>
+
+</body></html>
