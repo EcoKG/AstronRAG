@@ -118,7 +118,7 @@ function buildCommands(vaultDir, explicit) {
   return {
     SessionStart: `${base} --start ${flag} "${vault}"`,
     Stop: `${base} --stop ${flag} "${vault}"`,
-    // 부호화 큐 (T34) — 턴 **시작** 시점에 나가야 원문이 아직 살아 있다.
+    // 자동 회상(T44)·부호화 큐(T34) — 턴 **시작** 시점에 나가야 원문이 아직 살아 있다.
     // Stop 은 세션 끝이라 이미 늦고, 압축됐다면 요약에서 재구성하게 된다(P8 위반).
     UserPromptSubmit: `${base} --prompt ${flag} "${vault}"`,
   };
@@ -218,7 +218,7 @@ const hooks = settings.hooks && typeof settings.hooks === "object" ? settings.ho
 
 // 세 훅을 한 벌로 다룬다 — 전부 같은 마커 파일로 세션 상태를 공유한다.
 //   SessionStart    회상 트리거 (볼트 인덱스 주입)
-//   UserPromptSubmit 부호화 큐 (턴 시작 — 원문이 아직 살아 있는 시점)
+//   UserPromptSubmit 자동 회상·부호화 큐 (턴 시작 — 원문이 아직 살아 있는 시점)
 //   Stop            무저장 감지 (안전망, 세션 끝)
 const results = {
   SessionStart: applyHook(hooks, "SessionStart", commands.SessionStart),
@@ -300,6 +300,7 @@ console.log(`✔ ${REMOVE ? "제거" : "설치"} 완료: ${settingsPath}`);
 if (!REMOVE) {
   console.log("\n다음 단계: Claude 를 재시작하면");
   console.log("  · SessionStart — 매 세션 시작 시 MEMORY.md 를 주입합니다(회상).");
+  console.log("  · UserPromptSubmit — 프롬프트와 관련된 기억을 자동 주입하고(BIGBRAIN_AUTO_RECALL=0 으로 끔), 부호화 큐를 냅니다.");
   console.log("  · Stop         — 세션에서 새로 저장된 기억이 0건이면 경고합니다(무저장 감지).");
   console.log("되돌리려면: npm run setup:hook -- --remove");
 } else {

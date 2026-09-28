@@ -70,7 +70,7 @@ function readArgs(argv) {
 }
 
 /** 시드 고정 32비트 난수 생성기 (mulberry32) */
-function mulberry32(seed) {
+export function mulberry32(seed) {
 	let a = seed >>> 0;
 	return () => {
 		a = (a + 0x6d2b79f5) >>> 0;
@@ -82,7 +82,7 @@ function mulberry32(seed) {
 }
 
 /** 서로 다른 가짜 음절 단어 n 개 */
-function makeWords(rnd, n) {
+export function makeWords(rnd, n) {
 	const cons = "bdgklmnprstvz";
 	const vows = "aeiou";
 	const out = new Set();
@@ -99,7 +99,7 @@ function makeWords(rnd, n) {
  * 근접 중복 군집(CLUSTER 건씩) 볼트를 쓰고 질의 목록을 돌려준다.
  * 전원이 공통 단어를 본문에 가져 넓은 질의에 전부 걸리고, 군집 안에서는 제목+설명이 RIF 임계를 넘게 겹친다.
  */
-function buildVault(vault, count, rnd) {
+export function buildVault(vault, count, rnd) {
 	// 공통 1 + 주제 4 + 군집마다 (군집 단어 4 + 기억별 고유 단어 CLUSTER), 나머지 1000 은 본문 채움말
 	const named = 5 + Math.ceil(count / CLUSTER) * (4 + CLUSTER);
 	const words = makeWords(rnd, named + 1000);
@@ -244,161 +244,165 @@ function coldRun(mode, dist, dir, query, rounds, want) {
 	return { ms: Object.fromEntries(metrics.map((k) => [k, stat(k)])), identical: runs.every((x) => x.out === want) };
 }
 
-const opts = readArgs(process.argv.slice(2));
+/** 이 파일을 직접 실행했는지 — 생성기만 import 할 때는 벤치를 돌리지 않는다 */
+const isMain = process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+	const opts = readArgs(process.argv.slice(2));
 
-// 사용자 동의어 사전은 모듈 로드 시 병합되므로 import 전에 지운다
-delete process.env.BIGBRAIN_SYNONYMS;
-const distUrl = (f) => pathToFileURL(path.join(root, "dist", f)).href;
-if (!fs.existsSync(path.join(root, "dist", "ranker.js"))) die("dist/ranker.js 가 없다 — 먼저 npm run build", 1);
-const { Vault } = await import(distUrl("vault.js"));
-const { MemoryStore, parseQuery } = await import(distUrl("store.js"));
-const { LexicalRetriever, overlap, tokenize, INDEX_DIR, INDEX_FILE } = await import(distUrl("retriever.js"));
-const { finish, inhibit, RIF_THRESHOLD } = await import(distUrl("ranker.js"));
+	// 사용자 동의어 사전은 모듈 로드 시 병합되므로 import 전에 지운다
+	delete process.env.BIGBRAIN_SYNONYMS;
+	const distUrl = (f) => pathToFileURL(path.join(root, "dist", f)).href;
+	if (!fs.existsSync(path.join(root, "dist", "ranker.js"))) die("dist/ranker.js 가 없다 — 먼저 npm run build", 1);
+	const { Vault } = await import(distUrl("vault.js"));
+	const { MemoryStore, parseQuery } = await import(distUrl("store.js"));
+	const { LexicalRetriever, overlap, tokenize, INDEX_DIR, INDEX_FILE } = await import(distUrl("retriever.js"));
+	const { finish, inhibit, RIF_THRESHOLD } = await import(distUrl("ranker.js"));
 
-/** 조기 종료 전 RIF — 쌍마다 제목+설명을 다시 토큰화하고 각 후보를 앞선 모든 후보와 비교한다 */
-function legacyInhibit(scored, limit, counter) {
-	const suppresses = (winner, loser) =>
-		!(winner.record.derivedFrom ?? []).includes(loser.record.slug) &&
-		!(loser.record.derivedFrom ?? []).includes(winner.record.slug);
-	scored.forEach((r, i) => {
-		const rivalOf = scored.slice(0, i).find((k) => {
-			if (!suppresses(k, r)) return false;
-			counter.pairs++;
-			return (
-				overlap(
-					tokenize(k.record.title + " " + k.record.description),
-					tokenize(r.record.title + " " + r.record.description),
-				) >= RIF_THRESHOLD
+	/** 조기 종료 전 RIF — 쌍마다 제목+설명을 다시 토큰화하고 각 후보를 앞선 모든 후보와 비교한다 */
+	function legacyInhibit(scored, limit, counter) {
+		const suppresses = (winner, loser) =>
+			!(winner.record.derivedFrom ?? []).includes(loser.record.slug) &&
+			!(loser.record.derivedFrom ?? []).includes(winner.record.slug);
+		scored.forEach((r, i) => {
+			const rivalOf = scored.slice(0, i).find((k) => {
+				if (!suppresses(k, r)) return false;
+				counter.pairs++;
+				return (
+					overlap(
+						tokenize(k.record.title + " " + k.record.description),
+						tokenize(r.record.title + " " + r.record.description),
+					) >= RIF_THRESHOLD
+				);
+			});
+			if (rivalOf) {
+				r.score *= 0.5;
+				r.inhibited = true;
+				r.inhibitedBy = rivalOf.record.slug;
+			}
+		});
+		return [...scored].sort((a, b) => b.score - a.score).slice(0, limit);
+	}
+
+	const realNow = Date.now;
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-rif-bench-"));
+	const staleDir = `${dir}-copy`;
+	let allIdentical = true;
+	try {
+		Date.now = () => NOW;
+		const vault = new Vault(dir);
+		const queries = buildVault(vault, opts.count, mulberry32(opts.seed));
+		const retriever = new LexicalRetriever();
+		retriever.sync(vault);
+
+		const rif = queries.map(({ label, query }) => {
+			const q = parseQuery(query);
+			const base = retriever
+				.search(q, Infinity, {})
+				.map((c) => ({ result: finish(c.record, c.score, NOW, q.expanded), tokens: c.titleDescTokens }));
+			base.sort((a, b) => b.result.score - a.result.score);
+			const fresh = () => base.map((b) => ({ result: { ...b.result }, tokens: b.tokens }));
+
+			const legacyCount = { pairs: 0 };
+			legacyInhibit(fresh().map((s) => s.result), LIMIT, legacyCount);
+			let reads = 0;
+			inhibit(
+				fresh().map((s) => ({
+					result: s.result,
+					get tokens() {
+						reads++;
+						return s.tokens;
+					},
+				})),
+				LIMIT,
 			);
-		});
-		if (rivalOf) {
-			r.score *= 0.5;
-			r.inhibited = true;
-			r.inhibitedBy = rivalOf.record.slug;
-		}
-	});
-	return [...scored].sort((a, b) => b.score - a.score).slice(0, limit);
-}
 
-const realNow = Date.now;
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-rif-bench-"));
-const staleDir = `${dir}-copy`;
-let allIdentical = true;
-try {
-	Date.now = () => NOW;
-	const vault = new Vault(dir);
-	const queries = buildVault(vault, opts.count, mulberry32(opts.seed));
-	const retriever = new LexicalRetriever();
-	retriever.sync(vault);
-
-	const rif = queries.map(({ label, query }) => {
-		const q = parseQuery(query);
-		const base = retriever
-			.search(q, Infinity, {})
-			.map((c) => ({ result: finish(c.record, c.score, NOW, q.expanded), tokens: c.titleDescTokens }));
-		base.sort((a, b) => b.result.score - a.result.score);
-		const fresh = () => base.map((b) => ({ result: { ...b.result }, tokens: b.tokens }));
-
-		const legacyCount = { pairs: 0 };
-		legacyInhibit(fresh().map((s) => s.result), LIMIT, legacyCount);
-		let reads = 0;
-		inhibit(
-			fresh().map((s) => ({
-				result: s.result,
-				get tokens() {
-					reads++;
-					return s.tokens;
-				},
-			})),
-			LIMIT,
-		);
-
-		const legacy = time(opts.rounds, () => fresh().map((s) => s.result), (xs) => legacyInhibit(xs, LIMIT, { pairs: 0 }));
-		const next = time(opts.rounds, fresh, (xs) => inhibit(xs, LIMIT));
-		const identical = JSON.stringify(legacy.out) === JSON.stringify(next.out);
-		if (!identical) allIdentical = false;
-		return {
-			label,
-			query,
-			candidates: base.length,
-			legacyMs: legacy.ms,
-			newMs: next.ms,
-			ratio: legacy.ms / next.ms,
-			legacyPairs: legacyCount.pairs,
-			newPairs: reads / 2,
-			identical,
-		};
-	});
-
-	let e2e;
-	if (opts.base) {
-		const { Vault: BaseVault } = await import(pathToFileURL(path.join(opts.base, "vault.js")).href);
-		const { MemoryStore: BaseStore } = await import(pathToFileURL(path.join(opts.base, "store.js")).href);
-		const oldStore = new BaseStore(new BaseVault(dir));
-		const newStore = new MemoryStore(new Vault(dir));
-		oldStore.reinforce = () => {};
-		newStore.reinforce = () => {};
-		e2e = queries.map(({ label, query }) => {
-			const run = (s) => s.searchDetailed(query, { limit: LIMIT });
-			const warmOld = JSON.stringify(run(oldStore));
-			const warmNew = JSON.stringify(run(newStore));
-			const oldT = time(opts.rounds, () => null, () => run(oldStore));
-			const newT = time(opts.rounds, () => null, () => run(newStore));
-			const identical = warmOld === warmNew && JSON.stringify(oldT.out) === JSON.stringify(newT.out);
+			const legacy = time(opts.rounds, () => fresh().map((s) => s.result), (xs) => legacyInhibit(xs, LIMIT, { pairs: 0 }));
+			const next = time(opts.rounds, fresh, (xs) => inhibit(xs, LIMIT));
+			const identical = JSON.stringify(legacy.out) === JSON.stringify(next.out);
 			if (!identical) allIdentical = false;
-			return { label, oldMs: oldT.ms, newMs: newT.ms, ratio: oldT.ms / newT.ms, identical };
-		});
-	}
-
-	let cold;
-	if (opts.cold) {
-		const quiet = new MemoryStore(new Vault(dir));
-		quiet.reinforce = () => {};
-		quiet.searchDetailed(queries[0].query, { limit: LIMIT }); // 역색인을 최신으로 만든다
-		const indexFile = path.join(dir, INDEX_DIR, INDEX_FILE);
-		if (!fs.existsSync(indexFile)) die(`역색인이 만들어지지 않았다: ${indexFile}`, 1);
-		const before = fs.statSync(indexFile, { bigint: true });
-		fs.cpSync(dir, staleDir, { recursive: true });
-		const dist = path.join(root, "dist");
-		const runs = queries.map(({ label, query }) => {
-			const want = JSON.stringify(quiet.searchDetailed(query, { limit: LIMIT }));
-			const wantHook = JSON.stringify(quiet.searchDetailed(query, { limit: LIMIT, includeLinked: false }));
-			const row = {
+			return {
 				label,
-				phases: coldRun("phases", dist, dir, query, opts.rounds, want),
-				server: coldRun("server", dist, dir, query, opts.rounds, want),
-				hook: coldRun("hook", dist, dir, query, opts.rounds, wantHook),
-				hookAllStale: coldRun("hook", dist, staleDir, query, opts.rounds, JSON.stringify({ results: [], totalMatched: 0 })),
-				base: opts.base ? coldRun("base", opts.base, dir, query, opts.rounds, want) : undefined,
+				query,
+				candidates: base.length,
+				legacyMs: legacy.ms,
+				newMs: next.ms,
+				ratio: legacy.ms / next.ms,
+				legacyPairs: legacyCount.pairs,
+				newPairs: reads / 2,
+				identical,
 			};
-			if (![row.phases, row.server, row.hook, row.hookAllStale, row.base].every((m) => !m || m.identical)) allIdentical = false;
-			return row;
 		});
-		const after = fs.statSync(indexFile, { bigint: true });
-		// 볼트가 그대로면 콜드 질의는 인덱스를 다시 쓰지 않아야 한다
-		const indexUntouched = before.ino === after.ino && before.mtimeNs === after.mtimeNs && before.size === after.size;
-		if (!indexUntouched) allIdentical = false;
-		const worstP95 = Math.max(...runs.map((r) => r.phases.ms.loadSearchMs.p95));
-		const criterion = { metric: "phases.ms.loadSearchMs p95 (인덱스 적재 + 검색)", limitMs: COLD_LIMIT_MS, worstP95, ok: worstP95 <= COLD_LIMIT_MS };
-		cold = { rounds: opts.rounds, criterion, runs, indexBytes: Number(after.size), indexUntouched };
-	}
 
-	const result = {
-		count: opts.count,
-		cluster: CLUSTER,
-		limit: LIMIT,
-		rounds: opts.rounds,
-		seed: opts.seed,
-		node: process.version,
-		rif,
-		e2e: e2e ?? "생략(--base 없음)",
-		cold: cold ?? "생략(--cold 없음)",
-		identical: allIdentical,
-	};
-	process.stdout.write(JSON.stringify(result, null, 2) + "\n");
-	if (!allIdentical || (cold && !cold.criterion.ok)) process.exitCode = 1;
-} finally {
-	Date.now = realNow;
-	fs.rmSync(dir, { recursive: true, force: true });
-	fs.rmSync(staleDir, { recursive: true, force: true });
+		let e2e;
+		if (opts.base) {
+			const { Vault: BaseVault } = await import(pathToFileURL(path.join(opts.base, "vault.js")).href);
+			const { MemoryStore: BaseStore } = await import(pathToFileURL(path.join(opts.base, "store.js")).href);
+			const oldStore = new BaseStore(new BaseVault(dir));
+			const newStore = new MemoryStore(new Vault(dir));
+			oldStore.reinforce = () => {};
+			newStore.reinforce = () => {};
+			e2e = queries.map(({ label, query }) => {
+				const run = (s) => s.searchDetailed(query, { limit: LIMIT });
+				const warmOld = JSON.stringify(run(oldStore));
+				const warmNew = JSON.stringify(run(newStore));
+				const oldT = time(opts.rounds, () => null, () => run(oldStore));
+				const newT = time(opts.rounds, () => null, () => run(newStore));
+				const identical = warmOld === warmNew && JSON.stringify(oldT.out) === JSON.stringify(newT.out);
+				if (!identical) allIdentical = false;
+				return { label, oldMs: oldT.ms, newMs: newT.ms, ratio: oldT.ms / newT.ms, identical };
+			});
+		}
+
+		let cold;
+		if (opts.cold) {
+			const quiet = new MemoryStore(new Vault(dir));
+			quiet.reinforce = () => {};
+			quiet.searchDetailed(queries[0].query, { limit: LIMIT }); // 역색인을 최신으로 만든다
+			const indexFile = path.join(dir, INDEX_DIR, INDEX_FILE);
+			if (!fs.existsSync(indexFile)) die(`역색인이 만들어지지 않았다: ${indexFile}`, 1);
+			const before = fs.statSync(indexFile, { bigint: true });
+			fs.cpSync(dir, staleDir, { recursive: true });
+			const dist = path.join(root, "dist");
+			const runs = queries.map(({ label, query }) => {
+				const want = JSON.stringify(quiet.searchDetailed(query, { limit: LIMIT }));
+				const wantHook = JSON.stringify(quiet.searchDetailed(query, { limit: LIMIT, includeLinked: false }));
+				const row = {
+					label,
+					phases: coldRun("phases", dist, dir, query, opts.rounds, want),
+					server: coldRun("server", dist, dir, query, opts.rounds, want),
+					hook: coldRun("hook", dist, dir, query, opts.rounds, wantHook),
+					hookAllStale: coldRun("hook", dist, staleDir, query, opts.rounds, JSON.stringify({ results: [], totalMatched: 0 })),
+					base: opts.base ? coldRun("base", opts.base, dir, query, opts.rounds, want) : undefined,
+				};
+				if (![row.phases, row.server, row.hook, row.hookAllStale, row.base].every((m) => !m || m.identical)) allIdentical = false;
+				return row;
+			});
+			const after = fs.statSync(indexFile, { bigint: true });
+			// 볼트가 그대로면 콜드 질의는 인덱스를 다시 쓰지 않아야 한다
+			const indexUntouched = before.ino === after.ino && before.mtimeNs === after.mtimeNs && before.size === after.size;
+			if (!indexUntouched) allIdentical = false;
+			const worstP95 = Math.max(...runs.map((r) => r.phases.ms.loadSearchMs.p95));
+			const criterion = { metric: "phases.ms.loadSearchMs p95 (인덱스 적재 + 검색)", limitMs: COLD_LIMIT_MS, worstP95, ok: worstP95 <= COLD_LIMIT_MS };
+			cold = { rounds: opts.rounds, criterion, runs, indexBytes: Number(after.size), indexUntouched };
+		}
+
+		const result = {
+			count: opts.count,
+			cluster: CLUSTER,
+			limit: LIMIT,
+			rounds: opts.rounds,
+			seed: opts.seed,
+			node: process.version,
+			rif,
+			e2e: e2e ?? "생략(--base 없음)",
+			cold: cold ?? "생략(--cold 없음)",
+			identical: allIdentical,
+		};
+		process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+		if (!allIdentical || (cold && !cold.criterion.ok)) process.exitCode = 1;
+	} finally {
+		Date.now = realNow;
+		fs.rmSync(dir, { recursive: true, force: true });
+		fs.rmSync(staleDir, { recursive: true, force: true });
+	}
 }

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// BigBrainMemory — 세션 훅 도우미. setup-hook.mjs 가 등록하는 두 훅의 실제 본체다.
+// BigBrainMemory — 세션 훅 도우미. setup-hook.mjs 가 등록하는 세 훅의 실제 본체다.
 //
-//   --start : 세션 시작 시점의 기억 수를 마커에 기록하고, MEMORY.md 를 컨텍스트에 주입한다.
-//   --stop  : 세션 동안 새로 저장된 기억이 0건이면 경고한다.
+//   --start  : 세션 시작 시점의 기억 수를 마커에 기록하고, MEMORY.md 를 컨텍스트에 주입한다.
+//   --prompt : 프롬프트로 역색인을 읽기 전용 검색해 관련 기억을 주입하고(자동 회상), 부호화 큐를 낸다.
+//   --stop   : 세션 동안 새로 저장된 기억이 0건이면 경고한다.
 //
 // 왜 셸 one-liner 가 아니라 Node 스크립트인가:
 //   Stop 훅은 "세션 시작 시점과 지금을 비교" 하는 상태 비교가 필요하다. 이를 Windows
@@ -39,6 +40,26 @@ const MIN_TOOL_USES = (() => {
 })();
 /** 훅 입력(stdin) 을 기다리는 한계 시간 — 넘기면 없는 셈 치고 진행한다(행 방지) */
 const STDIN_TIMEOUT_MS = 250;
+/** 자동 회상: 이보다 짧은 프롬프트는 검색하지 않는다 */
+const AUTO_MIN_PROMPT = 8;
+/** 자동 회상: 코드블록을 뺀 프롬프트에서 질의로 쓰는 앞부분 길이 */
+const AUTO_QUERY_CHARS = 500;
+/** 자동 회상: 한 번에 주입하는 최대 건수 */
+const AUTO_MAX = 3;
+/** 자동 회상: 1위 점수 대비 이 비율 미만인 결과는 버린다 */
+const AUTO_RELATIVE = 0.5;
+/** 자동 회상: 마커에 남기는 주입 slug 수 상한 */
+const AUTO_SLUG_KEEP = 200;
+/** 자동 회상: 주입할 최소 절대 점수 (BIGBRAIN_AUTO_MIN_SCORE) */
+const AUTO_MIN_SCORE = (() => {
+  const v = Number(process.env.BIGBRAIN_AUTO_MIN_SCORE);
+  return process.env.BIGBRAIN_AUTO_MIN_SCORE?.trim() && Number.isFinite(v) && v >= 0 ? v : 9;
+})();
+/** 자동 회상: 주입 블록 전체 문자 수 상한 (BIGBRAIN_AUTO_BUDGET) */
+const AUTO_BUDGET = (() => {
+  const v = Number(process.env.BIGBRAIN_AUTO_BUDGET);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : 1500;
+})();
 
 const argv = process.argv.slice(2);
 const mode = argv.includes("--stop") ? "stop" : argv.includes("--prompt") ? "prompt" : "start";
@@ -51,13 +72,20 @@ const vaultArg = argValue("--vault");
 /** 사용자가 설치 시 명시한 경로 — 자동탐지보다 우선한다 */
 const vaultForced = argValue("--vault-force");
 
-/** JSON 파일을 조용히 읽는다 (없거나 깨졌으면 null) */
+/** 경로별 readJson 결과 */
+const jsonCache = new Map();
+
+/** JSON 파일을 조용히 읽는다 (없거나 깨졌으면 null). 한 번 읽은 파일은 프로세스 안에서 다시 파싱하지 않는다 */
 function readJson(fp) {
+  if (jsonCache.has(fp)) return jsonCache.get(fp);
+  let v = null;
   try {
-    return JSON.parse(fs.readFileSync(fp, "utf-8").replace(/^﻿/, ""));
+    v = JSON.parse(fs.readFileSync(fp, "utf-8").replace(/^﻿/, ""));
   } catch {
-    return null;
+    v = null;
   }
+  jsonCache.set(fp, v);
+  return v;
 }
 
 /**
@@ -75,19 +103,26 @@ function readJson(fp) {
  */
 function findServer(servers) {
   if (!servers || typeof servers !== "object") return null;
+  const hasVault = (cfg) => typeof cfg?.env?.BIGBRAIN_VAULT === "string" && cfg.env.BIGBRAIN_VAULT.trim() !== "";
   const looksLikeUs = (name, cfg) => {
     if (/bigbrain/i.test(name)) return true;
-    if (typeof cfg?.env?.BIGBRAIN_VAULT === "string" && cfg.env.BIGBRAIN_VAULT.trim() !== "") return true;
+    if (hasVault(cfg)) return true;
     const cmd = [cfg?.command, ...(Array.isArray(cfg?.args) ? cfg.args : [])].filter((x) => typeof x === "string").join(" ");
     return /bigbrainmemory/i.test(cmd);
   };
   // 볼트를 실제로 들고 있는 항목을 우선한다 — 여러 개가 걸릴 때 더 구체적인 쪽이다
   const entries = Object.entries(servers).filter(([n, c]) => looksLikeUs(n, c));
-  const withVault = entries.find(([, c]) => typeof c?.env?.BIGBRAIN_VAULT === "string" && c.env.BIGBRAIN_VAULT.trim() !== "");
-  const [name, cfg] = withVault ?? entries[0] ?? [];
+  const withVault = entries.find(([, c]) => hasVault(c));
+  const [name] = withVault ?? entries[0] ?? [];
   if (!name) return null;
-  const v = cfg?.env?.BIGBRAIN_VAULT;
-  return { name, vault: typeof v === "string" && v.trim() !== "" ? v : null };
+  const env = servers[name]?.env;
+  const v = env?.BIGBRAIN_VAULT;
+  const p = env?.BIGBRAIN_PROJECT;
+  return {
+    name,
+    vault: typeof v === "string" && v.trim() !== "" ? v : null,
+    project: typeof p === "string" && p.trim() !== "" ? p.trim() : undefined,
+  };
 }
 const vaultFromServers = (servers) => findServer(servers)?.vault ?? null;
 const serverNameFromServers = (servers) => findServer(servers)?.name ?? null;
@@ -112,6 +147,21 @@ function resolveServerName() {
     serverNameFromServers(userCfg?.mcpServers) ??
     "bigbrainmemory"
   );
+}
+
+/**
+ * 서버의 기본 검색 범위(BIGBRAIN_PROJECT)를 서버 설정과 같은 우선순위로 찾는다. 없으면 undefined(전체).
+ * 범위를 맞추지 않으면 자동 회상이 서버 recall 에서는 보이지 않는 다른 프로젝트 기억을 주입한다.
+ */
+function resolveProject() {
+  if (process.env.BIGBRAIN_PROJECT?.trim()) return process.env.BIGBRAIN_PROJECT.trim();
+  const cwd = process.cwd();
+  const userCfg = readJson(path.join(os.homedir(), ".claude.json"));
+  for (const servers of [readJson(path.join(cwd, ".mcp.json"))?.mcpServers, userCfg?.projects?.[cwd]?.mcpServers, userCfg?.mcpServers]) {
+    const s = findServer(servers);
+    if (s) return s.project;
+  }
+  return undefined;
 }
 
 /**
@@ -228,7 +278,7 @@ async function readHookInput() {
     }
   });
   try {
-    const o = JSON.parse(raw);
+    const o = JSON.parse(String(raw));
     return {
       sessionId: typeof o?.session_id === "string" ? o.session_id : null,
       source: typeof o?.source === "string" ? o.source : null,
@@ -276,6 +326,8 @@ function readMarker() {
         /** 마지막 저장 시점의 기억 수·턴 — 큐 판정의 기준선. 저장할 때마다 리셋된다 */
         cueBaseCount: Number.isFinite(o.cueBaseCount) ? o.cueBaseCount : Number.NaN,
         cueBaseTurn: Number.isFinite(o.cueBaseTurn) ? o.cueBaseTurn : Number.NaN,
+        /** 이 세션에서 자동 회상으로 이미 주입한 slug */
+        autoSlugs: Array.isArray(o.autoSlugs) ? o.autoSlugs.filter((s) => typeof s === "string") : [],
       };
     }
   } catch {
@@ -283,7 +335,7 @@ function readMarker() {
   }
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n)
-    ? { sessionId: null, count: n, total: Number.NaN, warned: false, logged: false, loggedStored: false, cued: false, turns: 0 }
+    ? { sessionId: null, count: n, total: Number.NaN, warned: false, logged: false, loggedStored: false, cued: false, turns: 0, autoSlugs: [] }
     : null;
 }
 
@@ -318,6 +370,96 @@ function writeMarker(m) {
   }
 }
 
+/** ``` 또는 ~~~ 펜스 코드블록을 뺀 텍스트 (닫히지 않은 펜스는 끝까지 뺀다) */
+function stripFences(text) {
+  let fence = "";
+  return text
+    .split(/\r?\n/)
+    .filter((line) => {
+      const f = /^\s*(`{3,}|~{3,})/.exec(line)?.[1] ?? "";
+      if (fence) {
+        if (f && f[0] === fence[0] && f.length >= fence.length) fence = "";
+        return false;
+      }
+      fence = f;
+      return !f;
+    })
+    .join("\n");
+}
+
+/**
+ * 프롬프트로 영속 역색인을 읽기 전용 검색해 자동 회상 블록을 만든다 (T44).
+ * 검색하지 않았으면 null, 검색했으면 { block(주입할 게 없으면 null), slugs, topScore }.
+ * 인덱스·기억 파일을 쓰지 않고 강화도 하지 않는다 — 모델이 고른 회상이 아니므로 저장강도를 올릴 근거가 없다.
+ */
+async function autoRecall(prompt, injected) {
+  if (process.env.BIGBRAIN_AUTO_RECALL === "0" || typeof prompt !== "string") return null;
+  const text = prompt.trim();
+  if (text.length < AUTO_MIN_PROMPT || text.startsWith("/")) return null;
+  const query = stripFences(text).trim().slice(0, AUTO_QUERY_CHARS);
+  let store;
+  try {
+    // 무거운 모듈(gray-matter 등)은 이 경로에서 불러오지 않는다 — regress-auto-recall 이 import 목록을 고정한다
+    store = await import(new URL("../dist/store.js", import.meta.url).href);
+  } catch {
+    return null;
+  }
+  const project = resolveProject();
+  // 1위 점수(top)는 이미 주입한 것을 포함한 활성 결과의 최고점이다 — 질의에 가장 잘 맞는 기억이 기준이다
+  const eligible = (score, top) => score >= AUTO_MIN_SCORE && score >= top * AUTO_RELATIVE;
+  let picked;
+  let top = 0;
+  // 비활성·이미 주입한 결과를 먼저 거른 뒤 AUTO_MAX 건으로 자른다. 받은 결과의 최저점까지 기준을 넘으면 더 받는다
+  for (let limit = AUTO_MAX * 2; ; limit *= 2) {
+    let results;
+    try {
+      results = store.searchPersistedIndex(vaultDir, query, { limit, project }).results;
+    } catch {
+      return null;
+    }
+    const active = results.filter((r) => r.record.status === "active");
+    top = active.reduce((a, r) => Math.max(a, r.score), 0);
+    picked = active
+      .filter((r) => eligible(r.score, top) && !injected.includes(r.record.slug))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, AUTO_MAX);
+    const floor = results.reduce((a, r) => Math.min(a, r.score), Number.POSITIVE_INFINITY);
+    if (picked.length >= AUTO_MAX || results.length < limit || !eligible(floor, top)) break;
+  }
+  const open = (n) =>
+    `<bigbrainmemory-auto-recall matched="${n}" note="자동 검색 결과. 관련 없으면 무시. 전문은 read_memory">`;
+  const close = "</bigbrainmemory-auto-recall>";
+  const line = (r, desc) => {
+    const m = r.record;
+    const age = Math.max(0, Math.floor((Date.now() - Date.parse(m.updated)) / 86_400_000));
+    const days = Number.isFinite(age) ? age : 0;
+    const stale = store.isStale(m, days) ? ", 대조 필요" : "";
+    return `- [${m.slug}] ${desc} (${m.type}, conf ${Number(m.confidence.toFixed(2))}, ${days}일 전${stale})`;
+  };
+  // 여는·닫는 태그와 줄바꿈까지 포함해 예산을 센다
+  let used = open(picked.length).length + close.length + 1;
+  let full = false;
+  // 예산을 넘는 줄에서 멈춘다. 한 줄도 못 넣었으면 첫 줄의 설명을 잘라서라도 넣는다
+  const fitted = picked.flatMap((r) => {
+    if (full) return [];
+    const desc = (r.record.description.trim() || r.record.title).replace(/[\r\n<>]+/g, " ").trim();
+    let text = line(r, desc);
+    if (used + text.length + 1 > AUTO_BUDGET) {
+      const room = AUTO_BUDGET - used - 1 - line(r, "…").length;
+      full = true;
+      if (r !== picked[0] || room < 1) return [];
+      text = line(r, `${desc.slice(0, room)}…`);
+    }
+    used += text.length + 1;
+    return [{ slug: r.record.slug, text }];
+  });
+  return {
+    block: fitted.length > 0 ? `${open(fitted.length)}\n${fitted.map((f) => f.text).join("\n")}\n${close}` : null,
+    slugs: fitted.map((f) => f.slug),
+    topScore: Math.round(top * 100) / 100,
+  };
+}
+
 const hookInput = await readHookInput();
 
 // ── prompt: 부호화 큐 (T34)
@@ -335,9 +477,33 @@ const hookInput = await readHookInput();
 // 밝히고 출처·타입을 지정하지 않는다.
 if (mode === "prompt") {
   const m = readMarker();
-  // 기준선이 없으면(세션 시작을 못 봤으면) 판단 근거가 없다
-  if (!m || !Number.isFinite(m.count)) process.exit(0);
-  if (hookInput.sessionId && m.sessionId && hookInput.sessionId !== m.sessionId) process.exit(0);
+  // 기준선이 없거나(세션 시작을 못 봤으면) 다른 세션의 마커면 큐 판단 근거가 없다
+  const tracked =
+    !!m && Number.isFinite(m.count) && !(hookInput.sessionId && m.sessionId && hookInput.sessionId !== m.sessionId);
+
+  // 자동 회상 (T44). 이미 주입한 slug 는 같은 세션의 마커가 있을 때만 거르고 기록한다
+  const recall = await autoRecall(hookInput.prompt, m && tracked ? m.autoSlugs : []);
+  if (recall) {
+    // 질의 내용은 남기지 않는다 — 건수와 1위 점수뿐이다
+    logUsage({ tool: "auto_recall", sessionId: hookInput.sessionId, injected: recall.slugs.length, topScore: recall.topScore });
+    if (m && tracked && recall.slugs.length > 0) m.autoSlugs = [...m.autoSlugs, ...recall.slugs].slice(-AUTO_SLUG_KEEP);
+  }
+  /**
+   * 회상 블록과 부호화 큐를 한 JSON 의 hookSpecificOutput.additionalContext 로 낸다(회상 → 큐 순서). 낼 것이 없으면 아무것도 쓰지 않는다.
+   * 평문과 JSON 을 섞어 내면 JSON 으로 해석되지 않고, 최상위 additionalContext 는 무시된다.
+   */
+  const emitPrompt = (cue = "") => {
+    const context = [recall?.block, cue].filter(Boolean).join("\n");
+    if (context) {
+      process.stdout.write(
+        `${JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } })}\n`,
+      );
+    }
+  };
+  if (!m || !tracked) {
+    emitPrompt();
+    process.exit(0);
+  }
   const turns = Number.isFinite(m.turns) ? m.turns + 1 : 1;
 
   // **이진 판정이 아니라 증분 판정이다.**
@@ -356,6 +522,7 @@ if (mode === "prompt") {
   if (current > base) {
     // 저장이 있었다 — 시계를 여기서 다시 시작하고 이번 턴은 조용히 지나간다
     writeMarker({ ...m, turns, cueBaseCount: current, cueBaseTurn: turns });
+    emitPrompt();
     process.exit(0);
   }
 
@@ -366,6 +533,7 @@ if (mode === "prompt") {
   })();
   if (Number.isFinite(m.lastCueTurn) && turns - m.lastCueTurn < COOLDOWN) {
     writeMarker({ ...m, turns });
+    emitPrompt();
     process.exit(0);
   }
 
@@ -383,6 +551,7 @@ if (mode === "prompt") {
 
   if (!lexicalHit && !turnHit) {
     writeMarker({ ...m, turns });
+    emitPrompt();
     process.exit(0);
   }
   writeMarker({ ...m, turns, lastCueTurn: turns, cued: true });
@@ -393,7 +562,7 @@ if (mode === "prompt") {
       `verify against what the user actually wrote before treating it as a correction.`
     : `${turns - baseTurn} turns since anything was last stored${baseTurn > 0 ? " (a memory was stored earlier in this session — this is about what has happened since)" : ""}.`;
 
-  process.stdout.write(
+  emitPrompt(
     `<bigbrainmemory-cue kind="lexical-hint">\n` +
       `${why}\n` +
       `If a REMEMBER trigger genuinely fired — the user corrected you or stated a preference, a decision settled, ` +
@@ -401,7 +570,7 @@ if (mode === "prompt") {
       `wording is still verbatim in context, rather than at the end of the session. Record provenance accurately in ` +
       `\`source\` and pick \`type\` yourself; do not infer either from this cue. ` +
       `If nothing durable happened, ignore this and continue — it is shown once per session.\n` +
-      `</bigbrainmemory-cue>\n`,
+      `</bigbrainmemory-cue>`,
   );
   logUsage({ event: "cue", sessionId: m.sessionId, turns, reason: lexicalHit ? "lexical" : "turns" });
   process.exit(0);
@@ -443,6 +612,9 @@ if (mode === "start") {
       total,
       ...(lost > 0 ? { lost } : {}),
     });
+  } else if (prev && hookInput.source === "compact" && prev.autoSlugs.length > 0) {
+    // 압축으로 앞서 주입한 자동 회상 블록이 컨텍스트에서 빠졌을 수 있다 — 다시 주입할 수 있게 비운다
+    writeMarker({ ...prev, autoSlugs: [] });
   }
 
   // 볼트 디렉터리 자체가 없으면 침묵한다. 이건 콜드 스타트가 아니라 **설정이 어긋난**
