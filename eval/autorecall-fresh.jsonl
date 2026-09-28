@@ -1,0 +1,30 @@
+{"query":"How do we add a new API version to the service?","expected":["api-versioning-add"],"split":"exact"}
+{"query":"CI 에서 실패한 잡만 재실행하는 명령이 뭐였지?","expected":["ci-rerun-failed"],"split":"exact"}
+{"query":"Need to purge the CDN manually for robots.txt","expected":["cdn-purge-manual"],"split":"exact"}
+{"query":"DB 백업을 복원해서 검증하는 방법 알려줘","expected":["db-backup-restore"],"split":"exact"}
+{"query":"로그 검색할 때 request_id 로 필터하는 법","expected":["log-search-loki"],"split":"exact"}
+{"query":"I'm stuck trying to resolve rebase conflicts on my branch","expected":["git-rebase-conflict"],"split":"exact"}
+{"query":"Which Node version do we pin for services?","expected":["node-version-pin"],"split":"exact"}
+{"query":"파이썬 가상환경 위치를 어디로 잡아야 해?","expected":["python-venv-location"],"split":"exact"}
+{"query":"Should I prefer pnpm for this new project?","expected":["pref-pnpm-over-npm"],"split":"exact"}
+{"query":"업로드 원본이랑 썸네일 버킷 구조가 어떻게 돼?","expected":["s3-bucket-layout"],"split":"exact"}
+{"query":"React 컴포넌트에서 useEffect 가 두 번 실행되는 이유가 뭐야?","expected":[],"split":"none"}
+{"query":"Explain the difference between a Rust trait object and a generic parameter","expected":[],"split":"none"}
+{"query":"이 정규식이 이메일 주소를 제대로 거르는지 봐줘","expected":[],"split":"none"}
+{"query":"CSS grid 로 카드 세 줄 배치하는 예시 만들어줘","expected":[],"split":"none"}
+{"query":"How do I center a div vertically with flexbox?","expected":[],"split":"none"}
+{"query":"파이토치 모델 학습에서 손실이 NaN 이 되는 원인","expected":[],"split":"none"}
+{"query":"Translate this paragraph into formal Japanese please","expected":[],"split":"none"}
+{"query":"안드로이드 앱에서 카메라 권한 요청하는 코드","expected":[],"split":"none"}
+{"query":"What is the time complexity of heapsort in the worst case?","expected":[],"split":"none"}
+{"query":"Go 언어 채널로 생산자 소비자 패턴 짜줘","expected":[],"split":"none"}
+{"query":"Summarize the plot of this short story in three sentences","expected":[],"split":"none"}
+{"query":"엑셀 피벗 테이블에서 월별 합계 내는 법","expected":[],"split":"none"}
+{"query":"Generate a regex that matches IPv6 addresses","expected":[],"split":"none"}
+{"query":"유니티에서 캐릭터 점프 물리 자연스럽게 만들기","expected":[],"split":"none"}
+{"query":"Write a haiku about autumn leaves falling","expected":[],"split":"none"}
+{"query":"WebGL 셰이더로 물결 효과 만드는 방법","expected":[],"split":"none"}
+{"query":"How can I parse a CSV file with quoted commas in Python?","expected":[],"split":"none"}
+{"query":"스위프트에서 옵셔널 체이닝 설명해줘","expected":[],"split":"none"}
+{"query":"Design a database schema for a library lending system","expected":[],"split":"none"}
+{"query":"이 함수 이름을 더 읽기 좋게 바꿔줘","expected":[],"split":"none"}
