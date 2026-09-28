@@ -3,6 +3,7 @@ import { logWarn } from "./log.js";
 import { RETRIEVAL_THRESHOLD, activationOf, rank } from "./ranker.js";
 import {
   LexicalRetriever,
+  fuseWeightedMax,
   type ParsedQuery,
   type Retriever,
   inScope,
@@ -22,6 +23,10 @@ import type {
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
+/** recall 한 번에 쓰는 변형 질의 수 상한 — 넘는 것은 버린다 */
+export const MAX_ALT_QUERIES = 3;
+/** 융합에서 변형 질의 원점수에 곱하는 가중 (원 질의는 1) */
+const ALT_QUERY_WEIGHT = 0.7;
 
 // --- 리포트(docs/memory-model-report.md) 기반 파라미터 -------------------
 // 기저활성 감쇠 DECAY_D·약해진 기억 임계 RETRIEVAL_THRESHOLD·RIF 임계는 ranker.ts 에 있다.
@@ -259,6 +264,12 @@ function expandTokens(tokens: string[]): string[] {
 export function parseQuery(query: string): ParsedQuery {
   const tokens = tokenize(query);
   return { tokens, expanded: expandTokens(tokens), exact: new Set(tokens) };
+}
+
+/** 여러 질의의 해석을 합친다 — 원 질의 토큰을 앞에 두고 순서를 지키며, 스니펫 강조에만 쓴다 */
+function mergeQueries(queries: ParsedQuery[]): ParsedQuery {
+  const tokens = [...new Set(queries.flatMap((pq) => pq.tokens))];
+  return { tokens, expanded: [...new Set(queries.flatMap((pq) => pq.expanded))], exact: new Set(tokens) };
 }
 
 /**
@@ -532,22 +543,41 @@ export class MemoryStore {
   /** 결과 배열만 필요할 때 쓰는 편의 래퍼 (컷오프 정보가 필요하면 searchDetailed) */
   search(
     query: string,
-    opts?: { type?: MemoryType; limit?: number; includeLinked?: boolean; project?: string },
+    opts?: { type?: MemoryType; limit?: number; includeLinked?: boolean; project?: string; altQueries?: string[] },
   ): SearchResult[] {
     return this.searchDetailed(query, opts).results;
   }
 
   searchDetailed(
     query: string,
-    opts?: { type?: MemoryType; limit?: number; includeLinked?: boolean; project?: string },
+    opts?: {
+      type?: MemoryType;
+      limit?: number;
+      includeLinked?: boolean;
+      project?: string;
+      altQueries?: string[];
+    },
   ): SearchOutcome {
     const q = parseQuery(query);
     if (q.tokens.length === 0) return { results: [], totalMatched: 0 };
     const limit = opts?.limit ?? 5;
     this.retriever.sync(this.vault);
     const now = Date.now();
+    const filter = { type: opts?.type, project: opts?.project };
 
-    const candidates = this.retriever.search(q, Infinity, { type: opts?.type, project: opts?.project });
+    // 1) 질의별 Retriever 후보 — 토큰이 없거나 앞 질의와 토큰이 같은 변형은 뺀다
+    const seen = new Set([q.tokens.join(" ")]);
+    const alts = (opts?.altQueries ?? [])
+      .slice(0, MAX_ALT_QUERIES)
+      .map(parseQuery)
+      .filter((a) => {
+        const key = a.tokens.join(" ");
+        if (a.tokens.length === 0 || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    const queries = [q, ...alts];
+    const lists = queries.map((pq) => this.retriever.search(pq, Infinity, filter));
 
     // 여기에 "0건이면 제목·태그를 느슨하게 재검사" 하는 2차 패스가 있었다(감사 D2).
     // T16 이 1차 패스의 매처를 includes 에서 tokenMatch 로 통일하면서 무력화됐다 —
@@ -558,7 +588,14 @@ export class MemoryStore {
     // 비용만 치렀다. 되살리려면 필드를 넓히는 게 아니라 **더 느슨한 매처**가 필요하다
     // (n-gram·임베딩). T22 평가에서 둘 다 근거 부족으로 기각됐다 — GOAL.md 참조.
 
-    const { results, totalMatched } = rank(candidates, q, {
+    // 2) 가중 최대 융합 — 변형이 없으면 단일 목록을 그대로 쓴다(출력 불변).
+    // 순위 기반 융합(RRF)은 점수 차를 평평하게 만들어 Ranker 의 신뢰도·활성도 곱이 관련도를 뒤집는다.
+    const candidates =
+      alts.length === 0 ? lists[0] : fuseWeightedMax(lists, queries.map((_, i) => (i === 0 ? 1 : ALT_QUERY_WEIGHT)));
+    const rq = alts.length === 0 ? q : mergeQueries(queries);
+
+    // 3) Ranker — 신뢰도·활성도·RIF·연상 확산
+    const { results, totalMatched } = rank(candidates, rq, {
       limit,
       now,
       includeLinked: opts?.includeLinked,
@@ -574,6 +611,7 @@ export class MemoryStore {
     // 연상 이웃도 "목록에 스쳤을 뿐 실제로 인출된 것" 이 아니므로 강화 대상에서 뺀다 —
     // 자주 질의되는 주제의 이웃들이 실사용과 무관하게 일괄 적립되던 문제를 막는다.
     // (연상 이웃을 정말 쓴 경우엔 이어지는 read_memory 가 수동 강화를 준다)
+    // 융합 목록은 색인 항목당 한 건이라 변형이 몇 개든 한 호출에서 기억마다 한 번만 강화된다.
     for (const r of results) {
       const isAssoc = r.snippet.startsWith("(연상");
       if (isAssoc || r.inhibited) continue;

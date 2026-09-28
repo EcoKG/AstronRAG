@@ -142,6 +142,20 @@ export interface Retriever {
 	sync(vault: Vault): void;
 }
 
+/** 질의별 후보 목록을 가중 최대 점수로 합친다 — 색인 항목마다 w_q × 원점수 중 가장 큰 값을 쓴다 */
+export function fuseWeightedMax(lists: Candidate[][], weights: number[]): Candidate[] {
+	// 한 sync 안에서 색인 항목마다 토큰 배열이 하나라, 이것을 키로 memories·archive 의 같은 slug 를 가른다
+	const fused = new Map<string[], Candidate>();
+	lists.forEach((list, qi) => {
+		for (const c of list) {
+			const score = weights[qi] * c.score;
+			const prev = fused.get(c.titleDescTokens);
+			if (!prev || score > prev.score) fused.set(c.titleDescTokens, { ...(prev ?? c), score });
+		}
+	});
+	return [...fused.values()];
+}
+
 /** 레코드 1건의 색인 항목 — 항목 키, 파일 신원, 레코드, 필드별 사전 토큰 */
 interface Entry {
 	key: string;
