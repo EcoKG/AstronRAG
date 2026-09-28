@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +7,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { Vault } from "./vault.js";
-import { MemoryStore } from "./store.js";
+import { MemoryStore, isStale, reviewOverdue } from "./store.js";
 import { initUsageLog, logUsage, queryField } from "./usage.js";
 import { logError, logInfo, logWarn } from "./log.js";
 import type { MemoryRecord, SearchResult } from "./types.js";
@@ -317,11 +317,40 @@ const server = new McpServer(
   { instructions: INSTRUCTIONS },
 );
 
-/** 이 일수 이상 갱신되지 않은 기억에 낡음 경고를 붙인다 (0 이면 항상 경고) */
-const STALE_DAYS = (() => {
-  const v = Number(process.env.BIGBRAIN_STALE_DAYS);
-  return Number.isFinite(v) && v >= 0 ? v : 30;
-})();
+/** 본문이 이 글자 수를 넘으면 사실 단위로 나누라고 경고한다(저장은 막지 않음) */
+const LONG_BODY_CHARS = 1500;
+
+/** 비밀정보로 보이는 값의 종류와 검출 패턴 — 최소 길이 조건으로 키 이름·접두사 언급은 통과시킨다 */
+const SECRET_PATTERNS: [string, RegExp][] = [
+  ["Anthropic API 키(sk-ant-)", /\bsk-ant-[A-Za-z0-9_-]{20,}/],
+  ["API 키(sk-)", /\bsk-[A-Za-z0-9_-]{20,}/],
+  ["GitHub 토큰(ghp_)", /\bghp_[A-Za-z0-9]{36}\b/],
+  ["AWS 액세스 키(AKIA)", /\bAKIA[0-9A-Z]{16}\b/],
+  ["개인키(PRIVATE KEY)", /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/],
+  ["비밀번호(password=)", /password\s*=\s*["']?[^\s"']{4,}/i],
+];
+
+/** 텍스트들에서 비밀정보로 보이는 값을 찾아 종류 이름을 돌려준다(없으면 null) */
+function findSecret(...texts: (string | undefined)[]): string | null {
+  const joined = texts.filter((t): t is string => typeof t === "string").join("\n");
+  for (const [kind, re] of SECRET_PATTERNS) if (re.test(joined)) return kind;
+  return null;
+}
+
+/** 비밀정보 저장 거부 응답 */
+function secretRejected(kind: string) {
+  return fail(
+    `저장 거부: 비밀정보(${kind})로 보이는 값이 있습니다. 값 대신 위치(예: .env 의 키 이름, 비밀 관리 도구의 항목명)를 저장하세요.`,
+  );
+}
+
+/** 본문이 길면 사실 단위로 나누라는 경고 문구를 돌려준다 */
+function longBodyHint(content: string | undefined): string | null {
+  const n = content?.trim().length ?? 0;
+  return n > LONG_BODY_CHARS
+    ? `본문 ${n}자(기준 ${LONG_BODY_CHARS}자 초과) — 사실 단위로 나눠 remember 하고 [[링크]]로 이으세요.`
+    : null;
+}
 
 /**
  * 기억의 나이를 응답에 실어준다 (감사 E4).
@@ -339,9 +368,11 @@ function ageInfo(m: MemoryRecord): Record<string, unknown> {
   return {
     updated: m.updated,
     age_days: ageDays,
-    ...(ageDays >= STALE_DAYS
+    ...(isStale(m, ageDays)
       ? {
-          stale_hint: `이 기억은 ${ageDays}일 전에 갱신됐습니다 — 현재 코드/사실과 대조한 뒤 사용하고, 달라졌으면 revise 로 교정하세요.`,
+          stale_hint: reviewOverdue(m)
+            ? `이 기억은 검토일(review_after ${m.reviewAfter})이 지났습니다(${ageDays}일 전 갱신) — 현재 코드/사실과 대조한 뒤 사용하고, 달라졌으면 revise 로 교정하세요.`
+            : `이 기억은 ${ageDays}일 전에 갱신됐습니다 — 현재 코드/사실과 대조한 뒤 사용하고, 달라졌으면 revise 로 교정하세요.`,
         }
       : {}),
   };
@@ -362,6 +393,7 @@ function brief(m: MemoryRecord): Record<string, unknown> {
     access_count: m.accessCount,
     source: m.source,
     project: m.project,
+    review_after: m.reviewAfter,
     links: m.links,
   };
 }
@@ -463,13 +495,27 @@ server.registerTool(
           "Slugs of the episodic memories this one abstracts (consolidation). Use when you notice the same thing happened several times and are recording the general rule. " +
             "The source episodes are NEVER modified or deleted — they stay verbatim and keep surfacing in recall. This field only records where the generalisation came from, so it can be audited and revisited.",
         ),
+      review_after: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/)
+        .optional()
+        .describe("Review date (YYYY-MM-DD). After this date the memory is flagged with `stale_hint` regardless of age."),
     },
   },
   async (args) => {
+    const secret = findSecret(args.title, args.description, args.content);
+    if (secret) {
+      logUsage({ tool: "remember", ok: false, secretBlocked: secret });
+      return secretRejected(secret);
+    }
     // project 를 생략하면 전역 기억이다 — 서버 스코프를 몰래 씌우지 않는다.
     // (씌우면 "전역이면 생략" 이라는 도구 설명과 모순되고, 사용자 선호 같은
     //  범용 지식이 한 프로젝트에 갇혀 다른 곳에서 조용히 회상되지 않는다)
-    const { record, similar, dangling } = store.remember({ ...args, derivedFrom: args.derived_from });
+    const { record, similar, contradictions, dangling } = store.remember({
+      ...args,
+      derivedFrom: args.derived_from,
+      reviewAfter: args.review_after,
+    });
     logUsage({
       tool: "remember",
       ok: true,
@@ -477,6 +523,7 @@ server.registerTool(
       derivedCount: record.derivedFrom?.length ?? 0,
       scoped: args.project !== undefined,
       similarCount: similar.length,
+      contradictionCount: contradictions.length,
       danglingCount: dangling.length,
       hasSource: args.source !== undefined,
       confidence: record.confidence,
@@ -487,13 +534,21 @@ server.registerTool(
       similar.length > 0
         ? "Similar memories exist. If this duplicates one of them, call `forget` on this new memory and `revise` the existing one instead."
         : null,
+      contradictions.length > 0
+        ? "기존 기억과 숫자/버전/부정이 다릅니다(possible_contradiction) — 기존 것을 revise 하거나 supersedes 로 대체하세요. 자동 병합·삭제는 하지 않습니다."
+        : null,
       dangling.length > 0
         ? `Broken wikilinks (no such memory): ${dangling.map((d) => `[[${d}]]`).join(", ")}. Either \`remember\` those, or \`revise\` this body to remove them — do not leave links pointing at nothing.`
         : null,
+      longBodyHint(args.content),
     ].filter((x): x is string => x !== null);
     return ok({
       stored: brief(record),
       similar_existing_memories: similar.filter((m) => m.slug !== record.slug).map(brief),
+      possible_contradiction:
+        contradictions.length > 0
+          ? contradictions.map((c) => ({ ...brief(c.record), reasons: c.reasons }))
+          : undefined,
       broken_links: dangling.length > 0 ? dangling : undefined,
       hint: hints.length > 0 ? hints.join(" ") : undefined,
     });
@@ -602,10 +657,31 @@ server.registerTool(
       type: MEMORY_TYPE.optional().describe(
         "Reclassify the memory type. Use to fix a misclassification, or when a repeated experience has become general knowledge (episodic → semantic). The change is recorded in history.",
       ),
+      review_after: z
+        .string()
+        .regex(/^(\d{4}-\d{2}-\d{2})?$/)
+        .optional()
+        .describe("Set the review date (YYYY-MM-DD). Pass an empty string to clear it."),
     },
   },
-  async ({ id, reason, content, title, description, tags, confidence, source, project, type }) => {
-    const m = store.revise(id, { reason, content, title, description, tags, confidence, source, project, type });
+  async ({ id, reason, content, title, description, tags, confidence, source, project, type, review_after }) => {
+    const secret = findSecret(title, description, content);
+    if (secret) {
+      logUsage({ tool: "revise", ok: false, secretBlocked: secret });
+      return secretRejected(secret);
+    }
+    const m = store.revise(id, {
+      reason,
+      content,
+      title,
+      description,
+      tags,
+      confidence,
+      source,
+      project,
+      type,
+      reviewAfter: review_after,
+    });
     // revise 호출률은 자기교정 루프가 도는지의 지표다 — 낡은 기억이 방치되는지 여기서 드러난다
     logUsage({
       tool: "revise",
@@ -615,7 +691,7 @@ server.registerTool(
       typeChanged: type !== undefined,
     });
     if (!m) return fail(`Memory not found: ${id}`);
-    return ok({ revised: full(m) });
+    return ok({ revised: full(m), hint: longBodyHint(content) ?? undefined });
   },
 );
 

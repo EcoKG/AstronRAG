@@ -55,6 +55,8 @@ export interface MemoryRecord {
    * 본문에만 적으면 revise 한 번에 출처가 사라져 손으로 쓴 단정문과 구별되지 않는다.
    */
   derivedFrom?: string[];
+  /** 검토일(YYYY-MM-DD). 이 날이 지나면 나이와 무관하게 낡음으로 표시한다 */
+  reviewAfter?: string;
   supersedes?: string;
   supersededBy?: string;
   archiveReason?: string;
@@ -77,6 +79,8 @@ export interface RememberInput {
   supersedes?: string;
   /** 이 기억이 추상화한 근거 에피소드들의 slug (T35 공고화) */
   derivedFrom?: string[];
+  /** 검토일(YYYY-MM-DD) */
+  reviewAfter?: string;
   /**
    * 파일명·위키링크 대상으로 쓸 슬러그. 생략하면 제목에서 파생된다.
    * 제목과 분리한 이유: 종전에는 링크 대상을 안정적으로 두려면 제목 자체를 영문 케밥으로
@@ -100,6 +104,8 @@ export interface ReviseInput {
    * 표현할 길이 없었다는 뜻이다.
    */
   type?: MemoryType;
+  /** 검토일(YYYY-MM-DD). 빈 문자열이면 해제한다 */
+  reviewAfter?: string;
   reason: string;
 }
 

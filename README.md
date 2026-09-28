@@ -102,18 +102,20 @@ source: 코드 리뷰 대화
 
 ## 제공 도구 (8개)
 
-기억을 반환하는 **모든 응답**에 공통으로 실리는 필드: `id` · `slug` · `title` · `description` · `type` · `tags` · `confidence` · `storage_strength` · `status` · `access_count` · `source` · `project` · `links` · `updated` · **`age_days`** · 그리고 30일 이상 갱신되지 않았으면 **`stale_hint`**(현재 코드와 대조하라는 경고).
+기억을 반환하는 **모든 응답**에 공통으로 실리는 필드: `id` · `slug` · `title` · `description` · `type` · `tags` · `confidence` · `storage_strength` · `status` · `access_count` · `source` · `project` · `links` · `updated` · **`age_days`** · 설정했으면 `review_after` · 그리고 타입별 임계(episodic 14일, semantic·procedural 60일, preference 180일) 이상 갱신되지 않았거나 검토일(`review_after`)이 지났으면 **`stale_hint`**(현재 코드와 대조하라는 경고).
 
 | 도구 | 파라미터 | 비고 |
 |---|---|---|
-| `remember` | `title` `content` `type` / `description` `tags` `links` `confidence` `source` `project` `supersedes` | 유사 기억이 있으면 `similar_existing_memories`로 알려 중복 대신 `revise`를 유도. 본문의 `[[위키링크]]`가 없는 슬러그를 가리키면 `broken_links`로 알립니다(**차단하지 않음** — 선행 참조는 정상). **`project`를 생략하면 전역 기억**이 됩니다(서버 스코프를 자동으로 씌우지 않음) |
+| `remember` | `title` `content` `type` / `description` `tags` `links` `confidence` `source` `project` `supersedes` `review_after`(YYYY-MM-DD) | 유사 기억이 있으면 `similar_existing_memories`로 알려 중복 대신 `revise`를 유도. 유사 기억과 숫자·버전(양쪽에 서로 다른 값이 있을 때, 날짜 제외)·부정어가 갈리면 `possible_contradiction`(사유 `number`/`negation`)으로 알려 `revise`나 `supersedes`를 유도합니다(자동 병합·삭제 없음). 제목·설명·본문에 API 키(`sk-ant-`·`sk-`·`ghp_`·`AKIA`)·개인키 헤더·`password=`(`DB_PASSWORD=` 같은 접두 포함) 값이 있으면 **저장을 거부**하고 값 대신 위치(예: `.env`의 키 이름)를 저장하라고 답합니다. 본문이 1,500자를 넘으면 저장은 하되 사실 단위로 나눠 링크하라고 `hint`로 경고합니다. 본문의 `[[위키링크]]`가 없는 슬러그를 가리키면 `broken_links`로 알립니다(**차단하지 않음** — 선행 참조는 정상). **`project`를 생략하면 전역 기억**이 됩니다(서버 스코프를 자동으로 씌우지 않음) |
 | `recall` | `query` / `type` `limit`(1~20, 기본 5) `include_linked`(기본 true) `project` | 응답에 `total_matched`(컷오프 전 총 건수)와 잘렸을 때 `truncated` 안내. 결과별로 `score` `activation` `inhibited` `snippet`. 0건이면 재질의를 유도하는 `note` |
 | `read_memory` | `id` (슬러그 또는 id) | 전문(`body`)과 `history`까지. 읽으면 강화되지만 능동 회상보다 약합니다 |
-| `revise` | `id` `reason` / `content` `title` `description` `tags` `confidence` `source` `project` | 사유 필수(이력에 기록). `project: ""`로 전역으로 되돌릴 수 있습니다 |
+| `revise` | `id` `reason` / `content` `title` `description` `tags` `confidence` `source` `project` `type` `review_after` | 사유 필수(이력에 기록). `project: ""`로 전역으로, `review_after: ""`로 검토일 해제. 비밀정보 차단과 1,500자 경고는 `remember`와 같습니다 |
 | `forget` | `id` `reason` | `archive/`로 이동, 사유 기록 |
 | `link` | `source` `target` / `relation` | 양방향 위키링크. `relation`은 본문 `## 연관 기억`에 라벨로 남습니다 |
 | `reflect` | (없음) | `weakened_hard_to_recall` · `forget_candidates` · **`trusted_but_faded`**(약해졌지만 확신도가 높아 후보에서 제외된 건수) · `low_confidence` · `possible_duplicates` · `orphans_without_links` · **`broken_links`**(없는 슬러그를 가리키는 위키링크) |
 | `list_memories` | `type` `status`(active/superseded/archived) `project` | 최근 갱신순 |
+
+> **`review_after` 하위 호환 주의** — 이 필드를 모르는 이전 버전 서버가 기억 파일을 다시 쓰면(`revise`, 재확인, 강화가 일어난 `read_memory`·`recall`, `link`) 필드가 조용히 사라집니다. 이전 버전으로 되돌리거나 두 버전을 한 볼트에 섞어 쓰면 검토일을 `revise`로 다시 넣어야 합니다.
 
 서버 `instructions`에는 행동 수칙(recall 먼저 → remember → 모순되면 revise/forget → 주기적 reflect)에 더해 **기억 인덱스**, 프로젝트 스코프 안내, 나이 해석 지침이 함께 실립니다.
 
@@ -135,7 +137,7 @@ source: 코드 리뷰 대화
 
 **조사·복합어 흡수** — "모드를"은 "모드"에, "릴리스노트"는 "릴리스"에 붙습니다(짧은 쪽 3자 이상 + 길이차 2 이하). 단어 경계는 지키므로 "서버리스"가 "서버"를, "인증서"가 "인증"을 끌어오지는 않습니다. 그래도 0건이면 응답의 `note`가 **재질의를 유도**합니다(remember를 곧장 권하지 않습니다 — 표현만 어긋난 기억을 중복 저장하게 되니까요).
 
-**낡음 표시** — 모든 결과에 `age_days`가 붙고, 30일(`BIGBRAIN_STALE_DAYS`) 이상 갱신되지 않았으면 `stale_hint`가 "현재 코드와 대조 후 사용하라"고 알립니다. 기억은 시점 관측이지 현재 상태가 아니기 때문입니다.
+**낡음 표시** — 모든 결과에 `age_days`가 붙고, 타입별 임계(episodic 14일, semantic·procedural 60일, preference 180일, `BIGBRAIN_STALE_DAYS`를 설정하면 전 타입 단일값) 이상 갱신되지 않았거나 `review_after` 검토일이 지났으면(나이와 무관) `stale_hint`가 "현재 코드와 대조 후 사용하라"고 알립니다. 기억은 시점 관측이지 현재 상태가 아니기 때문입니다.
 
 **임베딩은 쓰지 않습니다 — 재본 뒤 기각했습니다.** 2026-07-19 에 로컬 임베딩 도입을 실측 평가한 결과, 남은 검색 실패 중 임베딩이라야 잡히는 "순수 의미 격차"는 17건 중 3건뿐인 반면 비용은 설치 512MB·세션당 +1초였습니다(MCP 서버는 세션마다 새로 뜨므로 콜드스타트가 곧 체감 지연입니다). 작은 영어 모델로 가볍게 시작하는 절충안은 한국어에서 오작동해 봉쇄됩니다 — 한↔영 정답 쌍 10건이 전부 무관 쌍보다 낮게 나왔습니다. 근거와 재평가 조건은 [GOAL.md](GOAL.md) T22 참조.
 
@@ -342,7 +344,7 @@ Claude Code의 프로젝트별 메모리(`~/.claude/projects/<프로젝트>/memo
 
 ### 주입되는 인덱스는 "출발점"이지 사실이 아닙니다
 
-주입 채널의 각 줄에는 확신도와 함께 **나이**가 실립니다 — `(확신도 0.95 · 3일 전)`, 오래된 것은 `· 90일 전, 대조 필요`(`BIGBRAIN_STALE_DAYS`, 기본 30). 훅 블록도 "시점 관측이지 현재 상태가 아니다 / 단정 전 현재 소스를 읽어라 / 어긋나면 `revise` 하라"를 함께 내보냅니다.
+주입 채널의 각 줄에는 확신도와 함께 **나이**가 실립니다 — `(확신도 0.95 · 3일 전)`, 오래된 것은 `· 90일 전, 대조 필요`(기본 타입별 14/60/60/180일, `BIGBRAIN_STALE_DAYS` 설정 시 단일값, `review_after`가 지나면 나이와 무관). 훅 블록도 "시점 관측이지 현재 상태가 아니다 / 단정 전 현재 소스를 읽어라 / 어긋나면 `revise` 하라"를 함께 내보냅니다.
 
 이유는 관측된 사고입니다. 주입된 한 줄을 근거로, 저장소를 열어보기도 전에 "이 프로젝트는 X로 되어 있으므로"라고 단정한 사례가 있었습니다. 확신도만 표기하면 **권위만 전달되고 불확실성은 전달되지 않습니다.** 네이티브 메모리도 파일을 읽을 때마다 "N일 전 관측 — 현재 코드와 대조하라"를 자동으로 붙여 같은 위험을 막고 있습니다.
 
@@ -431,7 +433,7 @@ npm run usage:report -- --since 2026-07-01
 | `BIGBRAIN_PROJECT` | (없음) | 이 서버의 기본 프로젝트 스코프. 미지정이면 전체 조회 |
 | `BIGBRAIN_SYNONYMS` | (없음) | 동의어 사전 추가. `대표어=동의어1,동의어2;대표어2=동의어3` — 그룹은 `;`, 항목은 `,`. 내장 사전과 합쳐지고 양방향으로 전개됩니다. 예: `크로스넷=crossnet,사내망;웹메일=webmail` |
 | `BIGBRAIN_INDEX_LIMIT` | `40` | instructions에 실을 기억 인덱스 최대 건수. `0`이면 목록 생략 |
-| `BIGBRAIN_STALE_DAYS` | `30` | 이 일수 이상 갱신되지 않으면 `stale_hint`를 붙임 |
+| `BIGBRAIN_STALE_DAYS` | (없음 = 타입별 episodic 14 · semantic 60 · procedural 60 · preference 180) | 설정하면 전 타입에 이 일수를 단일 임계로 씀. 임계 이상 갱신되지 않으면 `stale_hint`·인덱스 `대조 필요`를 붙임(`review_after`가 지난 기억은 임계와 무관하게 붙음). 숫자가 아니거나 음수면 타입별 기본값 |
 | `BIGBRAIN_SPACING_MS` | `600000` (10분) | 강화 사이 최소 간격의 **바닥값** |
 | `BIGBRAIN_SPACING_ALPHA` | `0.1` | 확장 간격 계수. 필요 간격 = `max(바닥값, α·나이/n)`. `0`이면 고정 창 |
 | `BIGBRAIN_WEAKENED_GRACE_H` | `72` (**시간** 단위) | 이보다 어린 기억은 reflect의 weakened에서 제외 |
