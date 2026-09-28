@@ -869,6 +869,12 @@ async function main() {
   } catch (err) {
     logWarn(`인덱스 재생성 실패(계속 진행): ${err instanceof Error ? err.message : String(err)}`);
   }
+  // 영속 역색인을 기동 시 볼트와 맞춘다 — 훅의 읽기 전용 회상이 최신 인덱스를 보게 한다
+  try {
+    store.retriever.sync(vault);
+  } catch (err) {
+    logWarn(`역색인 동기화 실패(계속 진행): ${err instanceof Error ? err.message : String(err)}`);
+  }
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stdout은 MCP 프로토콜 전용 — 로그는 반드시 stderr로

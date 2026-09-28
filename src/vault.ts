@@ -1,8 +1,17 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
-import matter from "gray-matter";
+import type GrayMatter from "gray-matter";
 import { logWarn } from "./log.js";
 import type { MemoryRecord, MemoryStatus, MemoryType } from "./types.js";
+
+const requireCjs = createRequire(import.meta.url);
+let grayMatter: typeof GrayMatter | undefined;
+
+/** gray-matter 를 처음 파싱·직렬화할 때 불러온다 — 역색인만 읽는 질의·훅 경로가 import 비용(실측 170ms 이상)을 치르지 않게 한다 */
+function loadMatter(): typeof GrayMatter {
+  return (grayMatter ??= requireCjs("gray-matter") as typeof GrayMatter);
+}
 
 /** Windows 예약 장치명 (대소문자 무관) — 파일명 어간으로 쓰면 안 된다 */
 const RESERVED_BASENAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
@@ -45,7 +54,7 @@ function errText(err: unknown): string {
  * 기존의 writeFileSync 직접 덮어쓰기는 닫는 `---` 앞에서 잘린 파일을 남길 수 있었고,
  * 그런 파일은 gray-matter 가 예외 없이 body='' 로 읽어 다음 write 가 고착시켰다.
  */
-function writeFileAtomic(fp: string, text: string): void {
+export function writeFileAtomic(fp: string, text: string): void {
   const tmp = `${fp}.tmp-${process.pid}-${Date.now().toString(36)}`;
   try {
     fs.writeFileSync(tmp, text, "utf-8");
@@ -58,6 +67,23 @@ function writeFileAtomic(fp: string, text: string): void {
     }
     throw err;
   }
+}
+
+/**
+ * 레코드 클론 — structuredClone 보다 약 30% 빠르다(950건 웜 loadAll 155→108ms 실측).
+ * MemoryRecord 가 원시값 + 문자열 배열뿐이라는 전제 위의 최적화다.
+ * 중첩 객체 필드를 새로 추가하면 이 함수도 함께 고쳐야 한다 —
+ * regress-cache.mjs 2절이 레코드의 **모든 필드를 동적으로 순회**하며 변이 격리를
+ * 검사하므로, 빠뜨리면 여기가 아니라 테스트가 먼저 알려준다.
+ */
+export function cloneRecord(r: MemoryRecord): MemoryRecord {
+  return {
+    ...r,
+    tags: [...r.tags],
+    links: [...r.links],
+    history: [...r.history],
+    derivedFrom: r.derivedFrom ? [...r.derivedFrom] : undefined,
+  };
 }
 
 /**
@@ -105,6 +131,7 @@ function detectNativeMemoryFiles(root: string): string[] {
  *   memories/  — 활성 기억 (*.md)
  *   archive/   — 망각된 기억 (*.md)
  *   MEMORY.md  — 자동 생성 인덱스
+ *   .bbm-index/ — 검색 역색인 캐시 (retriever.ts, 지워도 다음 검색이 다시 만든다)
  */
 export class Vault {
   readonly root: string;
@@ -152,23 +179,6 @@ export class Vault {
    */
   private readCache = new Map<string, { ino: bigint; mtimeNs: bigint; size: bigint; record: MemoryRecord }>();
 
-  /**
-   * 레코드 클론 — structuredClone 보다 약 30% 빠르다(950건 웜 loadAll 155→108ms 실측).
-   * MemoryRecord 가 원시값 + 문자열 배열뿐이라는 전제 위의 최적화다.
-   * 중첩 객체 필드를 새로 추가하면 이 함수도 함께 고쳐야 한다 —
-   * regress-cache.mjs 2절이 레코드의 **모든 필드를 동적으로 순회**하며 변이 격리를
-   * 검사하므로, 빠뜨리면 여기가 아니라 테스트가 먼저 알려준다.
-   */
-  private cloneRecord(r: MemoryRecord): MemoryRecord {
-    return {
-      ...r,
-      tags: [...r.tags],
-      links: [...r.links],
-      history: [...r.history],
-      derivedFrom: r.derivedFrom ? [...r.derivedFrom] : undefined,
-    };
-  }
-
   listSlugs(includeArchived = false): { slug: string; archived: boolean }[] {
     const out: { slug: string; archived: boolean }[] = [];
     for (const f of fs.readdirSync(this.memoriesDir)) {
@@ -210,7 +220,7 @@ export class Vault {
     }
     const hit = this.readCache.get(fp);
     if (hit && hit.ino === st.ino && hit.mtimeNs === st.mtimeNs && hit.size === st.size) {
-      return this.cloneRecord(hit.record);
+      return cloneRecord(hit.record);
     }
 
     let raw: string;
@@ -234,10 +244,10 @@ export class Vault {
     }
 
     try {
-      const { data, content } = matter(raw, MATTER_OPTIONS);
+      const { data, content } = loadMatter()(raw, MATTER_OPTIONS);
       const record = this.fromFrontmatter(slug, data, content.trim());
       // 캐시에는 클론을 넣는다 — 반환본을 호출부가 변이해도 캐시가 오염되지 않도록
-      this.readCache.set(fp, { ino: st.ino, mtimeNs: st.mtimeNs, size: st.size, record: this.cloneRecord(record) });
+      this.readCache.set(fp, { ino: st.ino, mtimeNs: st.mtimeNs, size: st.size, record: cloneRecord(record) });
       return record;
     } catch (err) {
       this.readCache.delete(fp);
@@ -307,7 +317,7 @@ export class Vault {
     if (record.reviewAfter) fm.review_after = record.reviewAfter;
     if (record.supersededBy) fm.superseded_by = record.supersededBy;
     if (record.archiveReason) fm.archive_reason = record.archiveReason;
-    return matter.stringify(`\n${record.body}\n`, fm);
+    return loadMatter().stringify(`\n${record.body}\n`, fm);
   }
 
   /**
