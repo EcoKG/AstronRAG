@@ -413,6 +413,64 @@ BigBrainMemory 가 Claude Code 네이티브 메모리를 **완전 대체**한다
   - 결과 불변: 그림자 켬·끔 `searchDetailed` 출력이 같다(`regress-retriever.mjs` 7절, 변형 질의 포함). 로그 형식은 `regress-usage.mjs` 2-1절이 고정한다.
   - 비용(`eval-retrieval --scorer legacy` 지연, 픽스처 160건 in-process, 실제 강화 포함, 600회): 그림자 끔 p50 34.94 / p95 56.49ms, 켬 p50 35.31 / p95 60.77ms → p50 +0.4ms, p95 +4.3ms(각 1회 측정이라 잡음을 구분하지 못한다).
 
+## Phase P9 — 고도화 R8 (2026-09-28)
+
+> 근거: 고도화 문서 6절과 마스터 결정(V1~V5). 아래 수치는 모두 이 저장소에서 실측했다(표시한 것만 추정).
+
+- [~] **T51. 선택형 벡터 계층 VectorRetriever** (R8) — 구현 완료, 전환 조건 미달로 **옵션으로만 유지(기본 꺼짐)** (2026-09-28)
+  - 무엇: `BIGBRAIN_VECTOR=1` 일 때만 `index.ts` 가 `vector-retriever.js` 를 동적 import 한다. `Xenova/multilingual-e5-small`(q8)을 transformers.js 4.3.0 으로 프로세스 안에서 돌린다.
+    - 서버는 모델을 기다리지 않는다. 준비 전 recall 은 어휘 결과만 내고 `vector:"warming"` 을 붙인다. 패키지가 없으면 `vector:"unavailable"` 과 설치 명령을 안내한다.
+    - 임베딩 대상은 제목·설명·태그·본문 앞 1,000자이고, e5 접두어 "query: "/"passage: " 를 붙인다. 임베딩은 `.bbm-index/vectors.v1.bin`(Float32)과 `vectors.v1.meta.json`(모델 ID·차원·행렬 SHA-256·항목 키별 텍스트 해시)에 둔다. 해시가 바뀐 기억만 다시 계산하고, 모델이 바뀌거나 크기·행렬 해시가 맞지 않으면 전체를 다시 계산한다.
+    - 검색은 전수 코사인이다. 범위 필터와 코사인 하한을 먼저 걸고 top-k 로 자른다.
+    - `store.searchDetailed` 에는 선택 인자 `vectorHits` 만 더했다. 없으면 기존 경로를 그대로 탄다.
+    - 훅(`session-guard.mjs`·`searchPersistedIndex`)은 벡터를 쓰지 않는다. `store.ts` 는 벡터 모듈을 import 하지 않는다.
+  - 설치(V2·V3): `@huggingface/transformers` 를 `peerDependencies`(`^4.3.0`, 시험한 버전 4.3.0 = npm latest) + `peerDependenciesMeta.optional` 로 선언했다. 캐시는 context7 로 확인한 `env.cacheDir` 기본값이 `node_modules/@huggingface/transformers/.cache/` 라서 `os.tmpdir()/bigbrainmemory-models` 로 고정했다(새 환경변수 없음). 호출은 `pipeline("feature-extraction", id, { dtype: "q8" })`, `{ pooling: "mean", normalize: true }` 이다.
+    - 대상: RRF(k=60, 벡터 상위 20) 1개와 add 격자 w ∈ {1,2,3,5} × τ ∈ 0.80~0.90(0.01 간격) 44개.
+    - 필수: tune exact R@1 이 기준(legacy+alt_queries) 이상이고, tune none 오탐률(T=9)이 기준 이하.
+    - 그 가운데 tune paraphrase R@5 최대. 동률이면 τ 가 큰 쪽, 다음은 w 가 작은 쪽(RRF 는 τ·w 없음으로 맨 뒤).
+    - 고른 하나로 holdout 을 1회 재서 전환 조건 1~3 을 판정한다. 조건 4 는 조정 대상이 없어 crosslang 전체로 판정한다.
+  - V1 비교(tune 21질의씩, `eval-retrieval --multi --vector --grid`, 기준 = legacy+alt_queries)
+
+    | 설정 | exact R@1 | crosslang R@5 | paraphrase R@5 | none 오탐률(T=9) | none 결과 있음 | none 상위5에 벡터 전용 |
+    |---|---|---|---|---|---|---|
+    | 기준(벡터 없음) | 0.952 | 1.000 | 0.905 | 0.048 | 0.810 | 0 |
+    | RRF(k=60, 벡터 상위 20) | 0.238 | 0.619 | 0.881 | 0.000 | 1.000 | 0.857 |
+    | add w=1 τ=0.80 | 0.952 | 1.000 | 0.905 | 0.048 | 1.000 | 0.571 |
+    | add w=5 τ=0.80 | 0.952 | 1.000 | 0.905 | 0.048 | 1.000 | 0.952 |
+    | add w=5 τ=0.84 | 0.952 | 1.000 | 0.905 | 0.048 | 0.810 | 0.095 |
+    | add w=1~5 τ=0.85~0.90 | 0.952 | 1.000 | 0.905 | 0.048 | 0.810 | 0~0.048 |
+
+    - add 44개 설정 모두 exact·crosslang·paraphrase·T=9 오탐률이 기준과 같았다. RRF 는 exact R@1 이 0.238 로 떨어져 탈락했다(R6 의 0.933→0.300 과 같은 모양).
+    - 선택: 44개 모두 paraphrase R@5 동률이라 규칙대로 τ 최대(0.90), 그다음 w 최소(1)인 **add w=1 τ=0.90** 이다. 이 값을 `VECTOR_WEIGHT`·`VECTOR_MIN_COS` 로 고정했다.
+    - 오르지 않은 원인(실측, tune 만): tune 에서 R@5 를 놓친 paraphrase 2건의 정답은 이미 어휘 후보 7위·6위에 있었다. add 는 어휘 후보의 점수·순서를 바꾸지 않으므로 이 두 건을 올릴 수 없다. 벡터 순위로는 1위(코사인 0.860, 하한 미만)와 9위였다.
+    - 코사인과 어휘 점수는 척도가 달라 R6 의 가중 max 는 쓰지 않았다. 벡터 전용 점수는 1×코사인 ≤ 1 이라, 진실성·활성 가중(최대 1.45배)을 곱해도 T=9 를 넘지 못한다.
+  - holdout 1회(add w=1 τ=0.90, 각 9질의): 기준과 순위가 모두 같았다. exact R@1 0.889→0.889, crosslang R@5 1.000→1.000, paraphrase R@5 0.778→0.778, T=9 오탐률 0.222→0.222, none 결과 있음 0.889→0.889, none 상위5 벡터 전용 0. McNemar(`--compare`) holdout R@1·R@5 모두 b/c 0/0 p=1, 전체 120질의도 분할별 0/0 이다.
+  - 전환 조건 판정
+
+    | 조건 | 기준 | 결과 | 판정 |
+    |---|---|---|---|
+    | 1) paraphrase R@5 상승 | 어휘+다중 질의 대비 McNemar p<0.05 | holdout 0.778→0.778, b/c 0/0 p=1 | 미충족 |
+    | 2) exact R@1 하락 없음 | holdout 기준 이상 | 0.889→0.889 | 충족 |
+    | 3) none 오탐률 증가 없음 | τ 는 tune 으로 정하고 holdout 판정 | T=9 0.222→0.222, 결과 있음 0.889→0.889 | 충족 |
+    | 4) 한↔영 정답 쌍 판별 AUC | ≥0.9 | crosslang 30질의 정답 30쌍 vs 시드 42 무작위 비정답 150쌍: 0.826(tune 0.868, holdout 0.736). 평균 코사인 정답 0.812, 무작위 0.769 | 미충족 |
+
+    - 결론: 1·4 미달이라 **옵션으로만 유지한다.** 기본값은 켜지 않는다. 새 판정 데이터는 만들지 않았다(골든 tune/holdout 과 시드 고정 무작위 쌍만 썼다).
+  - 추가 측정(`regress-vector.mjs --real` 1회. bench-rif 합성 950건, 시드 42, %TEMP%. 서버와 같은 dist 모듈을 한 프로세스에 올려 쟀고 MCP 서버 프로세스 자체는 재지 않았다)
+    - 모델 로드(캐시 적재) 2,005ms. 처음 켤 때 내려받는 모델 파일은 129.1MB(onnx 118.3MB·tokenizer 17.1MB)이다. 첫 평가 실행(`--grid`)의 준비 시간은 285초였고, 캐시 적재 뒤 같은 준비(모델 로드+160건+질의 120개 임베딩)는 4.2초였다. 차이는 다운로드로 추정한다.
+    - RSS 100.8→470.0MB(모델 로드 +369MB)→588.9MB(950건 임베딩 뒤, 합계 +488MB), 최대 RSS 600.5MB.
+    - 950건 첫 sync 7,223ms, 저장 파일에서 다시 적재 10ms. bin 1,459,200바이트(950×384×4).
+    - 질의당 추가 지연(sync 변경 없음 + 질의 임베딩 + 전수 코사인) 50회 p50 5.7ms, p95 8.1ms.
+  - 회귀(`regress-vector.mjs`, npm test 포함, 모델 없이 가짜 임베더·가짜 모듈로 돈다)
+    - 1절 저장 파일·증분 재계산: bin 크기 n×dim×4, 1건 수정 시 1건만 재임베딩, 모델 ID 변경·bin 절단·행렬 해시 불일치 시 전체 재계산, 빈 slug 키 `m:` 적재.
+    - 2절 필터 순서: 범위 필터와 하한을 top-k 전에 건다.
+    - 3·6절 V4 강화 규칙: 벡터 전용은 recall 에서 강화하지 않고 read(`read_memory`)로 열면 강화한다. 어휘와 겹친 기억은 강화한다. 서버 응답에 `via:"vector"` 가 붙는다.
+    - 4절 V5 warming: 결과가 벡터를 끈 서버와 같다.
+    - 5절 unavailable: 설치 명령 안내와 어휘 결과가 나온다.
+    - 7절 훅 격리: dist/store.js import 그래프와 session-guard 실제 실행에서 해석한 모듈에 vector-retriever·transformers 가 없다.
+    - `--old-dist`(8절): b5c39e3 빌드가 vectors.v1.* 가 있는 볼트에서 골든 120질의 결과가 파일 없는 볼트와 같다. remember·검색과 서버 recall 이 정상이고 벡터 파일 바이트가 그대로다.
+  - 기본 경로 불변: b5c39e3 빌드 대비 `eval-retrieval --baseline` 골든 120질의×4설정 480건 불일치 0, `--baseline --multi` 480건 불일치 0.
+  - 설치 용량: 새 package.json·lock 으로 `npm ci` 한 node_modules 가 b5c39e3 와 파일 3,767개·41,381,242바이트로 경로·크기까지 같다. `npm ls` 는 설치되지 않은 선택 peer 를 `UNMET OPTIONAL DEPENDENCY` 한 줄로 더 보일 뿐이다(종료 코드 0). lock 은 packages 키 107개가 같고, 루트 외 항목이 모두 같으며, 루트에는 `peerDependencies`·`peerDependenciesMeta` 만 늘었다. `npm install --package-lock-only` 가 express·hono·zod 항목에 넣은 `"peer": true` 3줄은 되돌렸다.
+
 ---
 
 ## Phase P4 — 대체 전환 경로 (2026-07-21 조사)
@@ -461,6 +519,7 @@ BigBrainMemory 가 Claude Code 네이티브 메모리를 **완전 대체**한다
 
 | 날짜 | 작업 | 결과 |
 |---|---|---|
+| 2026-09-28 | **T51** 선택형 벡터 계층 (R8) | `BIGBRAIN_VECTOR=1` 일 때만 multilingual-e5-small(q8)을 transformers.js 4.3.0(선택 peer)으로 올린다. 벡터로만 들어온 후보를 1×코사인(τ 0.90, 상위 10)으로 덧붙이고 어휘 점수·순서는 둔다. recall 에서는 강화하지 않고 read 로 열면 강화한다. 기본 경로는 b5c39e3 대비 단일·다중 질의 각 480건 불일치 0. tune 비교에서 RRF 는 exact R@1 0.238 로 탈락했고 add 44개는 모두 기준과 같아 w=1·τ=0.90 을 골랐다. holdout 은 기준과 같다(paraphrase R@5 0.778, McNemar p=1). AUC 0.826. 전환 조건 1·4 미달이라 옵션으로만 유지. RSS +488MB, 로드 2.0s, 950건 첫 sync 7.2s, 질의당 p50 5.7·p95 8.1ms |
 | 2026-09-28 | **T46** BM25F 플래그 + 그림자 로그 + 자동 회상 기본값 끔 (R7) | `BIGBRAIN_SCORER=bm25f` 로 필드 가중 BM25F 를 고른다(기본 legacy, 역색인 형식 불변). 기본 경로 출력은 24b3125 대비 단일·다중 질의 각 480건 불일치 0. 홀드아웃 MRR 0.438 → 0.474(McNemar 유의차 없음)라 기본값은 legacy. bm25f 척도 ② 재판정은 w=0.7·T=3.5 에서 a·c 충족, b 전체 0.033 → 0.067. 그림자 로그 `shadowTop5` 추가(p95 +4.3ms). 자동 회상은 `BIGBRAIN_AUTO_RECALL=1` 일 때만 동작한다. 점수 보기 전 고정한 판정 질의(SHA256 DC0B256F…DEA719E)로 잰 하한 후보 legacy T=10·bm25f T=3.5 가 모두 미달이라 기본값 후보 없음. 469건 중복 노출 50%(15/30) |
 | 2026-09-28 | **T42** 영속 역색인 + 퍼지 보존 (R4) | `<vault>/.bbm-index/lexical.v1.json` 에 필드 토큰·posting·어간 사전·파일 신원·레코드를 두고, 질의마다 stat 대조로 바뀐 파일만 다시 읽는다. 구·신 골든 480건 불일치 0, 퍼지 무작위 1,500건 선형 비교와 동일. 훅용 `searchPersistedIndex` 는 인덱스만 읽고 반환 결과와 그 억제자만 stat 해, 바뀐 파일은 빼고 다시 순위화하며(세 바퀴 뒤에는 남은 후보 전체 대조, 순위화 네 번 이하) gray-matter 를 불러오지 않는다. 950건 사본 볼트(전부 낡음) 넓은 질의 훅 질의 p50 847.8 → 302.4ms. 켜진 서버는 인덱스 파일이 지워지거나 덮어써지면 다음 질의에서 되살린다. 950건 새 프로세스의 인덱스 적재 + 검색 p95 최악 69.5ms 로 100ms 기준 통과(마스터 결정으로 기동·import·전체 stat 대조 제외). 서버 끝단 spawn~종료는 구 약 2.0초 → 신 약 0.4초(p50)이고, 전체 stat 대조만 약 204~220ms(p50)다. gray-matter 지연 로드로 import 약 200~230ms → 25~28ms. 새 회귀 `regress-lexical-index.mjs` 106건(F1 포함) |
 | 2026-09-28 | **T41·T43** Retriever/Ranker 분리 + RIF 조기 종료 (T25 종결) | `searchDetailed` 를 `src/retriever.ts`(후보·관련도) / `src/ranker.ts`(가중·RIF·연상) / store(강화)로 나눴다. 골든 120질의×4설정 출력이 origin/main dist 와 바이트 동일(480건 불일치 0, RIF 임계만 바꾼 dist 로는 36건 검출). RIF 는 사전 토큰 + 조기 종료로 950건 넓은 질의에서 1,690~1,746ms → 0.37~0.93ms. 새 회귀 `regress-retriever.mjs`(무작위 3,200건 참조 대조, 멈춤 조건 변이·NaN 가드 제거 시 실패 확인)와 exact R@1 하한 검사를 npm test 에 넣었다. 동시성 소실률 단언은 기준점과 같은 빈도로 간헐 실패한다(같은 위치 번갈아 20회씩: 기준 9회·신규 8회) |

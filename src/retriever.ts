@@ -139,6 +139,8 @@ export interface Candidate {
 	fields: FieldHit[];
 	record: MemoryRecord;
 	titleDescTokens: string[];
+	/** 벡터 검색으로만 들어온 후보 표시 */
+	via?: "vector";
 }
 
 /** 후보와 관련도 점수만 내는 검색기 — 가중·억제·강화는 하지 않는다 */
@@ -148,6 +150,10 @@ export interface Retriever {
 	upsert(rec: MemoryRecord, archived?: boolean): void;
 	remove(slug: string): void;
 	sync(vault: Vault): void;
+	/** 항목 키와 레코드를 항목 순서대로 — 레코드는 공유 참조라 변이하면 안 된다 */
+	entries(): { key: string; record: MemoryRecord }[];
+	/** 항목 키의 점수 0 후보 — 없거나 범위 밖이면 null */
+	candidate(key: string, filter: ScopeFilter): Candidate | null;
 }
 
 /** 질의별 후보 목록을 가중 최대 점수로 합친다 — 색인 항목마다 w_q × 원점수 중 가장 큰 값을 쓴다 */
@@ -602,6 +608,21 @@ export class LexicalRetriever implements Retriever {
 		this.docs = kept;
 		this.keyIndex = new Map(kept.map((e, i) => [e.key, i]));
 		this.postings = null;
+	}
+
+	/** 항목 키와 레코드를 항목 순서대로 — 레코드는 공유 참조라 변이하면 안 된다 */
+	entries(): { key: string; record: MemoryRecord }[] {
+		return this.docs.map((e) => ({ key: e.key, record: e.record }));
+	}
+
+	/** 항목 키의 점수 0 후보 — 레코드는 복제하고 제목+설명 토큰은 search 결과와 같은 배열을 쓴다. 없거나 범위 밖이면 null */
+	candidate(key: string, filter: ScopeFilter): Candidate | null {
+		const at = this.keyIndex.get(key);
+		if (at === undefined) return null;
+		const e = this.docs[at];
+		const m = e.record;
+		if ((filter.type && m.type !== filter.type) || !inScope(m, filter.project)) return null;
+		return { slug: m.slug, score: 0, fields: [], record: cloneRecord(m), titleDescTokens: e.titleDescT };
 	}
 
 	/**

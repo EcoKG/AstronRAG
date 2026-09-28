@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "node scripts/smoke-test.mjs && node scripts/regress-hook.mjs && node scripts/regress-mcp-config.mjs && node scripts/regress-corruption.mjs && node scripts/regress-concurrency.mjs && node scripts/regress-obsidian-edit.mjs && node scripts/regress-trigger.mjs && node scripts/regress-scoping.mjs && node scripts/regress-staleness.mjs && node scripts/regress-quiet-read.mjs && node scripts/regress-activation.mjs && node scripts/regress-spacing.mjs && node scripts/regress-search.mjs && node scripts/regress-prompt.mjs && node scripts/regress-import.mjs && node scripts/regress-links.mjs && node scripts/regress-native-guard.mjs && node scripts/regress-usage.mjs && node scripts/regress-consolidation.mjs && node scripts/regress-cue.mjs && node scripts/regress-perf.mjs && node scripts/regress-cache.mjs && node scripts/regress-hygiene.mjs && node scripts/regress-viewer.mjs && node scripts/regress-quality.mjs && node scripts/regress-retriever.mjs && node scripts/regress-lexical-index.mjs && node scripts/regress-auto-recall.mjs && node scripts/eval-retrieval.mjs --min-exact-r1 0.933",
+    "test": "node scripts/smoke-test.mjs && node scripts/regress-hook.mjs && node scripts/regress-mcp-config.mjs && node scripts/regress-corruption.mjs && node scripts/regress-concurrency.mjs && node scripts/regress-obsidian-edit.mjs && node scripts/regress-trigger.mjs && node scripts/regress-scoping.mjs && node scripts/regress-staleness.mjs && node scripts/regress-quiet-read.mjs && node scripts/regress-activation.mjs && node scripts/regress-spacing.mjs && node scripts/regress-search.mjs && node scripts/regress-prompt.mjs && node scripts/regress-import.mjs && node scripts/regress-links.mjs && node scripts/regress-native-guard.mjs && node scripts/regress-usage.mjs && node scripts/regress-consolidation.mjs && node scripts/regress-cue.mjs && node scripts/regress-perf.mjs && node scripts/regress-cache.mjs && node scripts/regress-hygiene.mjs && node scripts/regress-viewer.mjs && node scripts/regress-quality.mjs && node scripts/regress-retriever.mjs && node scripts/regress-lexical-index.mjs && node scripts/regress-auto-recall.mjs && node scripts/regress-vector.mjs && node scripts/eval-retrieval.mjs --min-exact-r1 0.933",
     "setup:hook": "node scripts/setup-hook.mjs",
     "test:hook": "node scripts/regress-hook.mjs",
     "import:native": "node scripts/import-native.mjs",
@@ -55,12 +55,21 @@
     "test:autorecall": "node scripts/regress-auto-recall.mjs",
     "eval:autorecall": "node scripts/regress-auto-recall.mjs --eval",
     "bench:autorecall": "node scripts/regress-auto-recall.mjs --bench",
+    "test:vector": "node scripts/regress-vector.mjs",
     "viewer:export": "node scripts/export-viewer-data.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "gray-matter": "^4.0.3",
     "zod": "^3.23.8"
+  },
+  "peerDependencies": {
+    "@huggingface/transformers": "^4.3.0"
+  },
+  "peerDependenciesMeta": {
+    "@huggingface/transformers": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
