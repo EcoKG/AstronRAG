@@ -7,6 +7,8 @@
 //      link() 에 투자한 연상 네트워크가 정작 표층 어휘가 어긋난 질의에서 무력했다.
 //   T23 조사가 붙은 질의 토큰이 동의어 사전 조회에서 누락돼, "배포 방법" 은 찾는
 //      기억을 "배포를 하려면" 은 0건으로 놓쳤다 (한국어에선 조사가 붙는 쪽이 자연스럽다).
+//   T45 alt_queries 다중 질의 — 변형이 없으면 출력 불변, 기억당 1회 강화, 원 질의 우선,
+//      변형 상한 3개, memories·archive 의 같은 slug 는 합치지 않는다 (19~22번).
 //
 // 주의 — 5~7번의 이름이 한때 "2차 패스" 를 주장했으나 사실이 아니었다. D2 를 메운 것은
 // 1차 패스의 복합어 접두 규칙이고, 2차 패스는 T16 이후 한 번도 결과를 낸 적이 없다
@@ -341,10 +343,103 @@ console.log("18) 느슨한 2차 폴백이 존재하지 않는다 (T24)");
   check("대조군: 정상 질의는 잡힘", q.search("업로드", { includeLinked: false }).length >= 1);
 }
 
+// ── 19. 변형 질의가 없거나 모두 걸러지면 출력이 기존과 같다 (T45)
+console.log("19) alt_queries 없음·빈 변형·중복 변형 = 기존 출력 (T45)");
+{
+  const dir = freshDir();
+  const s = new MemoryStore(new Vault(dir));
+  s.remember({ title: "배포 절차 메모", description: "배포 방법", content: "프로덕션 배포 순서.", type: "procedural", tags: ["배포"] });
+  s.remember({ title: "deploy pipeline runbook", description: "release steps", content: "how to deploy.", type: "procedural" });
+  s.remember({ title: "설정값 정리", description: "환경 설정", content: "서버 설정 항목.", type: "semantic" });
+
+  const realNow = Date.now;
+  const frozen = realNow();
+  Date.now = () => frozen;
+  const q = new MemoryStore(new Vault(dir));
+  q.reinforce = () => {};
+  const out = (o) => JSON.stringify(q.searchDetailed("배포", o));
+  const base = JSON.stringify(q.searchDetailed("배포"));
+  check("altQueries 빈 배열 = 기존", out({ altQueries: [] }) === base);
+  check("빈 변형·원 질의와 같은 변형만 있으면 = 기존", out({ altQueries: ["", "!!", "배포"] }) === base);
+  Date.now = realNow;
+}
+
+// ── 20. 한 번의 recall 에서 같은 기억은 한 번만 강화된다 (T45)
+console.log("20) 변형 수와 무관하게 기억당 1회 강화 (T45)");
+{
+  const dir = freshDir();
+  const s = new MemoryStore(new Vault(dir));
+  const target = s.remember({ title: "배포 절차 메모", description: "deploy release 방법", content: "프로덕션 배포 순서.", type: "procedural", tags: ["배포"] }).record.slug;
+  s.remember({ title: "설정값 정리", description: "환경 설정", content: "서버 설정 항목.", type: "semantic" });
+
+  // 간격 게이트를 열어 디스크 기록까지 일어나게 한다
+  const realNow = Date.now;
+  const later = realNow() + 30 * 86_400_000;
+  Date.now = () => later;
+  const q = new MemoryStore(new Vault(dir));
+  const before = new Vault(dir).find(target).record;
+  const calls = new Map();
+  const orig = q.reinforce;
+  q.reinforce = function (rec, o) {
+    calls.set(rec.slug, (calls.get(rec.slug) ?? 0) + 1);
+    return orig.call(this, rec, o);
+  };
+  const { results } = q.searchDetailed("배포", { altQueries: ["deploy", "배포 절차", "release"], includeLinked: false });
+  Date.now = realNow;
+  const got = slugs(results);
+  const after = new Vault(dir).find(target).record;
+  check("대상 기억이 결과에 있음", got.includes(target), got.join(","));
+  check("결과에 같은 slug 가 두 번 나오지 않음", new Set(got).size === got.length, got.join(","));
+  check("대상 기억 강화 호출 정확히 1회", calls.get(target) === 1, JSON.stringify([...calls]));
+  check("모든 기억 강화 호출 1회 이하", [...calls.values()].every((n) => n <= 1), JSON.stringify([...calls]));
+  check("디스크 accessCount 정확히 +1", after.accessCount === before.accessCount + 1, `${before.accessCount}→${after.accessCount}`);
+  check(
+    "저장강도 증가가 강화 1회분(≤1.5)",
+    after.storageStrength - before.storageStrength > 0 && after.storageStrength - before.storageStrength <= 1.5,
+    `${before.storageStrength}→${after.storageStrength}`,
+  );
+}
+
+// ── 21. 원 질의 1위가 변형 1위보다 앞서고, 변형으로만 닿는 기억도 나온다 (T45)
+console.log("21) 융합 가중 — 원 질의 우선, 변형 전용 도달 (T45)");
+{
+  const dir = freshDir();
+  const s = new MemoryStore(new Vault(dir));
+  const a = s.remember({ title: "quasarbloom 캐시", description: "첫째 항목", content: "내용 하나.", type: "semantic" }).record.slug;
+  const b = s.remember({ title: "nebulafjord 로그", description: "둘째 기록", content: "내용 둘.", type: "semantic" }).record.slug;
+
+  const q = new MemoryStore(new Vault(dir));
+  check("대조군: 원 질의만으로는 변형 전용 기억이 안 나옴", !slugs(q.search("quasarbloom", { includeLinked: false })).includes(b));
+  const got = slugs(q.search("quasarbloom", { altQueries: ["nebulafjord"], includeLinked: false }));
+  check("변형으로만 닿는 기억이 결과에 나옴", got.includes(b), got.join(","));
+  check("원 질의 1위가 변형 1위보다 앞", got.indexOf(a) === 0 && got.indexOf(b) === 1, got.join(","));
+}
+
+// ── 22. 경계 — 변형 상한 3개, memories·archive 의 같은 slug 는 합치지 않는다 (T45)
+console.log("22) 변형 상한과 동명 slug 분리 (T45)");
+{
+  const dir = freshDir();
+  const s = new MemoryStore(new Vault(dir));
+  const rec = s.remember({ title: "quasarbloom 캐시", description: "첫째 항목", content: "내용 하나.", type: "semantic" }).record;
+  const b = s.remember({ title: "nebulafjord 로그", description: "둘째 기록", content: "내용 둘.", type: "semantic" }).record.slug;
+
+  const q = new MemoryStore(new Vault(dir));
+  const fill = ["nomatchaa", "nomatchbb", "nomatchcc"];
+  check("4번째 변형은 쓰지 않음", !slugs(q.search("quasarbloom", { altQueries: [...fill, "nebulafjord"], includeLinked: false })).includes(b));
+  check("대조군: 3번째 자리의 같은 변형은 씀", slugs(q.search("quasarbloom", { altQueries: [...fill.slice(0, 2), "nebulafjord"], includeLinked: false })).includes(b));
+
+  new Vault(dir).write({ ...rec }, true);
+  const r = new MemoryStore(new Vault(dir));
+  const single = r.searchDetailed("quasarbloom", { includeLinked: false }).totalMatched;
+  const fused = r.searchDetailed("quasarbloom", { altQueries: ["quasarbloom 캐시"], includeLinked: false }).totalMatched;
+  check("전제: 단일 질의가 memories·archive 두 항목을 잡음", single === 2, `single=${single}`);
+  check("융합해도 두 항목이 하나로 합쳐지지 않음", fused === single, `single=${single} fused=${fused}`);
+}
+
 for (const d of cleanups) fs.rmSync(d, { recursive: true, force: true });
 
 if (failures > 0) {
   console.error(`\n실패: ${failures}건`);
   process.exit(1);
 }
-console.log("\nT15/T16/T17/T23/T24 검색 회귀 테스트 통과 ✔");
+console.log("\nT15/T16/T17/T23/T24/T45 검색 회귀 테스트 통과 ✔");

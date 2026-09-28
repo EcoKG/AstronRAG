@@ -7,7 +7,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { Vault } from "./vault.js";
-import { MemoryStore, isStale, reviewOverdue } from "./store.js";
+import { MAX_ALT_QUERIES, MemoryStore, isStale, reviewOverdue } from "./store.js";
 import { initUsageLog, logUsage, queryField } from "./usage.js";
 import { logError, logInfo, logWarn } from "./log.js";
 import type { MemoryRecord, SearchResult } from "./types.js";
@@ -562,11 +562,18 @@ server.registerTool(
     description:
       "Search the memory vault by keywords. Call this FIRST when starting a task, when the user references past work/preferences, or before answering anything that prior sessions may have covered. " +
       "Results are ranked by relevance x truthfulness(confidence) x base-level activation (power-law of frequency+recency, ACT-R). Competing near-duplicate memories are laterally inhibited in ranking (retrieval-induced forgetting) — see `inhibited`. Associated (linked) memories are surfaced too. Active recall reinforces the recalled memories.\n" +
+      "Pass `alt_queries` (up to 3): for a Korean query add English phrasings, for an English query add Korean phrasings — synonyms and broader concepts too. Per-query result lists are fused (each memory keeps its best weighted score, the original query weighted highest) before ranking; each memory is reinforced at most once per call.\n" +
       // instructions 예산 밖으로 밀려나 전달되지 않던 나이 해석 지침을 여기로 옮겼다.
       "Every result carries `age_days` (days since last update). A memory is a point-in-time observation, not live state: when it cites code, file paths, versions or config and `stale_hint` is present, verify against the current source before asserting it as fact — and `revise` it when reality has moved on.",
     _meta: ALWAYS_LOAD,
     inputSchema: {
       query: z.string().min(1).describe("Keywords to search for (matched against title, tags, description, body)"),
+      alt_queries: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Up to 3 alternative phrasings of the same need; extras beyond 3 are ignored. If the query is Korean, add English phrasings; if English, add Korean phrasings — also synonyms and broader terms.",
+        ),
       type: MEMORY_TYPE.optional(),
       limit: z.number().int().min(1).max(20).optional().describe("Max direct results (default 5)"),
       include_linked: z.boolean().optional().describe("Also surface 1-hop linked memories as associations (default true)"),
@@ -578,14 +585,21 @@ server.registerTool(
         ),
     },
   },
-  async ({ query, type, limit, include_linked, project }) => {
+  async ({ query, alt_queries, type, limit, include_linked, project }) => {
     const scope = project === undefined ? DEFAULT_PROJECT : project || undefined;
     const { results, totalMatched } = store.searchDetailed(query, {
       type,
       limit,
       includeLinked: include_linked,
       project: scope,
+      altQueries: alt_queries,
     });
+    // 상한을 넘긴 변형은 거부하지 않고 버린 뒤 알린다 — 재호출 한 턴을 아낀다
+    const dropped = Math.max(0, (alt_queries?.length ?? 0) - MAX_ALT_QUERIES);
+    const altNote =
+      dropped > 0
+        ? { alt_queries_note: `alt_queries 는 최대 ${MAX_ALT_QUERIES}개만 씁니다 — 앞 ${MAX_ALT_QUERIES}개만 사용하고 ${dropped}개는 무시했습니다.` }
+        : {};
     // 0건 비율은 검색 품질의 1차 지표다 — 회상이 실패하는지 아예 안 불리는지를 가른다
     logUsage({
       tool: "recall",
@@ -602,6 +616,7 @@ server.registerTool(
       return ok({
         results: [],
         note: "No memories matched this query. Before concluding nothing is stored: retry with different wording (synonyms, the other language, a broader single keyword), or call `list_memories` to see what exists. Only use `remember` once you are confident this is genuinely new.",
+        ...altNote,
       });
     }
     const shownDirect = results.filter((r) => !r.snippet.startsWith("(연상")).length;
@@ -615,6 +630,7 @@ server.registerTool(
             truncated: `직접 매칭 ${totalMatched}건 중 ${shownDirect}건만 표시했습니다. 더 필요하면 limit 을 올려 재질의하세요 (최대 20).`,
           }
         : {}),
+      ...altNote,
     });
   },
 );
