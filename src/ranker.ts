@@ -190,7 +190,7 @@ export interface RankOptions {
 export function rank(cands: Candidate[], q: ParsedQuery, opts: RankOptions): SearchOutcome {
 	const { limit, now } = opts;
 	const scored: Scored[] = cands.map((c) => ({
-		result: finish(c.record, c.score, now, q.expanded),
+		result: c.via ? { ...finish(c.record, c.score, now, q.expanded), via: c.via } : finish(c.record, c.score, now, q.expanded),
 		tokens: c.titleDescTokens,
 	}));
 	scored.sort((a, b) => b.result.score - a.result.score);

@@ -129,4 +129,6 @@ export interface SearchResult {
    * 공고화 도입 후에는 특히 중요하다 — "파생물이 근거를 눌렀는가" 가 P8 계약이기 때문이다.
    */
   inhibitedBy?: string;
+  /** 벡터 검색으로만 들어온 결과 — recall 에서 강화하지 않는다 */
+  via?: "vector";
 }

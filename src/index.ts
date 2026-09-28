@@ -10,7 +10,9 @@ import { Vault } from "./vault.js";
 import { MAX_ALT_QUERIES, MemoryStore, isStale, reviewOverdue } from "./store.js";
 import { initUsageLog, logUsage, queryField } from "./usage.js";
 import { logError, logInfo, logWarn } from "./log.js";
+import { INDEX_DIR, type ScopeFilter } from "./retriever.js";
 import type { MemoryRecord, SearchResult } from "./types.js";
+import type { VectorRetriever } from "./vector-retriever.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -408,8 +410,36 @@ function searchHit(r: SearchResult): Record<string, unknown> {
     score: Number(r.score.toFixed(2)),
     activation: Number(r.activation.toFixed(2)),
     inhibited: r.inhibited ?? false,
+    ...(r.via ? { via: r.via } : {}),
     snippet: r.snippet,
   };
+}
+
+/** 선택형 벡터 계층과 그 모듈 — BIGBRAIN_VECTOR=1 일 때만 main 이 동적 import 로 채운다 */
+let vector: { vr: VectorRetriever; mod: typeof import("./vector-retriever.js") } | null = null;
+
+/**
+ * 벡터 계층이 ready 면 질의의 벡터 결과(항목 키·점수), 아니면 undefined. 실패는 경고만 남기고 어휘 검색으로 계속한다.
+ * 항목은 마지막 어휘 sync·upsert 기준이라, 밖에서 고친 기억의 임베딩은 다음 회상부터 반영된다.
+ */
+async function vectorHits(query: string, filter: ScopeFilter): Promise<{ key: string; score: number }[] | undefined> {
+  if (!vector || vector.vr.state !== "ready") return undefined;
+  const { vr, mod } = vector;
+  try {
+    await vr.sync(store.retriever.entries());
+    const qv = await vr.embedQuery(query);
+    return vr.nearest(qv, filter, mod.VECTOR_TOP_K).map((h) => ({ key: h.key, score: mod.VECTOR_WEIGHT * h.cos }));
+  } catch (err) {
+    logWarn(`벡터 검색 실패(어휘 결과만 반환): ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+}
+
+/** recall 응답의 벡터 상태 필드 — 벡터 계층을 켜지 않았으면 비어 있다 */
+function vectorField(): Record<string, unknown> {
+  if (!vector) return {};
+  const { vr } = vector;
+  return vr.state === "unavailable" ? { vector: vr.state, vector_note: `${vr.reason} (어휘 검색 결과만 반환)` } : { vector: vr.state };
 }
 
 function ok(payload: unknown) {
@@ -593,6 +623,7 @@ server.registerTool(
       includeLinked: include_linked,
       project: scope,
       altQueries: alt_queries,
+      vectorHits: await vectorHits(query, { type, project: scope }),
     });
     // 상한을 넘긴 변형은 거부하지 않고 버린 뒤 알린다 — 재호출 한 턴을 아낀다
     const dropped = Math.max(0, (alt_queries?.length ?? 0) - MAX_ALT_QUERIES);
@@ -618,6 +649,7 @@ server.registerTool(
         results: [],
         note: "No memories matched this query. Before concluding nothing is stored: retry with different wording (synonyms, the other language, a broader single keyword), or call `list_memories` to see what exists. Only use `remember` once you are confident this is genuinely new.",
         ...altNote,
+        ...vectorField(),
       });
     }
     const shownDirect = results.filter((r) => !r.snippet.startsWith("(연상")).length;
@@ -632,6 +664,7 @@ server.registerTool(
           }
         : {}),
       ...altNote,
+      ...vectorField(),
     });
   },
 );
@@ -892,6 +925,11 @@ async function main() {
   } catch (err) {
     logWarn(`역색인 동기화 실패(계속 진행): ${err instanceof Error ? err.message : String(err)}`);
   }
+  // 벡터 계층은 켰을 때만 불러온다 — 연결 전에 만들어 두어 첫 recall 부터 상태(warming)를 알린다
+  if (process.env.BIGBRAIN_VECTOR === "1") {
+    const mod = await import("./vector-retriever.js");
+    vector = { vr: new mod.VectorRetriever(vault.nativeMemoryFiles.length > 0 ? null : path.join(vaultDir, INDEX_DIR)), mod };
+  }
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stdout은 MCP 프로토콜 전용 — 로그는 반드시 stderr로
@@ -911,6 +949,15 @@ async function main() {
   }
   if (st.quarantined > 0) {
     logWarn(`격리된 손상 파일 ${st.quarantined}건이 있습니다 — vault/quarantine/ 확인 필요`);
+  }
+  // 모델 로드·첫 임베딩은 기다리지 않는다 — 그동안 recall 은 어휘 결과만 낸다
+  if (vector) {
+    const { vr } = vector;
+    const t0 = Date.now();
+    void vr.warm(() => store.retriever.entries()).then(() => {
+      if (vr.state === "ready") logInfo(`벡터 계층 준비됨 (${Date.now() - t0}ms, model=${vr.model})`);
+      else logWarn(`벡터 계층 사용 불가(어휘 검색으로 계속): ${vr.reason}`);
+    });
   }
 }
 

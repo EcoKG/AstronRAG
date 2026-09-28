@@ -4,6 +4,7 @@ import { RETRIEVAL_THRESHOLD, activationOf, rank } from "./ranker.js";
 import {
   LexicalRetriever,
   fuseWeightedMax,
+  type Candidate,
   type ParsedQuery,
   type Retriever,
   type Scorer,
@@ -555,7 +556,14 @@ export class MemoryStore {
   /** 결과 배열만 필요할 때 쓰는 편의 래퍼 (컷오프 정보가 필요하면 searchDetailed) */
   search(
     query: string,
-    opts?: { type?: MemoryType; limit?: number; includeLinked?: boolean; project?: string; altQueries?: string[] },
+    opts?: {
+      type?: MemoryType;
+      limit?: number;
+      includeLinked?: boolean;
+      project?: string;
+      altQueries?: string[];
+      vectorHits?: { key: string; score: number }[];
+    },
   ): SearchResult[] {
     return this.searchDetailed(query, opts).results;
   }
@@ -568,6 +576,8 @@ export class MemoryStore {
       includeLinked?: boolean;
       project?: string;
       altQueries?: string[];
+      /** 벡터 검색 결과(항목 키·점수) — 어휘 후보에 없는 항목만 via "vector" 후보로 덧붙인다 */
+      vectorHits?: { key: string; score: number }[];
     },
   ): SearchOutcome {
     this.shadowTop5 = undefined;
@@ -603,8 +613,9 @@ export class MemoryStore {
 
     // 2) 가중 최대 융합 — 변형이 없으면 단일 목록을 그대로 쓴다(출력 불변).
     // 순위 기반 융합(RRF)은 점수 차를 평평하게 만들어 Ranker 의 신뢰도·활성도 곱이 관련도를 뒤집는다.
-    const candidates =
+    const fused =
       alts.length === 0 ? lists[0] : fuseWeightedMax(lists, queries.map((_, i) => (i === 0 ? 1 : ALT_QUERY_WEIGHT)));
+    const candidates = opts?.vectorHits ? this.withVectorHits(fused, opts.vectorHits, filter) : fused;
     const rq = alts.length === 0 ? q : mergeQueries(queries);
 
     // 3) Ranker — 신뢰도·활성도·RIF·연상 확산
@@ -628,10 +639,24 @@ export class MemoryStore {
     // 융합 목록은 색인 항목당 한 건이라 변형이 몇 개든 한 호출에서 기억마다 한 번만 강화된다.
     for (const r of results) {
       const isAssoc = r.snippet.startsWith("(연상");
-      if (isAssoc || r.inhibited) continue;
+      // 벡터로만 들어온 결과도 강화하지 않는다 — 실제로 열어 읽을 때(read_memory) 강화된다
+      if (isAssoc || r.inhibited || r.via === "vector") continue;
       this.reinforce(r.record, { active: true, preActivation: r.activation });
     }
     return { results, totalMatched };
+  }
+
+  /** 어휘 후보에 없는 벡터 결과만 via "vector" 후보로 덧붙인다 — 어휘 후보의 점수·순서는 그대로 둔다 */
+  private withVectorHits(cands: Candidate[], hits: { key: string; score: number }[], filter: ScopeFilter): Candidate[] {
+    const have = new Set(cands.map((c) => c.titleDescTokens));
+    const extra: Candidate[] = [];
+    for (const h of hits) {
+      const c = this.retriever.candidate(h.key, filter);
+      if (!c || have.has(c.titleDescTokens)) continue;
+      have.add(c.titleDescTokens);
+      extra.push({ ...c, score: h.score, via: "vector" });
+    }
+    return extra.length === 0 ? cands : [...cands, ...extra];
   }
 
   /**
