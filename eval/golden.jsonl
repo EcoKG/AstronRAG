@@ -1,0 +1,120 @@
+{"query":"Postgres connection pool limit","expected":["db-postgres-connection-pool"],"split":"exact","holdout":true}
+{"query":"JWT 만료 시간","expected":["auth-jwt-expiry"],"split":"exact","holdout":false}
+{"query":"운영 배포 절차","expected":["deploy-prod-runbook"],"split":"exact","holdout":false}
+{"query":"Rollback a bad release","expected":["deploy-rollback-steps"],"split":"exact","holdout":true}
+{"query":"레디스 캐시 수동 무효화","expected":["cache-invalidate-redis"],"split":"exact","holdout":false}
+{"query":"Quarantine a flaky test","expected":["test-flaky-quarantine"],"split":"exact","holdout":false}
+{"query":"마지막 커밋 되돌리기","expected":["git-undo-commit"],"split":"exact","holdout":true}
+{"query":"Multi-stage Docker build","expected":["build-docker-multistage"],"split":"exact","holdout":false}
+{"query":"장애 대응 절차","expected":["oncall-incident-response"],"split":"exact","holdout":false}
+{"query":"RabbitMQ dead letter queue","expected":["queue-rabbitmq-dlq"],"split":"exact","holdout":false}
+{"query":"들여쓰기는 탭","expected":["pref-indent-tabs"],"split":"exact","holdout":true}
+{"query":"Commit message format","expected":["pref-commit-message-format"],"split":"exact","holdout":false}
+{"query":"야간 배치 스케줄","expected":["cron-batch-schedule"],"split":"exact","holdout":false}
+{"query":"Settlement batch ran twice","expected":["batch-duplicate-run"],"split":"exact","holdout":true}
+{"query":"API 인증서 만료 사고","expected":["cert-expired-api"],"split":"exact","holdout":false}
+{"query":"Connection pool exhaustion outage","expected":["inc-pool-exhaustion"],"split":"exact","holdout":false}
+{"query":"TypeScript strict mode","expected":["pref-typescript-strict"],"split":"exact","holdout":true}
+{"query":"스테이징 데이터 갱신 주기","expected":["staging-data-refresh"],"split":"exact","holdout":false}
+{"query":"Git LFS assets","expected":["git-lfs-assets"],"split":"exact","holdout":false}
+{"query":"도커 디스크 정리","expected":["docker-disk-cleanup"],"split":"exact","holdout":false}
+{"query":"Canary caught a bad release","expected":["rollback-success-canary"],"split":"exact","holdout":true}
+{"query":"번역 키 누락","expected":["i18n-missing-key"],"split":"exact","holdout":false}
+{"query":"Worker memory ceiling","expected":["memory-leak-worker"],"split":"exact","holdout":false}
+{"query":"오픈소스 라이선스 정책","expected":["license-policy"],"split":"exact","holdout":true}
+{"query":"Idempotency keys","expected":["http-retry-idempotency"],"split":"exact","holdout":false}
+{"query":"PowerShell 5.1 인코딩 기본값","expected":["powershell-encoding"],"split":"exact","holdout":false}
+{"query":"Run a load test with k6","expected":["load-test-run"],"split":"exact","holdout":true}
+{"query":"강제 푸시로 커밋 유실","expected":["git-force-push-loss"],"split":"exact","holdout":false}
+{"query":"Feature flag provider Unleash","expected":["feature-flag-service"],"split":"exact","holdout":false}
+{"query":"상품 캐시 TTL","expected":["perf-cache-ttl"],"split":"exact","holdout":false}
+{"query":"production deploy procedure","expected":["deploy-prod-runbook"],"split":"crosslang","holdout":true}
+{"query":"access token expiration","expected":["auth-jwt-expiry"],"split":"crosslang","holdout":false}
+{"query":"잘못된 릴리스 롤백 방법","expected":["deploy-rollback-steps"],"split":"crosslang","holdout":false}
+{"query":"read replica lag","expected":["db-replica-lag-kr"],"split":"crosslang","holdout":true}
+{"query":"커넥션 풀 한도","expected":["db-postgres-connection-pool"],"split":"crosslang","holdout":false}
+{"query":"flaky test caused by timezone","expected":["test-flaky-timezone"],"split":"crosslang","holdout":false}
+{"query":"유출된 비밀키 교체 절차","expected":["secret-rotation"],"split":"crosslang","holdout":true}
+{"query":"certificate renewal","expected":["ssl-cert-renew"],"split":"crosslang","holdout":false}
+{"query":"도커 이미지 용량이 커진 일","expected":["docker-image-bloat"],"split":"crosslang","holdout":false}
+{"query":"incident response process","expected":["oncall-incident-response"],"split":"crosslang","holdout":false}
+{"query":"tab indentation preference","expected":["pref-indent-tabs"],"split":"crosslang","holdout":true}
+{"query":"커밋 메시지 형식","expected":["pref-commit-message-format"],"split":"crosslang","holdout":false}
+{"query":"nightly batch schedule","expected":["cron-batch-schedule"],"split":"crosslang","holdout":false}
+{"query":"정산 배치 중복 실행","expected":["batch-duplicate-run"],"split":"crosslang","holdout":true}
+{"query":"redis key eviction mass logout","expected":["redis-eviction-spike"],"split":"crosslang","holdout":false}
+{"query":"커넥션 풀 고갈 장애","expected":["inc-pool-exhaustion"],"split":"crosslang","holdout":false}
+{"query":"answer in Korean","expected":["pref-answer-korean"],"split":"crosslang","holdout":true}
+{"query":"staging data refresh","expected":["staging-data-refresh"],"split":"crosslang","holdout":false}
+{"query":"대용량 디자인 파일 LFS","expected":["git-lfs-assets"],"split":"crosslang","holdout":false}
+{"query":"N+1 query slow list API","expected":["perf-n-plus-one"],"split":"crosslang","holdout":false}
+{"query":"카나리 자동 롤백","expected":["rollback-success-canary"],"split":"crosslang","holdout":true}
+{"query":"missing translation key","expected":["i18n-missing-key"],"split":"crosslang","holdout":false}
+{"query":"워커 메모리 상한 재시작","expected":["memory-leak-worker"],"split":"crosslang","holdout":false}
+{"query":"open source license policy","expected":["license-policy"],"split":"crosslang","holdout":true}
+{"query":"멱등성 키 헤더","expected":["http-retry-idempotency"],"split":"crosslang","holdout":false}
+{"query":"PowerShell default encoding","expected":["powershell-encoding"],"split":"crosslang","holdout":false}
+{"query":"부하 테스트 실행","expected":["load-test-run"],"split":"crosslang","holdout":true}
+{"query":"force push lost commits","expected":["git-force-push-loss"],"split":"crosslang","holdout":false}
+{"query":"기능 플래그 제공 서버","expected":["feature-flag-service"],"split":"crosslang","holdout":false}
+{"query":"product cache TTL","expected":["perf-cache-ttl"],"split":"crosslang","holdout":false}
+{"query":"새 버전을 사용자에게 내보내는 순서","expected":["deploy-prod-runbook"],"split":"paraphrase","holdout":true}
+{"query":"how to undo a broken rollout","expected":["deploy-rollback-steps"],"split":"paraphrase","holdout":false}
+{"query":"로그인 토큰이 언제 끝나는지","expected":["auth-jwt-expiry"],"split":"paraphrase","holdout":false}
+{"query":"database ran out of connections when we added pods","expected":["inc-pool-exhaustion"],"split":"paraphrase","holdout":true}
+{"query":"간헐적으로 깨지는 시험 코드 격리","expected":["test-flaky-quarantine"],"split":"paraphrase","holdout":false}
+{"query":"shrink the container image","expected":["build-docker-multistage","docker-image-bloat"],"split":"paraphrase","holdout":false}
+{"query":"밤마다 도는 정산 작업 시각","expected":["cron-batch-schedule"],"split":"paraphrase","holdout":true}
+{"query":"leaked credentials what to do","expected":["secret-rotation"],"split":"paraphrase","holdout":false}
+{"query":"코드 앞칸 띄우기 방식","expected":["pref-indent-tabs"],"split":"paraphrase","holdout":false}
+{"query":"how I like commit titles written","expected":["pref-commit-message-format"],"split":"paraphrase","holdout":false}
+{"query":"HTTPS 증서 기한이 지나 서비스가 멈춘 일","expected":["cert-expired-api"],"split":"paraphrase","holdout":true}
+{"query":"payouts were sent two times","expected":["batch-duplicate-run"],"split":"paraphrase","holdout":false}
+{"query":"캐시 서버가 꽉 차서 모두 로그아웃된 일","expected":["redis-eviction-spike"],"split":"paraphrase","holdout":false}
+{"query":"table blocked for minutes by a schema change","expected":["migration-lock-table"],"split":"paraphrase","holdout":true}
+{"query":"복제 서버 반영이 늦는 정도","expected":["db-replica-lag-kr"],"split":"paraphrase","holdout":false}
+{"query":"keep workers from eating too much RAM","expected":["memory-leak-worker"],"split":"paraphrase","holdout":false}
+{"query":"파워셸에서 한글 안 깨지게 저장","expected":["powershell-utf8-write"],"split":"paraphrase","holdout":true}
+{"query":"customer charged twice after a retry","expected":["idempotency-double-charge"],"split":"paraphrase","holdout":false}
+{"query":"공유 브랜치 이력을 덮어써서 작업이 날아감","expected":["git-force-push-loss"],"split":"paraphrase","holdout":false}
+{"query":"find which commit introduced a bug","expected":["bisect-regression","bisect-found-regression"],"split":"paraphrase","holdout":false}
+{"query":"새로 온 사람이 개발 환경 만드는 데 오래 걸림","expected":["onboarding-feedback"],"split":"paraphrase","holdout":true}
+{"query":"stress the system with virtual users","expected":["load-test-run"],"split":"paraphrase","holdout":false}
+{"query":"밤새 호출기가 울린 일","expected":["oncall-pager-storm"],"split":"paraphrase","holdout":false}
+{"query":"no shipping at the end of the week","expected":["pref-no-friday-deploy"],"split":"paraphrase","holdout":true}
+{"query":"처리 못 한 메시지 다시 돌리기","expected":["queue-replay-dlq"],"split":"paraphrase","holdout":false}
+{"query":"public read access on storage by mistake","expected":["s3-public-bucket"],"split":"paraphrase","holdout":false}
+{"query":"개인 식별 정보 가리기","expected":["data-masking-script"],"split":"paraphrase","holdout":true}
+{"query":"how long we keep application logs","expected":["log-retention"],"split":"paraphrase","holdout":false}
+{"query":"서비스 끊김 없이 프로세스 다시 올리기","expected":["pm2-reload-zero"],"split":"paraphrase","holdout":false}
+{"query":"gate that blocks merging when tests cover too little","expected":["coverage-drop-block","test-coverage-threshold"],"split":"paraphrase","holdout":false}
+{"query":"Kubernetes helm chart upgrade","expected":[],"split":"none","holdout":true}
+{"query":"유니티 셰이더 컴파일 오류","expected":[],"split":"none","holdout":false}
+{"query":"GraphQL federation gateway","expected":[],"split":"none","holdout":false}
+{"query":"카프카 컨슈머 랙 모니터링","expected":[],"split":"none","holdout":true}
+{"query":"Terraform state lock stuck","expected":[],"split":"none","holdout":false}
+{"query":"엘라스틱서치 샤드 재배치","expected":[],"split":"none","holdout":false}
+{"query":"Rust borrow checker lifetime error","expected":[],"split":"none","holdout":true}
+{"query":"피그마 플러그인 개발","expected":[],"split":"none","holdout":false}
+{"query":"Excel VBA macro","expected":[],"split":"none","holdout":false}
+{"query":"블루투스 페어링 끊김","expected":[],"split":"none","holdout":false}
+{"query":"CUDA driver version mismatch","expected":[],"split":"none","holdout":true}
+{"query":"스마트 컨트랙트 가스비","expected":[],"split":"none","holdout":false}
+{"query":"SAP ERP 모듈 설정","expected":[],"split":"none","holdout":false}
+{"query":"WordPress theme customization","expected":[],"split":"none","holdout":true}
+{"query":"아두이노 펌웨어 업로드","expected":[],"split":"none","holdout":false}
+{"query":"ffmpeg video transcoding presets","expected":[],"split":"none","holdout":false}
+{"query":"LaTeX 논문 서식","expected":[],"split":"none","holdout":true}
+{"query":"Blender render farm","expected":[],"split":"none","holdout":false}
+{"query":"코틀린 코루틴 취소","expected":[],"split":"none","holdout":false}
+{"query":"Haskell monad transformer","expected":[],"split":"none","holdout":false}
+{"query":"COBOL 메인프레임 배치","expected":[],"split":"none","holdout":true}
+{"query":"LDAP group sync","expected":[],"split":"none","holdout":false}
+{"query":"SwiftUI navigation stack","expected":[],"split":"none","holdout":false}
+{"query":"플러터 위젯 상태 관리","expected":[],"split":"none","holdout":true}
+{"query":"Jupyter kernel keeps dying","expected":[],"split":"none","holdout":false}
+{"query":"R ggplot 그래프 색상","expected":[],"split":"none","holdout":false}
+{"query":"MATLAB toolbox license","expected":[],"split":"none","holdout":true}
+{"query":"포토샵 레이어 마스크","expected":[],"split":"none","holdout":false}
+{"query":"iOS 앱스토어 심사 거절","expected":[],"split":"none","holdout":false}
+{"query":"Salesforce Apex trigger","expected":[],"split":"none","holdout":false}
