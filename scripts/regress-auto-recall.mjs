@@ -2,9 +2,14 @@
 //
 // 사용:
 //   node scripts/regress-auto-recall.mjs                  회귀 단언 (먼저 npm run build)
-//   node scripts/regress-auto-recall.mjs --eval           eval/autorecall-fresh.jsonl 과 golden.jsonl 로 none 오탐률·exact R@1·주입 크기·중복 노출을 잰다
+//   node scripts/regress-auto-recall.mjs --eval [--queries <jsonl>]
+//                                                         질의 파일(기본 eval/autorecall-fresh.jsonl)로 none 오탐률·exact R@1·주입 크기·중복 노출을 잰다.
+//                                                         기본 파일일 때만 golden.jsonl 홀드아웃도 함께 잰다
+//   node scripts/regress-auto-recall.mjs --sweep          golden 의 none·exact 전체와 fresh 로 하한 T=0~20(0.5 간격)의 none 오탐률·exact R@1 을 시험 프로세스에서 훑는다
 //   node scripts/regress-auto-recall.mjs --bench [--count 950] [--rounds 30] [--seed 42]
-//                                                         bench-rif 생성기로 만든 합성 볼트에서 훅 끝단(spawn~종료)과 단계별 시간을 잰다
+//                                                         bench-rif 생성기로 만든 합성 볼트에서 훅 끝단(spawn~종료)·단계별 시간과 SessionStart 인덱스와의 중복 노출을 잰다
+//   --eval·--sweep·--bench 공통: [--scorer legacy|bm25f] [--min-score <T>] — 시험 프로세스와 자식 훅에 BIGBRAIN_SCORER·BIGBRAIN_AUTO_MIN_SCORE 로 넘긴다
+//   자식 훅에는 BIGBRAIN_AUTO_RECALL=1 을 넘긴다(기본 끔).
 //
 // 볼트·HOME·설정 파일은 전부 %TEMP% 에 만들고 끝나면 지운다. 실사용 볼트와 ~/.claude 는 건드리지 않는다.
 
@@ -41,12 +46,36 @@ try {
 			count: { type: "string", default: "950" },
 			rounds: { type: "string", default: "30" },
 			seed: { type: "string", default: "42" },
+			sweep: { type: "boolean", default: false },
+			scorer: { type: "string" },
+			"min-score": { type: "string" },
+			queries: { type: "string" },
 		},
 	}));
 } catch (e) {
 	console.error(`regress-auto-recall: ${e instanceof Error ? e.message : String(e)}`);
 	process.exit(2);
 }
+/** 측정 모드 — 회귀 단언은 기본값(스코어러 legacy·하한 9)으로만 돈다 */
+const measuring = values.eval || values.bench || values.sweep;
+if (!measuring && (values.scorer !== undefined || values["min-score"] !== undefined || values.queries !== undefined)) {
+	console.error("regress-auto-recall: --scorer·--min-score·--queries 는 --eval·--sweep·--bench 와 함께 쓴다");
+	process.exit(2);
+}
+if (values.scorer !== undefined) {
+	if (!["legacy", "bm25f"].includes(values.scorer)) {
+		console.error(`regress-auto-recall: 지원하지 않는 scorer: ${values.scorer}`);
+		process.exit(2);
+	}
+	process.env.BIGBRAIN_SCORER = values.scorer;
+}
+/** 이번 실행의 자동 회상 하한 — --min-score 가 없으면 훅 기본값 */
+const minScore = values["min-score"] === undefined ? MIN_SCORE : Number(values["min-score"]);
+if (!(Number.isFinite(minScore) && minScore >= 0)) {
+	console.error("regress-auto-recall: --min-score 는 0 이상 수여야 한다");
+	process.exit(2);
+}
+if (values["min-score"] !== undefined) process.env.BIGBRAIN_AUTO_MIN_SCORE = String(minScore);
 
 const distUrl = (f) => pathToFileURL(path.join(root, "dist", f)).href;
 if (!fs.existsSync(path.join(root, "dist", "store.js"))) {
@@ -54,7 +83,7 @@ if (!fs.existsSync(path.join(root, "dist", "store.js"))) {
 	process.exit(1);
 }
 const { Vault } = await import(distUrl("vault.js"));
-const { MemoryStore, searchPersistedIndex } = await import(distUrl("store.js"));
+const { MemoryStore, searchPersistedIndex, SCORER } = await import(distUrl("store.js"));
 const { INDEX_DIR, INDEX_FILE } = await import(distUrl("retriever.js"));
 
 const temps = new Array();
@@ -86,9 +115,9 @@ function runGuard(args, { cwd, input = "", env = {}, script = guard }) {
 const promptInput = (sessionId, text) =>
 	JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: sessionId, ...(text === undefined ? {} : { prompt: text }) });
 
-/** 프롬프트 훅 한 번 (cwd 를 주지 않으면 볼트에서 띄운다) */
+/** 자동 회상을 켠 프롬프트 훅 한 번 (cwd 를 주지 않으면 볼트에서 띄운다) */
 const prompt = (vault, sessionId, text, env = {}, cwd = vault) =>
-	runGuard(["--prompt", "--vault-force", vault], { cwd, input: promptInput(sessionId, text), env });
+	runGuard(["--prompt", "--vault-force", vault], { cwd, input: promptInput(sessionId, text), env: { BIGBRAIN_AUTO_RECALL: "1", ...env } });
 
 /** 세션 시작 훅 한 번 */
 const start = (vault, sessionId, source = "startup") =>
@@ -206,18 +235,57 @@ if (values.eval) {
 				duplicateWithSessionStart: { injectedSlugs: slugs.length, alsoInSessionStart: dup.length, rate: slugs.length ? Number((dup.length / slugs.length).toFixed(3)) : null },
 			};
 		};
-		const fresh = measure(readJsonl(path.join(root, "eval", "autorecall-fresh.jsonl")));
+		const file = path.resolve(values.queries ?? path.join(root, "eval", "autorecall-fresh.jsonl"));
+		const main = measure(readJsonl(file));
 		const golden = readJsonl(path.join(root, "eval", "golden.jsonl"));
-		const holdout = measure(golden.filter((g) => g.holdout && (g.split === "none" || g.split === "exact")));
-		const ok = fresh.none.rate !== null && fresh.none.rate <= 0.1;
+		const holdout = values.queries === undefined ? measure(golden.filter((g) => g.holdout && (g.split === "none" || g.split === "exact"))) : undefined;
+		const ok = main.none.rate !== null && main.none.rate <= 0.1 && main.exact.r1 !== null && main.exact.r1 >= 0.8;
 		process.stdout.write(
-			`${JSON.stringify({ minScore: MIN_SCORE, relative: RELATIVE, sessionStartLines: sessionStart.split("\n").length, fresh, goldenHoldout: holdout, criterion: { metric: "fresh.none.rate", limit: 0.1, ok } }, null, 2)}\n`,
+			`${JSON.stringify({ scorer: SCORER, minScore, relative: RELATIVE, queries: path.relative(root, file), sessionStartLines: sessionStart.split("\n").length, main, goldenHoldout: holdout, criterion: { metric: "main.none.rate <= 0.1 그리고 main.exact.r1 >= 0.8", ok } }, null, 2)}\n`,
 		);
 		if (!ok) process.exitCode = 1;
 	} finally {
 		cleanup();
 	}
 	process.exit(process.exitCode ?? 0);
+}
+
+// ── --sweep: 튜닝에 쓴 기존 데이터(golden none·exact 전체 + fresh)로 하한 후보를 고른다. 훅과 같은 규칙(expectedSlugs)을 시험 프로세스에서 계산한다
+if (values.sweep) {
+	try {
+		const v = fixtureVault("sweep");
+		const golden = readJsonl(path.join(root, "eval", "golden.jsonl")).filter((g) => g.split === "none" || g.split === "exact");
+		const fresh = readJsonl(path.join(root, "eval", "autorecall-fresh.jsonl"));
+		const rows = [...golden.map((r) => ({ ...r, source: "golden" })), ...fresh.map((r) => ({ ...r, source: "fresh" }))];
+		// 훅은 8자 미만·슬래시 명령을 검색하지 않는다 — 같은 규칙으로 뺀다
+		const searched = (q) => q.trim().length >= 8 && !q.trim().startsWith("/");
+		const active = rows.map((r) => (searched(r.query) ? searchPersistedIndex(v, r.query, { limit: 1000 }).results.filter((x) => x.record.status === "active") : []));
+		const pick = (list, T) => {
+			const top = Math.max(0, ...list.map((x) => x.score));
+			return list.filter((x) => x.score >= T && x.score >= top * RELATIVE).sort((a, b) => b.score - a.score).slice(0, MAX).map((x) => x.record.slug);
+		};
+		const rate = (xs, f) => (xs.length === 0 ? null : xs.filter(f).length / xs.length);
+		const point = (T, keep) => {
+			const idx = rows.map((_, i) => i).filter((i) => keep(rows[i]));
+			const none = idx.filter((i) => rows[i].split === "none");
+			const exact = idx.filter((i) => rows[i].split === "exact");
+			return {
+				noneRate: rate(none, (i) => pick(active[i], T).length > 0),
+				exactR1: rate(exact, (i) => rows[i].expected.includes(pick(active[i], T)[0])),
+				n: { none: none.length, exact: exact.length },
+			};
+		};
+		const grid = Array.from({ length: 41 }, (_, i) => i * 0.5).map((T) => ({ T, all: point(T, () => true), golden: point(T, (r) => r.source === "golden"), fresh: point(T, (r) => r.source === "fresh") }));
+		const eligible = grid.filter((p) => (p.all.noneRate ?? 1) <= 0.1);
+		const best = eligible.length === 0 ? null : eligible.reduce((b, p) => ((p.all.exactR1 ?? 0) > (b.all.exactR1 ?? 0) ? p : b));
+		const topScores = active.map((l) => Math.max(0, ...l.map((x) => x.score)));
+		process.stdout.write(
+			`${JSON.stringify({ scorer: SCORER, relative: RELATIVE, max: MAX, rows: rows.length, rule: "all 의 none 오탐률 <= 0.1 인 T 가운데 exact R@1 최대, 동률이면 작은 T", candidate: best, maxTopScore: Math.max(...topScores), grid }, null, 2)}\n`,
+		);
+	} finally {
+		cleanup();
+	}
+	process.exit(0);
 }
 
 // ── --bench: 합성 볼트에서 훅 끝단과 단계별 시간
@@ -240,7 +308,7 @@ if (values.bench) {
 		const indexBytes = fs.statSync(path.join(dir, INDEX_DIR, INDEX_FILE)).size;
 		// bench-rif 질의가 임계를 못 넘으면 첫 기억의 제목을 주입되는 질의로 쓴다
 		const titled = [...queries, { label: "title", query: new Vault(dir).read(new Vault(dir).listSlugs(false)[0].slug)?.title ?? "" }];
-		const hit = titled.find((q) => expectedSlugs(dir, `please check ${q.query} again`).length > 0);
+		const hit = titled.find((q) => expectedSlugs(dir, `please check ${q.query} again`, minScore).length > 0);
 		const cases = [
 			...(hit ? [{ label: `hit(${hit.label})`, text: `please check ${hit.query} again` }] : []),
 			{ label: "miss", text: "please check this unrelated thing again" },
@@ -271,7 +339,7 @@ const t1 = performance.now();
 const retriever = LexicalRetriever.openReadOnly(${JSON.stringify(dir)});
 const t2 = performance.now();
 const q = parseQuery(${JSON.stringify(text)});
-const ranked = rank(retriever.search(q, Infinity, {}), q, { limit: ${MAX * 2}, now: Date.now(), includeLinked: false });
+const ranked = rank(retriever.search(q, Infinity, {}, ${JSON.stringify(SCORER)}), q, { limit: ${MAX * 2}, now: Date.now(), includeLinked: false });
 const t3 = performance.now();
 for (const r of ranked.results) retriever.isCurrent(r.record.slug);
 const t4 = performance.now();
@@ -282,8 +350,26 @@ process.stdout.write(JSON.stringify({ bootMs: t0, importMs: t1 - t0, loadMs: t2 
 		};
 		const rows = cases.map((c) => ({ label: c.label, hook: hookRuns(c.text), phases: phases(c.text) }));
 		const worstP95 = Math.max(...rows.map((r) => r.hook.ms.p95));
+		// 중복 노출: SessionStart 인덱스 한 번과, bench 질의 전부·시드 고정으로 뽑은 기억 제목 30건의 자동 주입(질의마다 새 세션)을 대조한다
+		s.regenerateIndex(); // SessionStart 가 읽는 MEMORY.md 를 서버와 같은 방식으로 만든다
+		const sessionStart = start(dir, "DUP-START").stdout;
+		const all = new Vault(dir).listSlugs(false).map(({ slug }) => slug);
+		const rnd = mulberry32(seed + 1);
+		const sampled = Array.from({ length: Math.min(30, all.length) }, () => all.splice(Math.floor(rnd() * all.length), 1)[0]);
+		const dupQueries = [...queries.map((q) => q.query), ...sampled.map((slug) => new Vault(dir).read(slug)?.title ?? "")];
+		const perTurn = dupQueries.map((text, i) => recallOf(prompt(dir, `DUP-${i}`, text).stdout).slugs);
+		const injectedSlugs = perTurn.flat();
+		const alsoInStart = injectedSlugs.filter((s) => sessionStart.includes(`memories/${s}|`)).length;
+		const duplicateWithSessionStart = {
+			queries: dupQueries.length,
+			injectedTurns: perTurn.filter((s) => s.length > 0).length,
+			injectedSlugs: injectedSlugs.length,
+			alsoInSessionStart: alsoInStart,
+			rate: injectedSlugs.length ? Number((alsoInStart / injectedSlugs.length).toFixed(3)) : null,
+			sessionStartLines: sessionStart.split("\n").length,
+		};
 		process.stdout.write(
-			`${JSON.stringify({ count, rounds, seed, node: process.version, indexBytes, emptyNode, importStoreOnly: importOnly, rows, criterion: { metric: "hook spawn~종료 p95", limitMs: LATENCY_LIMIT_MS, worstP95, ok: worstP95 <= LATENCY_LIMIT_MS } }, null, 2)}\n`,
+			`${JSON.stringify({ count, rounds, seed, scorer: SCORER, minScore, node: process.version, indexBytes, emptyNode, importStoreOnly: importOnly, rows, duplicateWithSessionStart, criterion: { metric: "hook spawn~종료 p95", limitMs: LATENCY_LIMIT_MS, worstP95, ok: worstP95 <= LATENCY_LIMIT_MS } }, null, 2)}\n`,
 		);
 		if (!hit || !rows.every((r) => r.hook.statusOk) || rows[0].hook.injectedRuns !== rounds || worstP95 > LATENCY_LIMIT_MS) process.exitCode = 1;
 	} finally {
@@ -554,9 +640,17 @@ try {
 		check("주입 0건도 기록한다", miss.tool === "auto_recall" && miss.injected === 0, JSON.stringify(miss));
 	}
 
-	console.log("12) 끄는 스위치 BIGBRAIN_AUTO_RECALL=0");
+	console.log("12) 기본 끔 — BIGBRAIN_AUTO_RECALL=1 일 때만 주입");
 	{
-		check("끄면 무출력", prompt(v, "S12", EXACT, { BIGBRAIN_AUTO_RECALL: "0" }).stdout === "");
+		const unset = runGuard(["--prompt", "--vault-force", v], { cwd: v, input: promptInput("S12", EXACT) });
+		check("변수 미설정이면 무출력·종료코드 0", unset.stdout === "" && unset.status === 0, `${unset.status} ${unset.stdout.slice(0, 100)}`);
+		check("0 이면 무출력", prompt(v, "S12", EXACT, { BIGBRAIN_AUTO_RECALL: "0" }).stdout === "");
+		check("true 처럼 1 이 아닌 값이면 무출력", prompt(v, "S12", EXACT, { BIGBRAIN_AUTO_RECALL: "true" }).stdout === "");
+		check("1 이면 주입", recallOf(prompt(v, "S12", EXACT, { BIGBRAIN_AUTO_RECALL: "1" }).stdout).slugs.includes(EXACT_SLUG));
+		const w = fixtureVault("off-cue");
+		start(w, "S12C");
+		const cue = runGuard(["--prompt", "--vault-force", w], { cwd: w, input: promptInput("S12C", CORRECTION) });
+		check("꺼져 있어도 부호화 큐는 그대로", /<bigbrainmemory-cue/.test(cue.stdout) && !cue.stdout.includes("<bigbrainmemory-auto-recall"), cue.stdout.slice(0, 200));
 	}
 
 	console.log("13) 부호화 큐와 한 JSON 으로 합친다");

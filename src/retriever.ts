@@ -8,6 +8,14 @@ import type { MemoryRecord, MemoryType } from "./types.js";
 export const MIN_OVERLAP_TOKENS = 3;
 /** 동의어로만 맞은 토큰의 가중 — 정확히 일치한 기억이 여전히 위로 오게 한다 (감사 D1) */
 export const SYNONYM_WEIGHT = 0.6;
+/** 키워드 점수 계산 방식 — legacy 는 필드 가중 고정 점수, bm25f 는 필드 가중 BM25F */
+export type Scorer = "legacy" | "bm25f";
+/** BM25F 필드 가중 — 제목·태그·설명·본문 순 */
+export const BM25F_W = [5, 4, 3, 1];
+/** BM25F 필드 길이 정규화 강도 — 설명은 스키마상 한 줄 요약이라 길이가 주제 폭이 아니어서 제목·태그와 같게 둔다 */
+export const BM25F_B = [0.3, 0.3, 0.3, 0.75];
+/** BM25F 빈도 포화 상수 */
+export const BM25F_K1 = 1.2;
 /** 영속 역색인 디렉터리 — 볼트 루트 아래에 두고, 안에 "*" 한 줄 .gitignore 를 둔다 */
 export const INDEX_DIR = ".bbm-index";
 /** 역색인 형식 버전 — 토큰화·조사 목록·파일 구조가 바뀌면 올린다 */
@@ -136,7 +144,7 @@ export interface Candidate {
 /** 후보와 관련도 점수만 내는 검색기 — 가중·억제·강화는 하지 않는다 */
 export interface Retriever {
 	readonly name: "lexical" | "vector";
-	search(q: ParsedQuery, k: number, filter: ScopeFilter): Candidate[];
+	search(q: ParsedQuery, k: number, filter: ScopeFilter, scorer?: Scorer): Candidate[];
 	upsert(rec: MemoryRecord, archived?: boolean): void;
 	remove(slug: string): void;
 	sync(vault: Vault): void;
@@ -172,6 +180,41 @@ interface Entry {
 /** 위치와 slug 로 만드는 항목 키 — memories 와 archive 의 같은 slug 를 구분한다 */
 function entryKey(slug: string, archived: boolean): string {
 	return `${archived ? "a" : "m"}:${slug}`;
+}
+
+/** BM25F 검색 1회의 통계 — 질의 토큰별 IDF, 필드별 평균 토큰 수 */
+interface Bm25fStats {
+	idf: number[];
+	avg: number[];
+}
+
+/** 필드 번호(posting 의 필드 칸) → 필드 이름 */
+const FIELD_NAMES: FieldHit["field"][] =["title", "tags", "description", "body"];
+
+/**
+ * 문서 1건의 BM25F 점수 — Σ_t w_t·IDF(t)·tf~/(K1+tf~), tf~ = Σ_f W_f·tf_f/(1-B_f+B_f·len_f/avg_f).
+ * w_t 는 원 토큰 1·동의어 SYNONYM_WEIGHT, tf_f 는 퍼지로 맞은 표층 토큰 빈도의 합이다. 필드별 몫을 fields 에 넣어 합이 점수와 같게 한다.
+ */
+function bm25fScore(q: ParsedQuery, h: number[], e: Entry, bm: Bm25fStats, fields: FieldHit[]): number {
+	const lens = [e.titleT.length, e.tagT.length, e.descT.length, e.bodyT.length];
+	let score = 0;
+	q.expanded.forEach((t, ti) => {
+		const parts = [0, 0, 0, 0];
+		let tf = 0;
+		for (let f = 0; f < 4; f++) {
+			const n = h[ti * 4 + f];
+			if (n <= 0) continue;
+			parts[f] = (BM25F_W[f] * n) / (1 - BM25F_B[f] + (BM25F_B[f] * lens[f]) / bm.avg[f]);
+			tf += parts[f];
+		}
+		if (tf === 0) return;
+		const s = ((q.exact.has(t) ? 1 : SYNONYM_WEIGHT) * bm.idf[ti] * tf) / (BM25F_K1 + tf);
+		score += s;
+		parts.forEach((p, f) => {
+			if (p > 0) fields.push({ field: FIELD_NAMES[f], token: t, weight: (s * p) / tf });
+		});
+	});
+	return score;
 }
 
 /** 파일 신원 (ino, mtimeNs, size) — 십진 문자열 */
@@ -286,7 +329,7 @@ function readIndexFile(fp: string): IndexFile | null | undefined {
 }
 
 /**
- * 필드 가중 키워드 점수(제목 5·태그 4·설명 3·본문 최대 3, 동의어 0.6배)를 내는 검색기.
+ * 필드 가중 키워드 점수(legacy: 제목 5·태그 4·설명 3·본문 최대 3, bm25f: 같은 필드 가중의 BM25F, 둘 다 동의어 0.6배)를 내는 검색기.
  * 표층 토큰 posting 과 어간 사전으로 후보를 찾고, 역색인을 볼트의 .bbm-index/ 에 영속해 새 프로세스가 파일을 다시 파싱하지 않게 한다.
  */
 export class LexicalRetriever implements Retriever {
@@ -562,11 +605,33 @@ export class LexicalRetriever implements Retriever {
 	}
 
 	/**
-	 * 키워드 점수가 0 보다 큰 후보를 항목 순서대로 돌려준다.
+	 * BM25F 통계를 색인 전체(보관·다른 프로젝트 포함, 범위 필터 전)에서 계산한다.
+	 * 문서 빈도는 퍼지로 맞은 표층 토큰이 네 필드 가운데 하나라도 있는 문서 수, IDF 는 log(1+(N-df+0.5)/(df+0.5)) 다.
+	 */
+	private bm25fStats(q: ParsedQuery, hits: Map<number, number[]>): Bm25fStats {
+		const n = this.docs.length;
+		const sum = [0, 0, 0, 0];
+		for (const e of this.docs) {
+			sum[0] += e.titleT.length;
+			sum[1] += e.tagT.length;
+			sum[2] += e.descT.length;
+			sum[3] += e.bodyT.length;
+		}
+		const avg = sum.map((s) => (n > 0 && s > 0 ? s / n : 1));
+		const idf = q.expanded.map((_, ti) => {
+			let df = 0;
+			for (const h of hits.values()) if (h[ti * 4] > 0 || h[ti * 4 + 1] > 0 || h[ti * 4 + 2] > 0 || h[ti * 4 + 3] > 0) df++;
+			return Math.log(1 + (n - df + 0.5) / (df + 0.5));
+		});
+		return { idf, avg };
+	}
+
+	/**
+	 * 키워드 점수가 0 보다 큰 후보를 항목 순서대로 돌려준다. 점수는 scorer 로 고른다(기본 legacy).
 	 * 후보가 k 를 넘으면 점수 상위 k 건(동점은 앞선 항목)만 남기되 순서는 유지한다.
 	 * 레코드는 복제해 내보낸다 — 호출부(강화)가 변이해도 항목이 바뀌지 않게 한다.
 	 */
-	search(q: ParsedQuery, k: number, filter: ScopeFilter): Candidate[] {
+	search(q: ParsedQuery, k: number, filter: ScopeFilter, scorer: Scorer = "legacy"): Candidate[] {
 		// 필드를 **사전 토큰화**해 비교한다(감사 D4). 종전에는 includes/indexOf 라
 		// 토큰 경계가 없어 'cat' 질의가 Concatenation·concat·category 를 포함한
 		// 무관한 기억을 고득점(7.68/3.84)으로 끌어왔고, 반환된 결과는 능동 인출로
@@ -587,6 +652,7 @@ export class LexicalRetriever implements Retriever {
 				}
 			}
 		});
+		const bm = scorer === "bm25f" ? this.bm25fStats(q, hits) : null;
 		const out: Candidate[] = [];
 		for (const doc of [...hits.keys()].sort((a, b) => a - b)) {
 			const e = this.docs[doc];
@@ -595,24 +661,26 @@ export class LexicalRetriever implements Retriever {
 			const h = hits.get(doc) as number[];
 			let keyword = 0;
 			const fields: FieldHit[] = [];
-			q.expanded.forEach((t, ti) => {
-				const w = q.exact.has(t) ? 1 : SYNONYM_WEIGHT;
-				if (h[ti * 4] > 0) {
-					keyword += 5 * w;
-					fields.push({ field: "title", token: t, weight: 5 * w });
-				}
-				if (h[ti * 4 + 1] > 0) {
-					keyword += 4 * w;
-					fields.push({ field: "tags", token: t, weight: 4 * w });
-				}
-				if (h[ti * 4 + 2] > 0) {
-					keyword += 3 * w;
-					fields.push({ field: "description", token: t, weight: 3 * w });
-				}
-				const body = Math.min(3, h[ti * 4 + 3]);
-				keyword += body * w;
-				if (body > 0) fields.push({ field: "body", token: t, weight: body * w });
-			});
+			if (bm) keyword = bm25fScore(q, h, e, bm, fields);
+			else
+				q.expanded.forEach((t, ti) => {
+					const w = q.exact.has(t) ? 1 : SYNONYM_WEIGHT;
+					if (h[ti * 4] > 0) {
+						keyword += 5 * w;
+						fields.push({ field: "title", token: t, weight: 5 * w });
+					}
+					if (h[ti * 4 + 1] > 0) {
+						keyword += 4 * w;
+						fields.push({ field: "tags", token: t, weight: 4 * w });
+					}
+					if (h[ti * 4 + 2] > 0) {
+						keyword += 3 * w;
+						fields.push({ field: "description", token: t, weight: 3 * w });
+					}
+					const body = Math.min(3, h[ti * 4 + 3]);
+					keyword += body * w;
+					if (body > 0) fields.push({ field: "body", token: t, weight: body * w });
+				});
 			if (keyword === 0) continue;
 			out.push({ slug: m.slug, score: keyword, fields, record: cloneRecord(m), titleDescTokens: e.titleDescT });
 		}
