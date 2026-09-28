@@ -5,7 +5,10 @@
 //   node scripts/eval-retrieval.mjs --compare base.json cand.json
 //   node scripts/eval-retrieval.mjs --baseline <기준 dist 디렉터리> [--out <path>]
 //   node scripts/eval-retrieval.mjs --min-exact-r1 <하한>
+//   node scripts/eval-retrieval.mjs --multi [--alt-control [--seed N]] [--out <path>]
 //
+// --multi 는 eval/alt-queries.jsonl 의 고정 변형을 alt_queries 로 함께 넘겨 같은 지표를 잰다.
+// --alt-control 은 변형 묶음을 다른 질의의 것으로 순환 배정해 목록이 길어진 효과만 남기는 대조군이다.
 // --baseline 은 골든 전 질의의 searchDetailed 출력 JSON 을 기준 dist 와 바이트 비교해 불일치가 있으면 1 로 끝난다.
 // --min-exact-r1 은 exact 분할 전체 Recall@1 만 재서 하한 미만이면 1 로 끝난다.
 //
@@ -23,6 +26,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const FIXTURE = path.join(root, "eval", "fixture-vault");
 const GOLDEN = path.join(root, "eval", "golden.jsonl");
+const ALTS = path.join(root, "eval", "alt-queries.jsonl");
+const MAX_ALTS = 3;
 const FROZEN_NOW = Date.parse("2026-07-01T00:00:00.000Z");
 const SPLITS = ["exact", "crosslang", "paraphrase", "none"];
 const POSITIVE = ["exact", "crosslang", "paraphrase"];
@@ -61,6 +66,8 @@ function readArgs(argv) {
 				seed: { type: "string", default: "42" },
 				baseline: { type: "string" },
 				"min-exact-r1": { type: "string" },
+				multi: { type: "boolean", default: false },
+				"alt-control": { type: "boolean", default: false },
 			},
 		});
 	} catch (e) {
@@ -77,6 +84,8 @@ function readArgs(argv) {
 		if (!(minExactR1 >= 0 && minExactR1 <= 1)) die("--min-exact-r1 은 0~1 사이 수여야 한다", 2);
 	}
 	if (values.baseline !== undefined && minExactR1 !== undefined) die("--baseline 과 --min-exact-r1 은 함께 쓸 수 없다", 2);
+	if (values["alt-control"] && !values.multi) die("--alt-control 은 --multi 와 함께 써야 한다", 2);
+	if (values.multi && (values.baseline !== undefined || values.compare)) die("--multi 는 --baseline·--compare 와 함께 쓸 수 없다", 2);
 	let baseline;
 	if (values.baseline !== undefined) {
 		baseline = path.resolve(values.baseline);
@@ -92,6 +101,8 @@ function readArgs(argv) {
 		seed,
 		baseline,
 		minExactR1,
+		multi: values.multi,
+		altControl: values["alt-control"],
 	};
 }
 
@@ -155,6 +166,44 @@ function loadGolden(slugs) {
 		if (n < MIN_PER_SPLIT) die(`split ${s} 가 ${n}건으로 최소 ${MIN_PER_SPLIT}건 미만`);
 	}
 	return rows;
+}
+
+/** 고정 변형 파일을 읽어 골든 행마다 변형 1~3개가 정확히 한 묶음 있는지 검사하고 split·query → 변형 Map 을 돌려준다 */
+function loadAlts(rows) {
+	const want = new Set(rows.map((r) => `${r.split}\u0000${r.query}`));
+	const lines = fs.readFileSync(ALTS, "utf8").split(/\r?\n/).filter((l) => l.trim() !== "");
+	const map = new Map();
+	lines.forEach((line, i) => {
+		const where = `alt-queries.jsonl ${i + 1}행`;
+		let r;
+		try {
+			r = JSON.parse(line);
+		} catch {
+			die(`${where} JSON 파싱 실패`);
+		}
+		const key = `${r.split}\u0000${r.query}`;
+		if (!want.has(key)) die(`${where}: 골든에 없는 split·query`);
+		if (map.has(key)) die(`${where}: 같은 split·query 중복`);
+		const ok = Array.isArray(r.alts) && r.alts.length >= 1 && r.alts.length <= MAX_ALTS;
+		if (!ok || r.alts.some((a) => typeof a !== "string" || a.trim() === "")) die(`${where}: alts 는 비지 않은 문자열 1~${MAX_ALTS}개여야 한다`);
+		map.set(key, r.alts);
+	});
+	if (map.size !== want.size) die(`alt-queries.jsonl 이 골든 ${want.size}행 중 ${map.size}행만 덮는다`);
+	return map;
+}
+
+/** 대조군 변형 — 시드 고정 순서로 행을 돌려 각 행에 다른 행의 변형 묶음을 준다(자기 변형은 남지 않는다) */
+function derangeAlts(rows, alts, seed) {
+	const rnd = mulberry32(seed);
+	const o = rows.map((_, i) => i);
+	for (let i = o.length - 1; i > 0; i--) {
+		const k = Math.floor(rnd() * (i + 1));
+		[o[i], o[k]] = [o[k], o[i]];
+	}
+	const key = (r) => `${r.split}\u0000${r.query}`;
+	const out = new Map();
+	o.forEach((ri, i) => out.set(key(rows[ri]), alts.get(key(rows[o[(i + 1) % o.length]]))));
+	return out;
 }
 
 /** 픽스처를 %TEMP% 에 복사한 새 디렉터리 경로를 돌려준다 */
@@ -283,7 +332,8 @@ function compare(basePath, candPath) {
 	const bySplit = {};
 	for (const s of POSITIVE) {
 		const ps = pairs.filter(([q]) => q.split === s);
-		bySplit[s] = { hit1: test(ps, 1), hit5: test(ps, 5) };
+		const part = (xs) => ({ hit1: test(xs, 1), hit5: test(xs, 5) });
+		bySplit[s] = { ...part(ps), tune: part(ps.filter(([q]) => !q.holdout)), holdout: part(ps.filter(([q]) => q.holdout)) };
 	}
 	return {
 		mode: "compare",
@@ -374,6 +424,10 @@ const fixtureSlugs = new Set(
 	fs.readdirSync(path.join(FIXTURE, "memories")).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)),
 );
 const golden = loadGolden(fixtureSlugs);
+const fixedAlts = opts.multi ? loadAlts(golden) : null;
+const usedAlts = fixedAlts && opts.altControl ? derangeAlts(golden, fixedAlts, opts.seed) : fixedAlts;
+/** 행에 넘길 alt_queries — --multi 가 없으면 undefined */
+const altsOf = (row) => usedAlts?.get(`${row.split}\u0000${row.query}`);
 
 const realNow = Date.now;
 let metricDir = "";
@@ -402,7 +456,7 @@ evaluation: try {
 
 	const items = golden.map((row) => {
 		const ranked = store
-			.searchDetailed(row.query, { limit: FULL_LIMIT, includeLinked: false })
+			.searchDetailed(row.query, { limit: FULL_LIMIT, includeLinked: false, altQueries: altsOf(row) })
 			.results.map((r) => ({ slug: r.record.slug, score: r.score }));
 		return { row, ranked, j: judge(row, ranked) };
 	});
@@ -437,11 +491,11 @@ evaluation: try {
 	// 지연: 실제 시계·실제 강화, 서버 recall 기본값(limit 5, 연상 포함)
 	latDir = copyFixture("latency");
 	const live = new MemoryStore(new Vault(latDir));
-	for (const row of golden) live.searchDetailed(row.query, { limit: 5 });
+	for (const row of golden) live.searchDetailed(row.query, { limit: 5, altQueries: altsOf(row) });
 	const times = Array.from({ length: LATENCY_ROUNDS }, () =>
 		golden.map((row) => {
 			const t0 = performance.now();
-			live.searchDetailed(row.query, { limit: 5 });
+			live.searchDetailed(row.query, { limit: 5, altQueries: altsOf(row) });
 			return performance.now() - t0;
 		}),
 	)
@@ -463,6 +517,9 @@ evaluation: try {
 		noneCurve: curve,
 		g2: pickG2(curve),
 		permuteControl,
+		...(opts.multi
+			? { multi: { file: path.relative(root, ALTS), control: opts.altControl ? "derangement" : "none", seed: opts.altControl ? opts.seed : null } }
+			: {}),
 		latencyMs: {
 			p50: percentile(times, 0.5),
 			p95: percentile(times, 0.95),
@@ -479,7 +536,7 @@ evaluation: try {
 		})),
 	};
 
-	emit(result, opts.out, ["scorer", "fixture", "splits", "g2", "latencyMs", "permuteControl"]);
+	emit(result, opts.out, ["scorer", "fixture", "splits", "g2", "latencyMs", "permuteControl", "multi"]);
 } finally {
 	Date.now = realNow;
 	for (const d of [metricDir, latDir, ...diffDirs]) if (d) fs.rmSync(d, { recursive: true, force: true });

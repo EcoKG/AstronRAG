@@ -1,0 +1,120 @@
+{"split":"exact","query":"Postgres connection pool limit","alts":["포스트그레스 커넥션 풀 한도","database connection pool max size"]}
+{"split":"exact","query":"JWT 만료 시간","alts":["JWT expiration time","access token expiry"]}
+{"split":"exact","query":"운영 배포 절차","alts":["production deploy procedure","release process"]}
+{"split":"exact","query":"Rollback a bad release","alts":["잘못된 릴리스 롤백","revert deployment"]}
+{"split":"exact","query":"레디스 캐시 수동 무효화","alts":["redis cache manual invalidation","flush cache keys"]}
+{"split":"exact","query":"Quarantine a flaky test","alts":["불안정한 테스트 격리","skip intermittent failing test"]}
+{"split":"exact","query":"마지막 커밋 되돌리기","alts":["undo last commit","git revert reset"]}
+{"split":"exact","query":"Multi-stage Docker build","alts":["도커 멀티 스테이지 빌드","Dockerfile image build"]}
+{"split":"exact","query":"장애 대응 절차","alts":["incident response procedure","outage handling runbook"]}
+{"split":"exact","query":"RabbitMQ dead letter queue","alts":["래빗MQ 데드 레터 큐","failed message queue"]}
+{"split":"exact","query":"들여쓰기는 탭","alts":["tab indentation","code indent style"]}
+{"split":"exact","query":"Commit message format","alts":["커밋 메시지 형식","commit title convention"]}
+{"split":"exact","query":"야간 배치 스케줄","alts":["nightly batch schedule","cron job timing"]}
+{"split":"exact","query":"Settlement batch ran twice","alts":["정산 배치 중복 실행","duplicate payout job"]}
+{"split":"exact","query":"API 인증서 만료 사고","alts":["API certificate expired incident","TLS cert expiry outage"]}
+{"split":"exact","query":"Connection pool exhaustion outage","alts":["커넥션 풀 고갈 장애","database connections exhausted"]}
+{"split":"exact","query":"TypeScript strict mode","alts":["타입스크립트 strict 모드","tsconfig compiler options"]}
+{"split":"exact","query":"스테이징 데이터 갱신 주기","alts":["staging data refresh interval","staging database sync"]}
+{"split":"exact","query":"Git LFS assets","alts":["깃 LFS 대용량 파일","large binary files in git"]}
+{"split":"exact","query":"도커 디스크 정리","alts":["docker disk cleanup","docker prune images"]}
+{"split":"exact","query":"Canary caught a bad release","alts":["카나리 배포가 잘못된 릴리스를 잡음","canary rollout failure"]}
+{"split":"exact","query":"번역 키 누락","alts":["missing translation key","i18n localization string"]}
+{"split":"exact","query":"Worker memory ceiling","alts":["워커 메모리 상한","worker memory limit restart"]}
+{"split":"exact","query":"오픈소스 라이선스 정책","alts":["open source license policy","dependency license compliance"]}
+{"split":"exact","query":"Idempotency keys","alts":["멱등성 키","duplicate request prevention"]}
+{"split":"exact","query":"PowerShell 5.1 인코딩 기본값","alts":["PowerShell 5.1 default encoding","UTF-8 BOM file encoding"]}
+{"split":"exact","query":"Run a load test with k6","alts":["k6 부하 테스트 실행","performance stress test"]}
+{"split":"exact","query":"강제 푸시로 커밋 유실","alts":["force push lost commits","git history overwritten"]}
+{"split":"exact","query":"Feature flag provider Unleash","alts":["기능 플래그 서버 Unleash","feature toggle service"]}
+{"split":"exact","query":"상품 캐시 TTL","alts":["product cache TTL","cache expiration time"]}
+{"split":"crosslang","query":"production deploy procedure","alts":["운영 배포 절차","릴리스 배포 순서"]}
+{"split":"crosslang","query":"access token expiration","alts":["액세스 토큰 만료","JWT 만료 시간"]}
+{"split":"crosslang","query":"잘못된 릴리스 롤백 방법","alts":["rollback a bad release","revert deployment"]}
+{"split":"crosslang","query":"read replica lag","alts":["읽기 복제본 지연","레플리카 복제 지연"]}
+{"split":"crosslang","query":"커넥션 풀 한도","alts":["connection pool limit","database max connections"]}
+{"split":"crosslang","query":"flaky test caused by timezone","alts":["시간대 때문에 불안정한 테스트","타임존 테스트 실패"]}
+{"split":"crosslang","query":"유출된 비밀키 교체 절차","alts":["leaked secret key rotation","credential rotation procedure"]}
+{"split":"crosslang","query":"certificate renewal","alts":["인증서 갱신","TLS 인증서 만료"]}
+{"split":"crosslang","query":"도커 이미지 용량이 커진 일","alts":["docker image size grew","large container image"]}
+{"split":"crosslang","query":"incident response process","alts":["장애 대응 절차","사고 대응"]}
+{"split":"crosslang","query":"tab indentation preference","alts":["들여쓰기는 탭","탭 들여쓰기 선호"]}
+{"split":"crosslang","query":"커밋 메시지 형식","alts":["commit message format","commit title convention"]}
+{"split":"crosslang","query":"nightly batch schedule","alts":["야간 배치 스케줄","밤 배치 작업 시각"]}
+{"split":"crosslang","query":"정산 배치 중복 실행","alts":["settlement batch ran twice","duplicate payout job"]}
+{"split":"crosslang","query":"redis key eviction mass logout","alts":["레디스 키 축출 대량 로그아웃","세션 만료 캐시 메모리"]}
+{"split":"crosslang","query":"커넥션 풀 고갈 장애","alts":["connection pool exhaustion outage","database ran out of connections"]}
+{"split":"crosslang","query":"answer in Korean","alts":["한국어로 답변","응답 언어 선호"]}
+{"split":"crosslang","query":"staging data refresh","alts":["스테이징 데이터 갱신","스테이징 DB 동기화"]}
+{"split":"crosslang","query":"대용량 디자인 파일 LFS","alts":["large design files Git LFS","binary assets storage"]}
+{"split":"crosslang","query":"N+1 query slow list API","alts":["N+1 쿼리 느린 목록 API","ORM 쿼리 성능"]}
+{"split":"crosslang","query":"카나리 자동 롤백","alts":["canary automatic rollback","canary release failure"]}
+{"split":"crosslang","query":"missing translation key","alts":["번역 키 누락","다국어 문자열"]}
+{"split":"crosslang","query":"워커 메모리 상한 재시작","alts":["worker memory limit restart","memory ceiling"]}
+{"split":"crosslang","query":"open source license policy","alts":["오픈소스 라이선스 정책","의존성 라이선스"]}
+{"split":"crosslang","query":"멱등성 키 헤더","alts":["idempotency key header","duplicate request prevention"]}
+{"split":"crosslang","query":"PowerShell default encoding","alts":["파워셸 기본 인코딩","PowerShell 5.1 인코딩 UTF-8"]}
+{"split":"crosslang","query":"부하 테스트 실행","alts":["run a load test","k6 performance test"]}
+{"split":"crosslang","query":"force push lost commits","alts":["강제 푸시로 커밋 유실","깃 이력 덮어쓰기"]}
+{"split":"crosslang","query":"기능 플래그 제공 서버","alts":["feature flag provider","feature toggle service"]}
+{"split":"crosslang","query":"product cache TTL","alts":["상품 캐시 TTL","캐시 만료 시간"]}
+{"split":"paraphrase","query":"새 버전을 사용자에게 내보내는 순서","alts":["release deploy procedure","운영 배포 절차"]}
+{"split":"paraphrase","query":"how to undo a broken rollout","alts":["잘못된 배포 롤백","rollback a bad release"]}
+{"split":"paraphrase","query":"로그인 토큰이 언제 끝나는지","alts":["login token expiration","JWT 만료 시간"]}
+{"split":"paraphrase","query":"database ran out of connections when we added pods","alts":["커넥션 풀 고갈","connection pool exhaustion outage"]}
+{"split":"paraphrase","query":"간헐적으로 깨지는 시험 코드 격리","alts":["quarantine flaky test","불안정한 테스트 격리"]}
+{"split":"paraphrase","query":"shrink the container image","alts":["도커 이미지 용량 줄이기","multi-stage docker build"]}
+{"split":"paraphrase","query":"밤마다 도는 정산 작업 시각","alts":["nightly settlement batch schedule","야간 배치 스케줄"]}
+{"split":"paraphrase","query":"leaked credentials what to do","alts":["유출된 비밀키 교체","secret rotation procedure"]}
+{"split":"paraphrase","query":"코드 앞칸 띄우기 방식","alts":["indentation style","들여쓰기 탭"]}
+{"split":"paraphrase","query":"how I like commit titles written","alts":["커밋 메시지 형식","commit message format"]}
+{"split":"paraphrase","query":"HTTPS 증서 기한이 지나 서비스가 멈춘 일","alts":["TLS certificate expired outage","인증서 만료 사고"]}
+{"split":"paraphrase","query":"payouts were sent two times","alts":["정산 중복 지급","settlement batch ran twice"]}
+{"split":"paraphrase","query":"캐시 서버가 꽉 차서 모두 로그아웃된 일","alts":["redis eviction mass logout","레디스 메모리 가득 참 세션"]}
+{"split":"paraphrase","query":"table blocked for minutes by a schema change","alts":["스키마 변경 테이블 잠금","database migration lock"]}
+{"split":"paraphrase","query":"복제 서버 반영이 늦는 정도","alts":["read replica lag","replication delay"]}
+{"split":"paraphrase","query":"keep workers from eating too much RAM","alts":["워커 메모리 상한","worker memory limit"]}
+{"split":"paraphrase","query":"파워셸에서 한글 안 깨지게 저장","alts":["PowerShell encoding UTF-8","파워셸 인코딩 기본값"]}
+{"split":"paraphrase","query":"customer charged twice after a retry","alts":["재시도 후 중복 결제","idempotency key"]}
+{"split":"paraphrase","query":"공유 브랜치 이력을 덮어써서 작업이 날아감","alts":["force push lost commits","강제 푸시"]}
+{"split":"paraphrase","query":"find which commit introduced a bug","alts":["버그를 만든 커밋 찾기","git bisect"]}
+{"split":"paraphrase","query":"새로 온 사람이 개발 환경 만드는 데 오래 걸림","alts":["new developer onboarding setup slow","개발 환경 구성 온보딩"]}
+{"split":"paraphrase","query":"stress the system with virtual users","alts":["부하 테스트","load test k6"]}
+{"split":"paraphrase","query":"밤새 호출기가 울린 일","alts":["on-call pager alerts overnight","야간 장애 알림"]}
+{"split":"paraphrase","query":"no shipping at the end of the week","alts":["금요일 배포 금지","deploy freeze Friday"]}
+{"split":"paraphrase","query":"처리 못 한 메시지 다시 돌리기","alts":["reprocess dead letter queue messages","데드 레터 큐 재처리"]}
+{"split":"paraphrase","query":"public read access on storage by mistake","alts":["스토리지 공개 접근 실수","S3 bucket public exposure"]}
+{"split":"paraphrase","query":"개인 식별 정보 가리기","alts":["PII masking","personal data redaction logs"]}
+{"split":"paraphrase","query":"how long we keep application logs","alts":["로그 보관 기간","log retention policy"]}
+{"split":"paraphrase","query":"서비스 끊김 없이 프로세스 다시 올리기","alts":["zero downtime restart","graceful reload"]}
+{"split":"paraphrase","query":"gate that blocks merging when tests cover too little","alts":["테스트 커버리지 기준 병합 차단","code coverage threshold CI"]}
+{"split":"none","query":"Kubernetes helm chart upgrade","alts":["쿠버네티스 헬름 차트 업그레이드","k8s package release"]}
+{"split":"none","query":"유니티 셰이더 컴파일 오류","alts":["Unity shader compile error","game engine graphics build"]}
+{"split":"none","query":"GraphQL federation gateway","alts":["GraphQL 페더레이션 게이트웨이","API schema stitching"]}
+{"split":"none","query":"카프카 컨슈머 랙 모니터링","alts":["Kafka consumer lag monitoring","message stream backlog"]}
+{"split":"none","query":"Terraform state lock stuck","alts":["테라폼 상태 잠금 걸림","infrastructure as code lock"]}
+{"split":"none","query":"엘라스틱서치 샤드 재배치","alts":["Elasticsearch shard relocation","search cluster rebalancing"]}
+{"split":"none","query":"Rust borrow checker lifetime error","alts":["러스트 빌림 검사기 수명 오류","Rust compile error"]}
+{"split":"none","query":"피그마 플러그인 개발","alts":["Figma plugin development","design tool extension"]}
+{"split":"none","query":"Excel VBA macro","alts":["엑셀 VBA 매크로","spreadsheet automation"]}
+{"split":"none","query":"블루투스 페어링 끊김","alts":["Bluetooth pairing disconnect","wireless connection drop"]}
+{"split":"none","query":"CUDA driver version mismatch","alts":["CUDA 드라이버 버전 불일치","GPU driver compatibility"]}
+{"split":"none","query":"스마트 컨트랙트 가스비","alts":["smart contract gas fee","Ethereum transaction cost"]}
+{"split":"none","query":"SAP ERP 모듈 설정","alts":["SAP ERP module configuration","enterprise resource planning setup"]}
+{"split":"none","query":"WordPress theme customization","alts":["워드프레스 테마 수정","CMS template"]}
+{"split":"none","query":"아두이노 펌웨어 업로드","alts":["Arduino firmware upload","microcontroller flashing"]}
+{"split":"none","query":"ffmpeg video transcoding presets","alts":["ffmpeg 영상 인코딩 프리셋","video conversion"]}
+{"split":"none","query":"LaTeX 논문 서식","alts":["LaTeX paper formatting","academic document template"]}
+{"split":"none","query":"Blender render farm","alts":["블렌더 렌더 팜","3D rendering cluster"]}
+{"split":"none","query":"코틀린 코루틴 취소","alts":["Kotlin coroutine cancellation","async job cancel"]}
+{"split":"none","query":"Haskell monad transformer","alts":["하스켈 모나드 트랜스포머","functional programming"]}
+{"split":"none","query":"COBOL 메인프레임 배치","alts":["COBOL mainframe batch","legacy batch job"]}
+{"split":"none","query":"LDAP group sync","alts":["LDAP 그룹 동기화","directory service user sync"]}
+{"split":"none","query":"SwiftUI navigation stack","alts":["SwiftUI 내비게이션 스택","iOS screen navigation"]}
+{"split":"none","query":"플러터 위젯 상태 관리","alts":["Flutter widget state management","mobile UI state"]}
+{"split":"none","query":"Jupyter kernel keeps dying","alts":["주피터 커널 계속 죽음","notebook kernel crash"]}
+{"split":"none","query":"R ggplot 그래프 색상","alts":["R ggplot chart colors","plot color palette"]}
+{"split":"none","query":"MATLAB toolbox license","alts":["매트랩 툴박스 라이선스","MATLAB license"]}
+{"split":"none","query":"포토샵 레이어 마스크","alts":["Photoshop layer mask","image editing"]}
+{"split":"none","query":"iOS 앱스토어 심사 거절","alts":["iOS App Store review rejection","app submission rejected"]}
+{"split":"none","query":"Salesforce Apex trigger","alts":["세일즈포스 Apex 트리거","CRM database trigger"]}
