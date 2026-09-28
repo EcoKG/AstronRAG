@@ -1,0 +1,45 @@
+{"query":"Kubernetes HPA 가 파드를 너무 늦게 늘리는 문제","expected":[],"split":"none"}
+{"query":"How do I configure Terraform remote state locking?","expected":[],"split":"none"}
+{"query":"유출된 API 키를 새로 교체하는 순서가 어떻게 되지?","expected":["secret-rotation"],"split":"exact"}
+{"query":"GraphQL 스키마 페더레이션 구성 방법","expected":[],"split":"none"}
+{"query":"React hydration mismatch warning in Next.js pages","expected":[],"split":"none"}
+{"query":"How do I turn on long path support on Windows?","expected":["windows-longpath-enable"],"split":"exact"}
+{"query":"Rust borrow checker 라이프타임 에러 해결","expected":[],"split":"none"}
+{"query":"Kafka consumer lag 이 계속 늘어날 때 확인할 것","expected":[],"split":"none"}
+{"query":"Run just one test file instead of the whole suite","expected":["test-run-single"],"split":"exact"}
+{"query":"Elasticsearch 샤드 개수 정하는 기준","expected":[],"split":"none"}
+{"query":"gRPC deadline exceeded errors between services","expected":[],"split":"none"}
+{"query":"도커 때문에 디스크가 꽉 찼을 때 정리하는 법","expected":["docker-disk-cleanup"],"split":"exact"}
+{"query":"OAuth PKCE 흐름을 모바일 앱에 적용하는 법","expected":[],"split":"none"}
+{"query":"WebSocket 재연결 백오프 전략","expected":[],"split":"none"}
+{"query":"스테이징 데이터베이스 초기화하는 방법","expected":["staging-reset"],"split":"exact"}
+{"query":"iOS 앱 푸시 알림 인증서 설정","expected":[],"split":"none"}
+{"query":"How to set up Storybook for our component library","expected":[],"split":"none"}
+{"query":"서비스를 무중단으로 재시작하려면 어떻게 해?","expected":["pm2-reload-zero"],"split":"exact"}
+{"query":"CSS grid 로 반응형 카드 레이아웃 만들기","expected":[],"split":"none"}
+{"query":"Android 앱 서명 키스토어 관리 방법","expected":[],"split":"none"}
+{"query":"dead letter 에 쌓인 메시지를 다시 처리하고 싶어","expected":["queue-replay-dlq"],"split":"exact"}
+{"query":"머신러닝 모델 서빙 GPU 메모리 부족","expected":[],"split":"none"}
+{"query":"Set up Sentry source maps for the frontend","expected":[],"split":"none"}
+{"query":"Renew the TLS certificate before it expires","expected":["ssl-cert-renew"],"split":"exact"}
+{"query":"사내 위키 문서 권한 설정은 어디서 해?","expected":[],"split":"none"}
+{"query":"Which chart library should we use for dashboards?","expected":[],"split":"none"}
+{"query":"방금 한 커밋 취소하고 싶은데","expected":["git-undo-commit"],"split":"exact"}
+{"query":"Figma 디자인 토큰을 코드로 내보내는 방법","expected":[],"split":"none"}
+{"query":"Helm chart values 파일 환경별로 나누기","expected":[],"split":"none"}
+{"query":"부하 테스트는 어떤 도구로 어떻게 돌리지?","expected":["load-test-run"],"split":"exact"}
+{"query":"Swift concurrency actor 사용법","expected":[],"split":"none"}
+{"query":"이메일 발송 SPF DKIM 레코드 설정","expected":[],"split":"none"}
+{"query":"Node 서비스 CPU 프로파일링 하는 방법","expected":["perf-profile-node"],"split":"exact"}
+{"query":"How do we handle GDPR data deletion requests?","expected":[],"split":"none"}
+{"query":"Vim 에서 매크로 녹화하는 법","expected":[],"split":"none"}
+{"query":"What indentation style should I use in code?","expected":["pref-indent-tabs"],"split":"exact"}
+{"query":"로드밸런서 헬스체크 경로 설정","expected":[],"split":"none"}
+{"query":"Postman 컬렉션을 팀과 공유하는 방법","expected":[],"split":"none"}
+{"query":"배포가 잘못됐을 때 이전 버전으로 되돌리는 절차","expected":["deploy-rollback-steps"],"split":"exact"}
+{"query":"Redis Cluster 로 샤딩 전환할 때 슬롯 재배치","expected":[],"split":"none"}
+{"query":"Webpack 에서 Vite 로 옮길 때 주의점","expected":[],"split":"none"}
+{"query":"Clear a Redis cache key by hand","expected":["cache-invalidate-redis"],"split":"exact"}
+{"query":"Explain the difference between OLAP and OLTP databases","expected":[],"split":"none"}
+{"query":"Jira 워크플로 상태 추가하는 방법","expected":[],"split":"none"}
+{"query":"Writing a file as UTF-8 from PowerShell without BOM","expected":["powershell-utf8-write"],"split":"exact"}
