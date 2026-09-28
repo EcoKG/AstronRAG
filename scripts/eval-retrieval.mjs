@@ -3,6 +3,11 @@
 // 사용:
 //   node scripts/eval-retrieval.mjs --scorer legacy [--out <path>] [--permute-control [--seed N]]
 //   node scripts/eval-retrieval.mjs --compare base.json cand.json
+//   node scripts/eval-retrieval.mjs --baseline <기준 dist 디렉터리> [--out <path>]
+//   node scripts/eval-retrieval.mjs --min-exact-r1 <하한>
+//
+// --baseline 은 골든 전 질의의 searchDetailed 출력 JSON 을 기준 dist 와 바이트 비교해 불일치가 있으면 1 로 끝난다.
+// --min-exact-r1 은 exact 분할 전체 Recall@1 만 재서 하한 미만이면 1 로 끝난다.
 //
 // 픽스처는 %TEMP% 사본에서만 연다 — 회상 강화 쓰기가 eval/fixture-vault 를 바꾸지 않게 한다.
 // 지표 측정 중에는 시계를 FROZEN_NOW 로 고정하고 강화를 꺼서 실행 시각·질의 순서와 무관한 결정적 결과를 낸다.
@@ -28,6 +33,13 @@ const REL_RATIO = 0.5;
 const THRESHOLDS = Array.from({ length: 41 }, (_, i) => i * 0.5);
 const LATENCY_ROUNDS = 5;
 const FULL_LIMIT = 1000;
+const DIFF_CONFIGS = [
+	["full", { limit: FULL_LIMIT, includeLinked: false }],
+	["recall", { limit: 5 }],
+	["top1", { limit: 1 }],
+	["typed", { limit: 5, type: "procedural", project: "eval-other" }],
+];
+const DIFF_SAMPLES = 5;
 
 function die(msg, code = 1) {
 	console.error(`eval-retrieval: ${msg}`);
@@ -47,6 +59,8 @@ function readArgs(argv) {
 				compare: { type: "boolean", default: false },
 				"permute-control": { type: "boolean", default: false },
 				seed: { type: "string", default: "42" },
+				baseline: { type: "string" },
+				"min-exact-r1": { type: "string" },
 			},
 		});
 	} catch (e) {
@@ -57,12 +71,27 @@ function readArgs(argv) {
 	if (!values.compare && positionals.length > 0) die(`알 수 없는 인자: ${positionals.join(" ")}`, 2);
 	const seed = Number(values.seed);
 	if (!Number.isInteger(seed)) die("--seed 는 정수여야 한다", 2);
+	let minExactR1;
+	if (values["min-exact-r1"] !== undefined) {
+		minExactR1 = Number(values["min-exact-r1"]);
+		if (!(minExactR1 >= 0 && minExactR1 <= 1)) die("--min-exact-r1 은 0~1 사이 수여야 한다", 2);
+	}
+	if (values.baseline !== undefined && minExactR1 !== undefined) die("--baseline 과 --min-exact-r1 은 함께 쓸 수 없다", 2);
+	let baseline;
+	if (values.baseline !== undefined) {
+		baseline = path.resolve(values.baseline);
+		for (const f of ["store.js", "vault.js"]) {
+			if (!fs.existsSync(path.join(baseline, f))) die(`--baseline 디렉터리에 ${f} 가 없다: ${baseline}`, 2);
+		}
+	}
 	return {
 		scorer: values.scorer,
 		out: values.out,
 		compare: values.compare ? positionals : null,
 		permute: values["permute-control"],
 		seed,
+		baseline,
+		minExactR1,
 	};
 }
 
@@ -282,6 +311,48 @@ function emit(result, out, summaryKeys) {
 	process.stdout.write(JSON.stringify(summary, null, 2) + "\n");
 }
 
+/** 두 문자열이 처음 갈리는 위치와 그 앞뒤 80자 */
+function firstDiff(a, b) {
+	let i = 0;
+	while (i < a.length && i < b.length && a[i] === b[i]) i++;
+	const from = Math.max(0, i - 80);
+	return { at: i, base: a.slice(from, i + 80), cand: b.slice(from, i + 80) };
+}
+
+/** --baseline: 기준 dist 와 현재 dist 가 골든 전 질의·설정에서 같은 searchDetailed 출력을 내는지 JSON 바이트로 비교한다 */
+async function diffBaseline(baseDist, rows, current, dirs) {
+	const { Vault: BaseVault } = await import(pathToFileURL(path.join(baseDist, "vault.js")).href);
+	const { MemoryStore: BaseStore } = await import(pathToFileURL(path.join(baseDist, "store.js")).href);
+	const open = (Store, VaultClass, tag) => {
+		const dir = copyFixture(tag);
+		dirs.push(dir);
+		const store = new Store(new VaultClass(dir));
+		store.reinforce = () => {};
+		return store;
+	};
+	const base = open(BaseStore, BaseVault, "base");
+	const cand = open(current.MemoryStore, current.Vault, "cand");
+	let compared = 0;
+	const mismatches = rows.flatMap((row) =>
+		DIFF_CONFIGS.flatMap(([config, o]) => {
+			const a = JSON.stringify(base.searchDetailed(row.query, o));
+			const b = JSON.stringify(cand.searchDetailed(row.query, o));
+			compared++;
+			return a === b ? [] : [{ query: row.query, split: row.split, config, ...firstDiff(a, b) }];
+		}),
+	);
+	return {
+		mode: "baseline",
+		baseline: baseDist,
+		frozenNow: new Date(FROZEN_NOW).toISOString(),
+		configs: Object.fromEntries(DIFF_CONFIGS),
+		queries: rows.length,
+		compared,
+		mismatchCount: mismatches.length,
+		mismatches: mismatches.slice(0, DIFF_SAMPLES),
+	};
+}
+
 const opts = readArgs(process.argv.slice(2));
 
 if (opts.compare) {
@@ -307,7 +378,18 @@ const golden = loadGolden(fixtureSlugs);
 const realNow = Date.now;
 let metricDir = "";
 let latDir = "";
-try {
+const diffDirs = [];
+// --baseline·--min-exact-r1 은 필요한 계산만 하고 break 로 이 블록을 빠져나가 finally 정리를 탄다
+evaluation: try {
+	if (opts.baseline) {
+		Date.now = () => FROZEN_NOW;
+		const diff = await diffBaseline(opts.baseline, golden, { Vault, MemoryStore }, diffDirs);
+		Date.now = realNow;
+		emit(diff, opts.out, ["queries", "compared", "mismatchCount", "mismatches"]);
+		if (diff.mismatchCount > 0) process.exitCode = 1;
+		break evaluation;
+	}
+
 	// 지표: 고정 시계 + 강화 끔 + 전체 순위
 	metricDir = copyFixture("metric");
 	Date.now = () => FROZEN_NOW;
@@ -325,6 +407,15 @@ try {
 		return { row, ranked, j: judge(row, ranked) };
 	});
 	Date.now = realNow;
+
+	if (opts.minExactR1 !== undefined) {
+		const exact = summarize(items.filter((x) => x.row.split === "exact"));
+		const r1 = exact.recall1 ?? Number.NaN;
+		const ok = r1 >= opts.minExactR1;
+		console.log(`${ok ? "✔" : "✘"} exact 분할 Recall@1 ${r1} (n=${exact.n}) ${ok ? ">=" : "<"} 하한 ${opts.minExactR1}`);
+		if (!ok) process.exitCode = 1;
+		break evaluation;
+	}
 
 	const curve = noneCurve(items);
 
@@ -391,5 +482,5 @@ try {
 	emit(result, opts.out, ["scorer", "fixture", "splits", "g2", "latencyMs", "permuteControl"]);
 } finally {
 	Date.now = realNow;
-	for (const d of [metricDir, latDir]) if (d) fs.rmSync(d, { recursive: true, force: true });
+	for (const d of [metricDir, latDir, ...diffDirs]) if (d) fs.rmSync(d, { recursive: true, force: true });
 }
