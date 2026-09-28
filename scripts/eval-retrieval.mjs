@@ -6,6 +6,14 @@
 //   node scripts/eval-retrieval.mjs --baseline <기준 dist 디렉터리> [--multi] [--out <path>]
 //   node scripts/eval-retrieval.mjs --min-exact-r1 <하한>
 //   node scripts/eval-retrieval.mjs --multi [--alt-weight <w>] [--alt-control [--seed N]] [--out <path>]
+//   node scripts/eval-retrieval.mjs --multi --vector [--fusion add|rrf] [--vector-weight <w>] [--min-cos <τ>] [--out <path>]
+//   node scripts/eval-retrieval.mjs --multi --vector --grid
+//   node scripts/eval-retrieval.mjs --multi --vector --auc [--seed N]
+//
+// --vector 는 실제 임베딩 모델(@huggingface/transformers, 선택 의존성)로 픽스처와 질의를 임베딩해 벡터 결과를 함께 쓴다.
+// add 는 어휘 후보에 없는 벡터 결과만 w×코사인 점수로 덧붙이고(서버와 같은 경로), rrf 는 어휘 순위와 벡터 순위를 RRF(k=60)로 합친 뒤 순위화하는 대조군이다.
+// --grid 는 tune 분할만으로 rrf 1개와 add 격자(w × τ)를 재고 미리 정한 규칙으로 하나를 고른다. holdout 은 보지 않는다.
+// --auc 는 crosslang 질의·정답 쌍(양성)과 시드 고정 무작위 비정답 쌍(음성)의 코사인으로 AUC 를 낸다.
 //
 // --scorer 는 import 전에 BIGBRAIN_SCORER 로 넘긴다. --alt-weight 는 변형 질의 가중(BIGBRAIN_ALT_WEIGHT, 0 초과 1 이하)이다.
 // --multi 는 eval/alt-queries.jsonl 의 고정 변형을 alt_queries 로 함께 넘겨 같은 지표를 잰다.
@@ -46,6 +54,17 @@ const DIFF_CONFIGS = [
 	["typed", { limit: 5, type: "procedural", project: "eval-other" }],
 ];
 const DIFF_SAMPLES = 5;
+const FUSIONS = ["add", "rrf"];
+/** RRF 상수와 벡터 목록 깊이 */
+const RRF_K = 60;
+const RRF_DEPTH = 20;
+/** add 융합 격자 — 벡터 가중 × 코사인 하한 0.80~0.90 */
+const GRID_W = [1, 2, 3, 5];
+const GRID_TAU = Array.from({ length: 11 }, (_, i) => Math.round((0.8 + i * 0.01) * 100) / 100);
+/** none 오탐 판정 임계(자동 회상 하한과 같다) */
+const NONE_T = 9;
+/** AUC 음성 쌍 — 질의마다 뽑는 비정답 기억 수 */
+const AUC_NEG = 5;
 
 function die(msg, code = 1) {
 	console.error(`eval-retrieval: ${msg}`);
@@ -70,6 +89,12 @@ function readArgs(argv) {
 				multi: { type: "boolean", default: false },
 				"alt-control": { type: "boolean", default: false },
 				"alt-weight": { type: "string" },
+				vector: { type: "boolean", default: false },
+				fusion: { type: "string", default: "add" },
+				"vector-weight": { type: "string" },
+				"min-cos": { type: "string" },
+				grid: { type: "boolean", default: false },
+				auc: { type: "boolean", default: false },
 			},
 		});
 	} catch (e) {
@@ -95,6 +120,25 @@ function readArgs(argv) {
 		if (!(altWeight > 0 && altWeight <= 1)) die("--alt-weight 는 0 초과 1 이하 수여야 한다", 2);
 		if (!values.multi) die("--alt-weight 는 --multi 와 함께 써야 한다", 2);
 	}
+	const vectorOnly = ["grid", "auc"].filter((k) => values[k]).concat(["vector-weight", "min-cos"].filter((k) => values[k] !== undefined));
+	if (values.fusion !== "add") vectorOnly.push("fusion");
+	if (!values.vector && vectorOnly.length > 0) die(`--${vectorOnly.join(", --")} 는 --vector 와 함께 써야 한다`, 2);
+	if (values.vector && !values.multi) die("--vector 는 --multi 와 함께 써야 한다", 2);
+	if (values.vector && (values.baseline !== undefined || minExactR1 !== undefined)) die("--vector 는 --baseline·--min-exact-r1 과 함께 쓸 수 없다", 2);
+	if (!FUSIONS.includes(values.fusion)) die(`--fusion 은 ${FUSIONS.join("|")} 중 하나여야 한다`, 2);
+	if (values.grid && (values.auc || values["vector-weight"] !== undefined || values["min-cos"] !== undefined || values.fusion !== "add")) {
+		die("--grid 는 --auc·--vector-weight·--min-cos·--fusion 과 함께 쓸 수 없다", 2);
+	}
+	let vectorWeight;
+	if (values["vector-weight"] !== undefined) {
+		vectorWeight = Number(values["vector-weight"]);
+		if (!(vectorWeight > 0 && Number.isFinite(vectorWeight))) die("--vector-weight 는 0 보다 큰 수여야 한다", 2);
+	}
+	let minCos;
+	if (values["min-cos"] !== undefined) {
+		minCos = Number(values["min-cos"]);
+		if (!(minCos >= -1 && minCos <= 1)) die("--min-cos 는 -1~1 사이 수여야 한다", 2);
+	}
 	let baseline;
 	if (values.baseline !== undefined) {
 		baseline = path.resolve(values.baseline);
@@ -113,6 +157,12 @@ function readArgs(argv) {
 		multi: values.multi,
 		altControl: values["alt-control"],
 		altWeight,
+		vector: values.vector,
+		fusion: values.fusion,
+		vectorWeight,
+		minCos,
+		grid: values.grid,
+		auc: values.auc,
 	};
 }
 
@@ -417,6 +467,142 @@ async function diffBaseline(baseDist, rows, current, dirs, altsOf) {
 	};
 }
 
+
+/** 벡터 평가 준비 — 실제 모델로 픽스처 항목과 골든 질의를 한 번씩 임베딩한다 */
+async function prepareVector(store, vault, rows) {
+	const url = (f) => pathToFileURL(path.join(root, "dist", f)).href;
+	const mod = await import(url("vector-retriever.js"));
+	const { parseQuery, SCORER } = await import(url("store.js"));
+	const { fuseWeightedMax } = await import(url("retriever.js"));
+	const { rank } = await import(url("ranker.js"));
+	store.retriever.sync(vault);
+	const vr = new mod.VectorRetriever(null);
+	const t0 = performance.now();
+	await vr.warm(() => store.retriever.entries());
+	if (vr.state !== "ready") throw new Error(`벡터 계층을 올리지 못했다: ${vr.reason}`);
+	const qv = new Map();
+	for (const row of rows) qv.set(row, await vr.embedQuery(row.query));
+	const altWeight = process.env.BIGBRAIN_ALT_WEIGHT ? Number(process.env.BIGBRAIN_ALT_WEIGHT) : 0.7;
+	const keys = store.retriever.entries().map((e) => e.key);
+	return { mod, vr, qv, keys, parseQuery, scorer: SCORER, altWeight, fuseWeightedMax, rank, embedMs: Math.round(performance.now() - t0) };
+}
+
+/** 행 하나의 전체 순위 — cfg 가 없으면 어휘만, add 는 서버와 같은 vectorHits 경로, rrf 는 RRF 대조군 */
+function rankRow(store, vec, row, alts, cfg) {
+	const base = { limit: FULL_LIMIT, includeLinked: false, altQueries: alts };
+	let results;
+	if (!cfg) results = store.searchDetailed(row.query, base).results;
+	else if (cfg.fusion === "add") {
+		const vectorHits = vec.vr.nearest(vec.qv.get(row), {}, vec.mod.VECTOR_TOP_K, cfg.tau).map((h) => ({ key: h.key, score: cfg.w * h.cos }));
+		results = store.searchDetailed(row.query, { ...base, vectorHits }).results;
+	} else results = rrfRank(store, vec, row, alts);
+	return results.map((r) => (r.via ? { slug: r.record.slug, score: r.score, via: r.via } : { slug: r.record.slug, score: r.score }));
+}
+
+/** RRF 대조군 — 어휘 융합 후보의 점수 순위와 벡터 코사인 순위(상위 RRF_DEPTH)를 Σ 1/(k+순위)로 합쳐 순위화한다 */
+function rrfRank(store, vec, row, alts) {
+	const q = vec.parseQuery(row.query);
+	if (q.tokens.length === 0) return [];
+	const seen = new Set([q.tokens.join(" ")]);
+	const altQs = (alts ?? [])
+		.slice(0, MAX_ALTS)
+		.map(vec.parseQuery)
+		.filter((a) => {
+			const key = a.tokens.join(" ");
+			if (a.tokens.length === 0 || seen.has(key)) return false;
+			seen.add(key);
+			return true;
+		});
+	const queries = [q, ...altQs];
+	const lists = queries.map((pq) => store.retriever.search(pq, Infinity, {}, vec.scorer));
+	const lex = altQs.length === 0 ? lists[0] : vec.fuseWeightedMax(lists, queries.map((_, i) => (i === 0 ? 1 : vec.altWeight)));
+	const fused = new Map();
+	lex
+		.map((c, i) => ({ c, i }))
+		.sort((a, b) => b.c.score - a.c.score || a.i - b.i)
+		.forEach(({ c }, r) => fused.set(c.titleDescTokens, { ...c, score: 1 / (RRF_K + r + 1) }));
+	vec.vr.nearest(vec.qv.get(row), {}, RRF_DEPTH, -1).forEach((h, r) => {
+		const c = store.retriever.candidate(h.key, {});
+		if (!c) return;
+		const s = 1 / (RRF_K + r + 1);
+		const prev = fused.get(c.titleDescTokens);
+		if (prev) prev.score += s;
+		else fused.set(c.titleDescTokens, { ...c, score: s, via: "vector" });
+	});
+	return vec.rank([...fused.values()], q, { limit: FULL_LIMIT, now: FROZEN_NOW, includeLinked: false }).results;
+}
+
+/** none 질의 가운데 상위 5건에 벡터 전용 결과가 하나라도 있는 비율 */
+function vectorTop5Rate(items) {
+	if (items.length === 0) return null;
+	return items.filter((x) => x.ranked.slice(0, 5).some((r) => r.via)).length / items.length;
+}
+
+/**
+ * tune 분할만으로 기준(어휘+변형)·rrf·add 격자를 재고 하나를 고른다.
+ * 규칙: exact R@1 이 기준 이상이고 none fpr(T=9)이 기준 이하인 설정 가운데 paraphrase R@5 최대, 동률이면 τ 가 큰 쪽, 그다음 w 가 작은 쪽(rrf 는 τ·w 없음으로 가장 뒤).
+ */
+function runGrid(rows, rankFn) {
+	const tune = rows.filter((r) => !r.holdout);
+	const measure = (cfg) => {
+		const items = tune.map((row) => {
+			const ranked = rankFn(row, cfg);
+			return { row, ranked, j: judge(row, ranked) };
+		});
+		const of = (s) => items.filter((x) => x.row.split === s);
+		return {
+			exactR1: summarize(of("exact")).recall1 ?? Number.NaN,
+			crosslangR5: summarize(of("crosslang")).recall5 ?? Number.NaN,
+			paraphraseR5: summarize(of("paraphrase")).recall5 ?? Number.NaN,
+			noneFprT9: curvePoint(items, NONE_T).fpr ?? Number.NaN,
+			noneAnyResult: summarize(of("none")).anyResultRate,
+			noneVectorTop5: vectorTop5Rate(of("none")),
+		};
+	};
+	const base = measure(null);
+	const rrf = { fusion: "rrf", w: null, tau: null, tune: measure({ fusion: "rrf" }) };
+	const add = GRID_W.flatMap((w) => GRID_TAU.map((tau) => ({ fusion: "add", w, tau, tune: measure({ fusion: "add", w, tau }) })));
+	const ok = [rrf, ...add].filter((c) => c.tune.exactR1 >= base.exactR1 && c.tune.noneFprT9 <= base.noneFprT9);
+	const tauOf = (c) => c.tau ?? -2;
+	const wOf = (c) => c.w ?? Number.MAX_VALUE;
+	ok.sort((a, b) => b.tune.paraphraseR5 - a.tune.paraphraseR5 || tauOf(b) - tauOf(a) || wOf(a) - wOf(b));
+	return {
+		rule: "tune: exact R@1 >= 기준 且 none fpr(T=9) <= 기준 인 설정 중 paraphrase R@5 최대, 동률이면 τ 큰 쪽, 다음 w 작은 쪽",
+		split: "tune",
+		base,
+		rrf,
+		add,
+		eligible: ok.length,
+		pick: ok[0] ?? null,
+	};
+}
+
+/** crosslang 질의·정답 쌍(양성)과 질의마다 시드 고정으로 뽑은 비정답 쌍(음성)의 코사인 AUC(Mann-Whitney, 동점 0.5) */
+function crosslangAuc(vec, rows, seed) {
+	const rnd = mulberry32(seed);
+	const cross = rows.filter((r) => r.split === "crosslang");
+	const pairs = new Map();
+	for (const row of cross) {
+		const cos = new Map(vec.vr.nearest(vec.qv.get(row), {}, Infinity, -1).map((h) => [h.key, h.cos]));
+		const expKeys = new Set(row.expected.flatMap((s) => [`m:${s}`, `a:${s}`]));
+		const pos = row.expected.map((s) => cos.get(`m:${s}`) ?? cos.get(`a:${s}`));
+		if (pos.some((p) => p === undefined)) throw new Error(`정답 임베딩 없음: ${row.query}`);
+		const pool = vec.keys.filter((k) => !expKeys.has(k));
+		const neg = new Array();
+		for (let i = 0; i < AUC_NEG && pool.length > 0; i++) neg.push(cos.get(pool.splice(Math.floor(rnd() * pool.length), 1)[0]));
+		pairs.set(row, { pos, neg });
+	}
+	const auc = (rs) => {
+		const pos = rs.flatMap((r) => pairs.get(r).pos);
+		const neg = rs.flatMap((r) => pairs.get(r).neg);
+		let s = 0;
+		for (const p of pos) for (const n of neg) s += p > n ? 1 : p === n ? 0.5 : 0;
+		const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+		return { nPos: pos.length, nNeg: neg.length, auc: s / (pos.length * neg.length), meanPosCos: mean(pos), meanNegCos: mean(neg) };
+	};
+	return { all: auc(cross), tune: auc(cross.filter((r) => !r.holdout)), holdout: auc(cross.filter((r) => r.holdout)) };
+}
+
 const opts = readArgs(process.argv.slice(2));
 
 if (opts.compare) {
@@ -471,10 +657,27 @@ evaluation: try {
 	const types = {};
 	for (const r of records) types[r.type] = (types[r.type] ?? 0) + 1;
 
+	// 벡터: 임베딩은 실제 시계로 한 번만 계산하고, 순위화는 고정 시계에서 한다
+	Date.now = realNow;
+	const vec = opts.vector ? await prepareVector(store, new Vault(metricDir), golden) : null;
+	Date.now = () => FROZEN_NOW;
+	if (vec && opts.auc) {
+		Date.now = realNow;
+		emit({ mode: "auc", model: vec.mod.MODEL_ID, dtype: vec.mod.DTYPE, seed: opts.seed, negativesPerQuery: AUC_NEG, ...crosslangAuc(vec, golden, opts.seed) }, opts.out, ["all", "tune", "holdout"]);
+		break evaluation;
+	}
+	if (vec && opts.grid) {
+		const grid = runGrid(golden, (row, cfg) => rankRow(store, vec, row, altsOf(row), cfg));
+		Date.now = realNow;
+		emit({ mode: "grid", model: vec.mod.MODEL_ID, dtype: vec.mod.DTYPE, embedMs: vec.embedMs, ...grid }, opts.out, ["rule", "base", "rrf", "pick"]);
+		break evaluation;
+	}
+	const vectorCfg = vec
+		? { fusion: opts.fusion, w: opts.vectorWeight ?? vec.mod.VECTOR_WEIGHT, tau: opts.minCos ?? vec.mod.VECTOR_MIN_COS }
+		: null;
+
 	const items = golden.map((row) => {
-		const ranked = store
-			.searchDetailed(row.query, { limit: FULL_LIMIT, includeLinked: false, altQueries: altsOf(row) })
-			.results.map((r) => ({ slug: r.record.slug, score: r.score }));
+		const ranked = rankRow(store, vec, row, altsOf(row), vectorCfg);
 		return { row, ranked, j: judge(row, ranked) };
 	});
 	Date.now = realNow;
@@ -538,6 +741,23 @@ evaluation: try {
 		...(opts.multi
 			? { multi: { file: path.relative(root, ALTS), control: opts.altControl ? "derangement" : "none", seed: opts.altControl ? opts.seed : null, altWeight: opts.altWeight ?? "default" } }
 			: {}),
+		...(vec && vectorCfg
+			? {
+					vector: {
+						model: vec.mod.MODEL_ID,
+						dtype: vec.mod.DTYPE,
+						...vectorCfg,
+						topK: vectorCfg.fusion === "add" ? vec.mod.VECTOR_TOP_K : RRF_DEPTH,
+						embedMs: vec.embedMs,
+						noneVectorTop5: {
+							tune: vectorTop5Rate(items.filter((x) => x.row.split === "none" && !x.row.holdout)),
+							holdout: vectorTop5Rate(items.filter((x) => x.row.split === "none" && x.row.holdout)),
+							all: vectorTop5Rate(items.filter((x) => x.row.split === "none")),
+						},
+						latencyNote: "latencyMs 는 어휘 경로만 잰다 — 벡터 추가 지연은 regress-vector.mjs --real",
+					},
+				}
+			: {}),
 		latencyMs: {
 			p50: percentile(times, 0.5),
 			p95: percentile(times, 0.95),
@@ -554,7 +774,7 @@ evaluation: try {
 		})),
 	};
 
-	emit(result, opts.out, ["scorer", "shadow", "fixture", "splits", "g2", "latencyMs", "permuteControl", "multi"]);
+	emit(result, opts.out, ["scorer", "shadow", "fixture", "splits", "g2", "latencyMs", "permuteControl", "multi", "vector"]);
 } finally {
 	Date.now = realNow;
 	for (const d of [metricDir, latDir, ...diffDirs]) if (d) fs.rmSync(d, { recursive: true, force: true });
