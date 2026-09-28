@@ -6,6 +6,8 @@
 //   3 두 저장소가 같은 Retriever 를 공유해도 결과가 같고, 다른 볼트로 sync 하면 그 볼트 후보만 낸다
 //   4 upsert·remove·k 컷오프가 search 에 반영되고 필드 기여 합이 점수와 같다
 //   5 revise 로 제목이 바뀌면 캐시된 토큰이 아니라 새 제목으로 검색된다
+//   6 bm25f 점수가 식(IDF·필드 길이 정규화·k1 포화·동의어 0.6배·조사 흡수)대로 나오고, 새로 만든 인덱스와 파일에서 적재한 인덱스의 점수가 같다
+//   7 BIGBRAIN_SCORER 가 bm25f 가 아니면 legacy 이고, 그림자 모드는 수치만 남기며 회상 출력을 바꾸지 않는다
 //
 // 라이브 볼트는 건드리지 않는다 — 전부 os.tmpdir() 임시 볼트.
 
@@ -17,9 +19,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const distUrl = (f) => pathToFileURL(path.join(root, "dist", f)).href;
+// 스코어러·그림자·변형 가중은 store 모듈 로드 시 읽는다 — 사용자 환경과 무관하게 기본값으로 시작한다
+for (const k of ["BIGBRAIN_SCORER", "BIGBRAIN_SHADOW", "BIGBRAIN_ALT_WEIGHT"]) delete process.env[k];
 const { Vault } = await import(distUrl("vault.js"));
-const { MemoryStore, parseQuery } = await import(distUrl("store.js"));
-const { LexicalRetriever, overlap } = await import(distUrl("retriever.js"));
+const storeModule = await import(distUrl("store.js"));
+const { MemoryStore, parseQuery } = storeModule;
+const { LexicalRetriever, overlap, tokenize, BM25F_W, BM25F_B, BM25F_K1, SYNONYM_WEIGHT } = await import(distUrl("retriever.js"));
 const { inhibit, RIF_THRESHOLD } = await import(distUrl("ranker.js"));
 
 let failures = 0;
@@ -285,6 +290,112 @@ try {
 		check("변경 후: 새 제목 토큰으로 찾음", s.search("durian", { includeLinked: false }).some((r) => r.record.slug === "rename-me"));
 		check("변경 후: 옛 제목 토큰으로는 안 나옴", !s.search("lychee", { includeLinked: false }).some((r) => r.record.slug === "rename-me"));
 	}
+
+	// ── 6. BM25F
+	console.log("6) bm25f 점수 — 식·동의어·조사 흡수·적재 인덱스 (T46)");
+	{
+		const dir = freshDir();
+		const v = new Vault(dir);
+		const docs = {
+			"b-full": { title: "zebra alpha", tags: ["zebra"], description: "about zebra", body: "zebra zebra words here" },
+			"b-body": { title: "unrelated thing", body: "zebra" },
+			"b-kr": { title: "배포 절차", body: "순서 설명" },
+		};
+		for (const [slug, o] of Object.entries(docs)) v.write(record(slug, o));
+		const fieldsOf = (o) => [tokenize(o.title), tokenize((o.tags ?? []).join(" ")), tokenize(o.description ?? ""), tokenize(o.body ?? "")];
+		const lens = Object.fromEntries(Object.entries(docs).map(([slug, o]) => [slug, fieldsOf(o).map((t) => t.length)]));
+		const n = Object.keys(docs).length;
+		const avg = [0, 1, 2, 3].map((f) => Object.values(lens).reduce((a, l) => a + l[f], 0) / n);
+		/** 한 토큰의 기대 점수 — tf 는 필드별 빈도, df 는 그 토큰이 있는 문서 수 */
+		const expect = (slug, tf, df, w = 1) => {
+			const t = tf.reduce((a, x, f) => a + (x > 0 ? (BM25F_W[f] * x) / (1 - BM25F_B[f] + (BM25F_B[f] * lens[slug][f]) / avg[f]) : 0), 0);
+			return (w * Math.log(1 + (n - df + 0.5) / (df + 0.5)) * t) / (BM25F_K1 + t);
+		};
+		const r = new LexicalRetriever();
+		r.sync(v);
+		const zebra = r.search(parseQuery("zebra"), Infinity, {}, "bm25f");
+		const full = zebra.find((c) => c.slug === "b-full");
+		const body = zebra.find((c) => c.slug === "b-body");
+		const near = (a, b) => Math.abs(a - b) <= 1e-9;
+		check("네 필드 적중 문서 점수가 식과 같음", !!full && near(full.score, expect("b-full", [1, 1, 1, 2], 2)), `${full?.score} ≠ ${expect("b-full", [1, 1, 1, 2], 2)}`);
+		check("본문만 적중한 문서 점수가 식과 같음", !!body && near(body.score, expect("b-body", [0, 0, 0, 1], 2)), `${body?.score}`);
+		check("필드 기여 합 = 점수", !!full && near(full.fields.reduce((a, f) => a + f.weight, 0), full.score));
+		check("scorer 인자를 빼면 legacy 점수(5+4+3+본문 2)", r.search(parseQuery("zebra"), Infinity, {}).find((c) => c.slug === "b-full")?.score === 14);
+		const kr = r.search(parseQuery("배포를"), Infinity, {}, "bm25f").find((c) => c.slug === "b-kr");
+		check("조사 흡수(배포를→배포) 적중 점수가 식과 같음", !!kr && near(kr.score, expect("b-kr", [1, 0, 0, 0], 1)), `${kr?.score}`);
+		const syn = r.search(parseQuery("deploy"), Infinity, {}, "bm25f").find((c) => c.slug === "b-kr");
+		const direct = r.search(parseQuery("배포"), Infinity, {}, "bm25f").find((c) => c.slug === "b-kr");
+		check("동의어 적중은 원 토큰 적중의 0.6배", !!syn && !!direct && near(syn.score, SYNONYM_WEIGHT * direct.score), `${syn?.score} / ${direct?.score}`);
+		const shape = (list) => JSON.stringify(list.map((c) => [c.slug, c.score, c.fields]));
+		const fresh = shape(r.search(parseQuery("zebra 배포"), Infinity, {}, "bm25f"));
+		const loaded = new LexicalRetriever();
+		loaded.sync(new Vault(dir));
+		const ro = LexicalRetriever.openReadOnly(dir);
+		check("파일에서 적재한 인덱스의 bm25f 점수가 같음", shape(loaded.search(parseQuery("zebra 배포"), Infinity, {}, "bm25f")) === fresh);
+		check("읽기 전용 인덱스의 bm25f 점수가 같음", !!ro && shape(ro.search(parseQuery("zebra 배포"), Infinity, {}, "bm25f")) === fresh);
+		check("범위 필터는 통계(N·df)를 바꾸지 않음", (() => {
+			r.upsert(record("b-other", { title: "zebra other", project: "other" }));
+			const scoped = r.search(parseQuery("zebra"), Infinity, { project: "mine" }, "bm25f").find((c) => c.slug === "b-body");
+			const all = r.search(parseQuery("zebra"), Infinity, {}, "bm25f").find((c) => c.slug === "b-body");
+			return !!scoped && !!all && scoped.score === all.score;
+		})());
+	}
+
+	// ── 7. 스코어러 선택·그림자
+	console.log("7) BIGBRAIN_SCORER·그림자 모드 (T46·G5)");
+	{
+		const dir = freshDir();
+		const v = new Vault(dir);
+		v.write(record("s-a", { title: "kiwi rollout guide", tags: ["kiwi"], body: "kiwi steps kiwi" }));
+		v.write(record("s-b", { title: "kiwi notes", body: "kiwi" }));
+		v.write(record("s-c", { title: "mango only", body: "kiwi once in a long body with many other words to dilute" }));
+		/** 환경변수를 잠깐 바꿔 store 모듈을 새로 불러온다 — retriever·vault 모듈은 공유한다 */
+		const load = async (tag, env) => {
+			const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+			Object.assign(process.env, env);
+			try {
+				return await import(`${distUrl("store.js")}?${tag}`);
+			} finally {
+				for (const [k, val] of Object.entries(saved)) {
+					if (val === undefined) delete process.env[k];
+					else process.env[k] = val;
+				}
+			}
+		};
+		const open = (mod) => {
+			const s = new mod.MemoryStore(new Vault(dir));
+			s.reinforce = () => {};
+			return s;
+		};
+		const xyz = await load("xyz", { BIGBRAIN_SCORER: "xyz" });
+		const bm = await load("bm", { BIGBRAIN_SCORER: "bm25f" });
+		const off = await load("off", { BIGBRAIN_SHADOW: "0" });
+		const badAlt = await load("badalt", { BIGBRAIN_ALT_WEIGHT: "2" });
+		check("기본 스코어러는 legacy", storeModule.SCORER === "legacy");
+		check("알 수 없는 값은 legacy", xyz.SCORER === "legacy");
+		check("bm25f 는 bm25f", bm.SCORER === "bm25f");
+		const base = open(storeModule);
+		const q = "kiwi guide";
+		const baseOut = JSON.stringify(base.searchDetailed(q, { limit: 5 }));
+		check("BIGBRAIN_SCORER=xyz 출력이 기본과 같음", JSON.stringify(open(xyz).searchDetailed(q, { limit: 5 })) === baseOut);
+		const bmStore = open(bm);
+		const bmOut = bmStore.searchDetailed(q, { limit: 5 });
+		check("bm25f 스코어러 출력은 legacy 점수와 다름", JSON.stringify(bmOut) !== baseOut && bmOut.results.length > 0);
+		check("bm25f 스코어러에서는 그림자를 계산하지 않음", bmStore.shadowTop5 === undefined);
+		check("legacy 기본에서 그림자 일치율은 0~1", typeof base.shadowTop5 === "number" && base.shadowTop5 >= 0 && base.shadowTop5 <= 1, `${base.shadowTop5}`);
+		const offStore = open(off);
+		check("BIGBRAIN_SHADOW=0 출력이 그림자 켠 출력과 같음", JSON.stringify(offStore.searchDetailed(q, { limit: 5 })) === baseOut);
+		check("BIGBRAIN_SHADOW=0 이면 그림자 없음", offStore.shadowTop5 === undefined);
+		const alts = { limit: 5, altQueries: ["kiwi notes", "rollout"] };
+		check("변형 질의가 있어도 그림자 켬·끔 출력이 같음", JSON.stringify(base.searchDetailed(q, alts)) === JSON.stringify(offStore.searchDetailed(q, alts)));
+		check("변형 질의가 있어도 그림자 일치율을 낸다", typeof base.shadowTop5 === "number");
+		check("범위 밖 BIGBRAIN_ALT_WEIGHT 는 기본 가중(0.7)", JSON.stringify(open(badAlt).searchDetailed(q, alts)) === JSON.stringify(base.searchDetailed(q, alts)));
+		base.searchDetailed("zzzqqq nothing", { limit: 5 });
+		check("후보가 없으면 그림자 없음", base.shadowTop5 === undefined);
+		base.searchDetailed(q, { limit: 5 });
+		base.searchDetailed("!!", { limit: 5 });
+		check("토큰이 없는 질의는 이전 값을 지운다", base.shadowTop5 === undefined);
+	}
 } finally {
 	Date.now = realNow;
 	fs.rmSync(tmpRoot, { recursive: true, force: true });
@@ -294,4 +405,4 @@ if (failures > 0) {
 	console.error(`\n실패: ${failures}건`);
 	process.exit(1);
 }
-console.log("\nT41/T43 Retriever·Ranker 회귀 테스트 통과 ✔");
+console.log("\nT41/T43/T46 Retriever·Ranker 회귀 테스트 통과 ✔");

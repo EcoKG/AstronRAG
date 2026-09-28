@@ -300,7 +300,7 @@ console.log(`✔ ${REMOVE ? "제거" : "설치"} 완료: ${settingsPath}`);
 if (!REMOVE) {
   console.log("\n다음 단계: Claude 를 재시작하면");
   console.log("  · SessionStart — 매 세션 시작 시 MEMORY.md 를 주입합니다(회상).");
-  console.log("  · UserPromptSubmit — 프롬프트와 관련된 기억을 자동 주입하고(BIGBRAIN_AUTO_RECALL=0 으로 끔), 부호화 큐를 냅니다.");
+  console.log("  · UserPromptSubmit — 부호화 큐를 내고, BIGBRAIN_AUTO_RECALL=1 이면 프롬프트와 관련된 기억을 자동 주입합니다(기본 끔).");
   console.log("  · Stop         — 세션에서 새로 저장된 기억이 0건이면 경고합니다(무저장 감지).");
   console.log("되돌리려면: npm run setup:hook -- --remove");
 } else {

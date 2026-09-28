@@ -34,7 +34,8 @@ function check(name, cond, detail = "") {
   }
 }
 
-const cleanups = [];
+/** 시험이 끝나면 지울 임시 볼트 경로 목록 */
+const cleanups = new Array();
 const freshDir = (tag) => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), `bbm-use-${tag}-`));
   cleanups.push(d);
@@ -128,6 +129,32 @@ console.log("2) 내용 비기록");
   await withServer(v2, async (call) => await call("recall", { query: SECRET_QUERY }), { BIGBRAIN_LOG_QUERIES: "1" });
   const rec2 = readLog(v2).find((e) => e.tool === "recall");
   check("BIGBRAIN_LOG_QUERIES=1 이면 질의문 기록", rec2?.query === SECRET_QUERY, JSON.stringify(rec2));
+}
+
+// ── 2-1. 그림자 로그 — legacy·bm25f 상위 5건 일치율 수치만 남긴다 (G5)
+console.log("2-1) 그림자 로그");
+{
+  const v = freshDir("shadow");
+  const SECRET_TITLE = "그림자로그에없어야할제목";
+  const SECRET_QUERY = "그림자로그에없어야할질의";
+  const shadowEnv = { BIGBRAIN_SHADOW: "", BIGBRAIN_SCORER: "", BIGBRAIN_LOG_QUERIES: "" };
+  await withServer(v, async (call) => {
+    await call("remember", { title: `${SECRET_TITLE} 배포`, description: "설명", content: "본문", type: "semantic" });
+    await call("recall", { query: `${SECRET_QUERY} 배포` });
+    await call("recall", { query: "절대로없는키워드zzz" });
+  }, shadowEnv);
+  const raw = fs.readFileSync(path.join(v, ".bbm-usage.jsonl"), "utf-8");
+  const [hit, miss] = readLog(v).filter((e) => e.tool === "recall");
+  check("적중 회상에 shadowTop5 수치(0~1)", typeof hit?.shadowTop5 === "number" && hit.shadowTop5 >= 0 && hit.shadowTop5 <= 1, JSON.stringify(hit));
+  check("0건 회상에는 shadowTop5 없음", miss !== undefined && !("shadowTop5" in miss), JSON.stringify(miss));
+  check("그림자 로그에 질의·제목(slug) 없음", !raw.includes(SECRET_QUERY) && !raw.includes(SECRET_TITLE), raw.slice(0, 300));
+  const v2 = freshDir("shadow-off");
+  await withServer(v2, async (call) => {
+    await call("remember", { title: "배포 절차", description: "설명", content: "본문", type: "procedural" });
+    await call("recall", { query: "배포" });
+  }, { ...shadowEnv, BIGBRAIN_SHADOW: "0" });
+  const off = readLog(v2).find((e) => e.tool === "recall");
+  check("BIGBRAIN_SHADOW=0 이면 shadowTop5 없음", off !== undefined && !("shadowTop5" in off), JSON.stringify(off));
 }
 
 // ── 3. 끌 수 있고, 꺼도 도구는 정상이다

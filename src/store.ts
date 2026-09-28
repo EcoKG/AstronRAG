@@ -6,6 +6,8 @@ import {
   fuseWeightedMax,
   type ParsedQuery,
   type Retriever,
+  type Scorer,
+  type ScopeFilter,
   inScope,
   overlap,
   stripParticle,
@@ -25,8 +27,15 @@ const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 /** recall 한 번에 쓰는 변형 질의 수 상한 — 넘는 것은 버린다 */
 export const MAX_ALT_QUERIES = 3;
-/** 융합에서 변형 질의 원점수에 곱하는 가중 (원 질의는 1) */
-const ALT_QUERY_WEIGHT = 0.7;
+/** 키워드 점수 방식 (BIGBRAIN_SCORER) — "bm25f" 일 때만 BM25F, 그 밖의 값은 legacy */
+export const SCORER: Scorer = process.env.BIGBRAIN_SCORER === "bm25f" ? "bm25f" : "legacy";
+/** 그림자 모드 — legacy 로 회상할 때 bm25f 도 계산해 상위 5건 일치율만 남긴다. BIGBRAIN_SHADOW=0 이면 끈다 */
+const SHADOW = SCORER === "legacy" && process.env.BIGBRAIN_SHADOW !== "0";
+/** 융합에서 변형 질의 원점수에 곱하는 가중 (원 질의는 1) — BIGBRAIN_ALT_WEIGHT 가 0 초과 1 이하 수면 그 값(평가용), 아니면 0.7 */
+const ALT_QUERY_WEIGHT = ((): number => {
+  const v = Number(process.env.BIGBRAIN_ALT_WEIGHT);
+  return process.env.BIGBRAIN_ALT_WEIGHT?.trim() && Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.7;
+})();
 
 // --- 리포트(docs/memory-model-report.md) 기반 파라미터 -------------------
 // 기저활성 감쇠 DECAY_D·약해진 기억 임계 RETRIEVAL_THRESHOLD·RIF 임계는 ranker.ts 에 있다.
@@ -288,7 +297,7 @@ export function searchPersistedIndex(
   if (q.tokens.length === 0) return { results: [], totalMatched: 0 };
   const retriever = LexicalRetriever.openReadOnly(vaultRoot);
   if (!retriever) return { results: [], totalMatched: 0 };
-  let candidates = retriever.search(q, Infinity, { type: opts?.type, project: opts?.project });
+  let candidates = retriever.search(q, Infinity, { type: opts?.type, project: opts?.project }, SCORER);
   const rankOpts = { limit: opts?.limit ?? 5, now: Date.now(), includeLinked: false, project: opts?.project };
   const current = new Map<string, boolean>();
   const isCurrent = (slug: string): boolean => {
@@ -346,6 +355,9 @@ export class MemoryStore {
     private vault: Vault,
     readonly retriever: Retriever = new LexicalRetriever(),
   ) {}
+
+  /** 마지막 searchDetailed 의 그림자 비교값 — legacy·bm25f 상위 5건 slug 일치율(0~1). 그림자를 끄거나 후보가 없으면 undefined */
+  shadowTop5: number | undefined = undefined;
 
   loadAll(includeArchived = false): MemoryRecord[] {
     const out: MemoryRecord[] = [];
@@ -558,6 +570,7 @@ export class MemoryStore {
       altQueries?: string[];
     },
   ): SearchOutcome {
+    this.shadowTop5 = undefined;
     const q = parseQuery(query);
     if (q.tokens.length === 0) return { results: [], totalMatched: 0 };
     const limit = opts?.limit ?? 5;
@@ -577,7 +590,7 @@ export class MemoryStore {
         return true;
       });
     const queries = [q, ...alts];
-    const lists = queries.map((pq) => this.retriever.search(pq, Infinity, filter));
+    const lists = queries.map((pq) => this.retriever.search(pq, Infinity, filter, SCORER));
 
     // 여기에 "0건이면 제목·태그를 느슨하게 재검사" 하는 2차 패스가 있었다(감사 D2).
     // T16 이 1차 패스의 매처를 includes 에서 tokenMatch 로 통일하면서 무력화됐다 —
@@ -602,6 +615,7 @@ export class MemoryStore {
       project: opts?.project,
       vault: this.vault,
     });
+    if (SHADOW && candidates.length > 0) this.shadowTop5 = this.shadowAgreement(queries, filter, now, limit, results);
 
     // P4/P5: 능동 회상 → 강화. 단 **억제된 경쟁자와 연상 이웃은 강화하지 않는다**(감사 C5).
     //
@@ -618,6 +632,25 @@ export class MemoryStore {
       this.reinforce(r.record, { active: true, preActivation: r.activation });
     }
     return { results, totalMatched };
+  }
+
+  /**
+   * 그림자 비교 — 같은 질의·변형을 bm25f 로 순위화해(연상·강화 없음) legacy 결과와 상위 k(= min(5, limit))건 slug 일치율을 낸다.
+   * 일치율은 |A∩B| / max(|A|,|B|) 이고, A 는 연상 항목을 뺀 legacy 결과다.
+   */
+  private shadowAgreement(queries: ParsedQuery[], filter: ScopeFilter, now: number, limit: number, results: SearchResult[]): number {
+    const k = Math.min(5, limit);
+    const lists = queries.map((pq) => this.retriever.search(pq, Infinity, filter, "bm25f"));
+    const cands =
+      lists.length === 1 ? lists[0] : fuseWeightedMax(lists, queries.map((_, i) => (i === 0 ? 1 : ALT_QUERY_WEIGHT)));
+    const rq = queries.length === 1 ? queries[0] : mergeQueries(queries);
+    const b = rank(cands, rq, { limit: k, now, includeLinked: false }).results.map((r) => r.record.slug);
+    const a = results
+      .filter((r) => !r.snippet.startsWith("(연상"))
+      .slice(0, k)
+      .map((r) => r.record.slug);
+    const size = Math.max(a.length, b.length);
+    return size === 0 ? 1 : a.filter((s) => b.includes(s)).length / size;
   }
 
   /** 기억을 읽으면 강화되지만, 능동 인출(recall)보다 약하다 (P4, 검사효과) */

@@ -2,7 +2,7 @@
 // BigBrainMemory — 세션 훅 도우미. setup-hook.mjs 가 등록하는 세 훅의 실제 본체다.
 //
 //   --start  : 세션 시작 시점의 기억 수를 마커에 기록하고, MEMORY.md 를 컨텍스트에 주입한다.
-//   --prompt : 프롬프트로 역색인을 읽기 전용 검색해 관련 기억을 주입하고(자동 회상), 부호화 큐를 낸다.
+//   --prompt : 부호화 큐를 내고, BIGBRAIN_AUTO_RECALL=1 이면 프롬프트로 역색인을 읽기 전용 검색해 관련 기억을 주입한다(자동 회상).
 //   --stop   : 세션 동안 새로 저장된 기억이 0건이면 경고한다.
 //
 // 왜 셸 one-liner 가 아니라 Node 스크립트인가:
@@ -388,12 +388,12 @@ function stripFences(text) {
 }
 
 /**
- * 프롬프트로 영속 역색인을 읽기 전용 검색해 자동 회상 블록을 만든다 (T44).
+ * 프롬프트로 영속 역색인을 읽기 전용 검색해 자동 회상 블록을 만든다 (T44). BIGBRAIN_AUTO_RECALL=1 일 때만 동작한다.
  * 검색하지 않았으면 null, 검색했으면 { block(주입할 게 없으면 null), slugs, topScore }.
  * 인덱스·기억 파일을 쓰지 않고 강화도 하지 않는다 — 모델이 고른 회상이 아니므로 저장강도를 올릴 근거가 없다.
  */
 async function autoRecall(prompt, injected) {
-  if (process.env.BIGBRAIN_AUTO_RECALL === "0" || typeof prompt !== "string") return null;
+  if (process.env.BIGBRAIN_AUTO_RECALL !== "1" || typeof prompt !== "string") return null;
   const text = prompt.trim();
   if (text.length < AUTO_MIN_PROMPT || text.startsWith("/")) return null;
   const query = stripFences(text).trim().slice(0, AUTO_QUERY_CHARS);

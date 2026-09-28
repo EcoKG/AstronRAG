@@ -608,6 +608,7 @@ server.registerTool(
       totalMatched,
       zeroHit: results.length === 0,
       scoped: scope !== undefined,
+      ...(store.shadowTop5 !== undefined ? { shadowTop5: Number(store.shadowTop5.toFixed(3)) } : {}),
       ...queryField(query),
     });
     if (results.length === 0) {

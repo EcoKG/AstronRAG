@@ -1,15 +1,16 @@
 // 검색 평가 하네스 — 픽스처 볼트 사본에 골든 질의를 돌려 Recall·MRR·none 오탐률·지연을 JSON 으로 낸다.
 //
 // 사용:
-//   node scripts/eval-retrieval.mjs --scorer legacy [--out <path>] [--permute-control [--seed N]]
+//   node scripts/eval-retrieval.mjs --scorer legacy|bm25f [--out <path>] [--permute-control [--seed N]]
 //   node scripts/eval-retrieval.mjs --compare base.json cand.json
-//   node scripts/eval-retrieval.mjs --baseline <기준 dist 디렉터리> [--out <path>]
+//   node scripts/eval-retrieval.mjs --baseline <기준 dist 디렉터리> [--multi] [--out <path>]
 //   node scripts/eval-retrieval.mjs --min-exact-r1 <하한>
-//   node scripts/eval-retrieval.mjs --multi [--alt-control [--seed N]] [--out <path>]
+//   node scripts/eval-retrieval.mjs --multi [--alt-weight <w>] [--alt-control [--seed N]] [--out <path>]
 //
+// --scorer 는 import 전에 BIGBRAIN_SCORER 로 넘긴다. --alt-weight 는 변형 질의 가중(BIGBRAIN_ALT_WEIGHT, 0 초과 1 이하)이다.
 // --multi 는 eval/alt-queries.jsonl 의 고정 변형을 alt_queries 로 함께 넘겨 같은 지표를 잰다.
 // --alt-control 은 변형 묶음을 다른 질의의 것으로 순환 배정해 목록이 길어진 효과만 남기는 대조군이다.
-// --baseline 은 골든 전 질의의 searchDetailed 출력 JSON 을 기준 dist 와 바이트 비교해 불일치가 있으면 1 로 끝난다.
+// --baseline 은 골든 전 질의의 searchDetailed 출력 JSON 을 기준 dist 와 바이트 비교해 불일치가 있으면 1 로 끝난다(legacy 만). --multi 를 주면 변형도 함께 넘긴다.
 // --min-exact-r1 은 exact 분할 전체 Recall@1 만 재서 하한 미만이면 1 로 끝난다.
 //
 // 픽스처는 %TEMP% 사본에서만 연다 — 회상 강화 쓰기가 eval/fixture-vault 를 바꾸지 않게 한다.
@@ -31,7 +32,7 @@ const MAX_ALTS = 3;
 const FROZEN_NOW = Date.parse("2026-07-01T00:00:00.000Z");
 const SPLITS = ["exact", "crosslang", "paraphrase", "none"];
 const POSITIVE = ["exact", "crosslang", "paraphrase"];
-const SCORERS = ["legacy"];
+const SCORERS = ["legacy", "bm25f"];
 const MIN_PER_SPLIT = 25;
 const FPR_TARGET = 0.1;
 const REL_RATIO = 0.5;
@@ -68,6 +69,7 @@ function readArgs(argv) {
 				"min-exact-r1": { type: "string" },
 				multi: { type: "boolean", default: false },
 				"alt-control": { type: "boolean", default: false },
+				"alt-weight": { type: "string" },
 			},
 		});
 	} catch (e) {
@@ -85,7 +87,14 @@ function readArgs(argv) {
 	}
 	if (values.baseline !== undefined && minExactR1 !== undefined) die("--baseline 과 --min-exact-r1 은 함께 쓸 수 없다", 2);
 	if (values["alt-control"] && !values.multi) die("--alt-control 은 --multi 와 함께 써야 한다", 2);
-	if (values.multi && (values.baseline !== undefined || values.compare)) die("--multi 는 --baseline·--compare 와 함께 쓸 수 없다", 2);
+	if (values.multi && values.compare) die("--multi 는 --compare 와 함께 쓸 수 없다", 2);
+	if (values.baseline !== undefined && values.scorer !== "legacy") die("--baseline 은 --scorer legacy 에서만 쓴다", 2);
+	let altWeight;
+	if (values["alt-weight"] !== undefined) {
+		altWeight = Number(values["alt-weight"]);
+		if (!(altWeight > 0 && altWeight <= 1)) die("--alt-weight 는 0 초과 1 이하 수여야 한다", 2);
+		if (!values.multi) die("--alt-weight 는 --multi 와 함께 써야 한다", 2);
+	}
 	let baseline;
 	if (values.baseline !== undefined) {
 		baseline = path.resolve(values.baseline);
@@ -103,6 +112,7 @@ function readArgs(argv) {
 		minExactR1,
 		multi: values.multi,
 		altControl: values["alt-control"],
+		altWeight,
 	};
 }
 
@@ -343,6 +353,7 @@ function compare(basePath, candPath) {
 		unmatched,
 		all: { hit1: test(pairs, 1), hit5: test(pairs, 5) },
 		holdout: { hit1: test(pairs.filter(([q]) => q.holdout), 1), hit5: test(pairs.filter(([q]) => q.holdout), 5) },
+		crossPara: { hit5: test(pairs.filter(([q]) => q.split !== "exact"), 5) },
 		bySplit,
 	};
 }
@@ -369,8 +380,8 @@ function firstDiff(a, b) {
 	return { at: i, base: a.slice(from, i + 80), cand: b.slice(from, i + 80) };
 }
 
-/** --baseline: 기준 dist 와 현재 dist 가 골든 전 질의·설정에서 같은 searchDetailed 출력을 내는지 JSON 바이트로 비교한다 */
-async function diffBaseline(baseDist, rows, current, dirs) {
+/** --baseline: 기준 dist 와 현재 dist 가 골든 전 질의·설정에서 같은 searchDetailed 출력을 내는지 JSON 바이트로 비교한다. altsOf 가 주는 변형이 있으면 함께 넘긴다 */
+async function diffBaseline(baseDist, rows, current, dirs, altsOf) {
 	const { Vault: BaseVault } = await import(pathToFileURL(path.join(baseDist, "vault.js")).href);
 	const { MemoryStore: BaseStore } = await import(pathToFileURL(path.join(baseDist, "store.js")).href);
 	const open = (Store, VaultClass, tag) => {
@@ -384,7 +395,9 @@ async function diffBaseline(baseDist, rows, current, dirs) {
 	const cand = open(current.MemoryStore, current.Vault, "cand");
 	let compared = 0;
 	const mismatches = rows.flatMap((row) =>
-		DIFF_CONFIGS.flatMap(([config, o]) => {
+		DIFF_CONFIGS.flatMap(([config, c]) => {
+			const alts = altsOf(row);
+			const o = alts ? Object.assign({ altQueries: alts }, c) : c;
 			const a = JSON.stringify(base.searchDetailed(row.query, o));
 			const b = JSON.stringify(cand.searchDetailed(row.query, o));
 			compared++;
@@ -396,6 +409,7 @@ async function diffBaseline(baseDist, rows, current, dirs) {
 		baseline: baseDist,
 		frozenNow: new Date(FROZEN_NOW).toISOString(),
 		configs: Object.fromEntries(DIFF_CONFIGS),
+		withAltQueries: rows.filter((row) => altsOf(row)).length,
 		queries: rows.length,
 		compared,
 		mismatchCount: mismatches.length,
@@ -412,8 +426,11 @@ if (opts.compare) {
 
 if (!SCORERS.includes(opts.scorer)) die(`지원하지 않는 scorer: ${opts.scorer} (가능: ${SCORERS.join(", ")})`, 2);
 
-// 사용자 동의어 사전은 모듈 로드 시 병합되므로 import 전에 지운다
+// 사용자 동의어 사전은 모듈 로드 시 병합되므로 import 전에 지운다. 스코어러·변형 가중도 모듈 로드 시 읽으므로 import 전에 정한다
 delete process.env.BIGBRAIN_SYNONYMS;
+process.env.BIGBRAIN_SCORER = opts.scorer;
+if (opts.altWeight === undefined) delete process.env.BIGBRAIN_ALT_WEIGHT;
+else process.env.BIGBRAIN_ALT_WEIGHT = String(opts.altWeight);
 const distUrl = (f) => pathToFileURL(path.join(root, "dist", f)).href;
 if (!fs.existsSync(path.join(root, "dist", "store.js"))) die("dist/store.js 가 없다 — 먼저 npm run build");
 const { Vault } = await import(distUrl("vault.js"));
@@ -437,7 +454,7 @@ const diffDirs = [];
 evaluation: try {
 	if (opts.baseline) {
 		Date.now = () => FROZEN_NOW;
-		const diff = await diffBaseline(opts.baseline, golden, { Vault, MemoryStore }, diffDirs);
+		const diff = await diffBaseline(opts.baseline, golden, { Vault, MemoryStore }, diffDirs, altsOf);
 		Date.now = realNow;
 		emit(diff, opts.out, ["queries", "compared", "mismatchCount", "mismatches"]);
 		if (diff.mismatchCount > 0) process.exitCode = 1;
@@ -504,6 +521,7 @@ evaluation: try {
 
 	const result = {
 		scorer: opts.scorer,
+		shadow: opts.scorer === "legacy" && process.env.BIGBRAIN_SHADOW !== "0",
 		frozenNow: new Date(FROZEN_NOW).toISOString(),
 		fixture: { count: records.length, types },
 		golden: {
@@ -518,7 +536,7 @@ evaluation: try {
 		g2: pickG2(curve),
 		permuteControl,
 		...(opts.multi
-			? { multi: { file: path.relative(root, ALTS), control: opts.altControl ? "derangement" : "none", seed: opts.altControl ? opts.seed : null } }
+			? { multi: { file: path.relative(root, ALTS), control: opts.altControl ? "derangement" : "none", seed: opts.altControl ? opts.seed : null, altWeight: opts.altWeight ?? "default" } }
 			: {}),
 		latencyMs: {
 			p50: percentile(times, 0.5),
@@ -536,7 +554,7 @@ evaluation: try {
 		})),
 	};
 
-	emit(result, opts.out, ["scorer", "fixture", "splits", "g2", "latencyMs", "permuteControl", "multi"]);
+	emit(result, opts.out, ["scorer", "shadow", "fixture", "splits", "g2", "latencyMs", "permuteControl", "multi"]);
 } finally {
 	Date.now = realNow;
 	for (const d of [metricDir, latDir, ...diffDirs]) if (d) fs.rmSync(d, { recursive: true, force: true });
