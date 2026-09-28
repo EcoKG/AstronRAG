@@ -118,14 +118,48 @@ export function bodyWikilinks(body: string): string[] {
   return out;
 }
 
-/**
- * 이 일수 이상 갱신되지 않은 기억을 인덱스에서 "낡음" 으로 표시한다.
- * index.ts 의 `BIGBRAIN_STALE_DAYS` 와 같은 값을 읽어 두 채널의 기준을 일치시킨다.
- */
-const INDEX_STALE_DAYS = (() => {
-  const v = Number(process.env.BIGBRAIN_STALE_DAYS);
-  return Number.isFinite(v) && v >= 0 ? v : 30;
+
+/** 한쪽에만 있으면 모순 신호로 보는 부정 표현(한국어·영어) */
+const NEGATION_RE = /않|금지|하지\s?마|(?:^|\s)안\s|안\s?함|말\s?것|\b(?:never|not|don't|do not|doesn't|does not|isn't|won't|cannot|can't|no longer)\b/i;
+
+/** 두 기억 텍스트가 숫자·버전 또는 부정 여부에서 갈리는 이유 목록을 돌려준다 */
+export function contradictionReasons(a: string, b: string): string[] {
+  const reasons: string[] = [];
+  // 날짜(YYYY-MM-DD)는 기록 시점이라 비교에서 뺀다
+  const nums = (s: string) => new Set(s.replace(/\b\d{4}-\d{2}-\d{2}\b/g, " ").match(/\d+(?:\.\d+)*/g) ?? []);
+  const na = nums(a);
+  const nb = nums(b);
+  if ([...na].some((n) => !nb.has(n)) && [...nb].some((n) => !na.has(n))) reasons.push("number");
+  if (NEGATION_RE.test(a) !== NEGATION_RE.test(b)) reasons.push("negation");
+  return reasons;
+}
+
+/** `BIGBRAIN_STALE_DAYS` 가 유효하게 설정되면 전 타입에 쓰는 단일 낡음 임계(일), 아니면 null */
+const STALE_OVERRIDE = (() => {
+  const raw = process.env.BIGBRAIN_STALE_DAYS;
+  if (raw === undefined) return null;
+  const v = Number(raw);
+  return Number.isFinite(v) && v >= 0 ? v : null;
 })();
+
+/** 타입별 기본 낡음 임계(일) */
+const STALE_DAYS_BY_TYPE: Record<MemoryType, number> = {
+  episodic: 14,
+  semantic: 60,
+  procedural: 60,
+  preference: 180,
+};
+
+/** 검토일(review_after)이 오늘보다 앞선 날짜인지 판정한다 */
+export function reviewOverdue(m: MemoryRecord): boolean {
+  return !!m.reviewAfter && today() > m.reviewAfter;
+}
+
+/** 기억이 낡았는지 판정한다 — 도구 응답과 SessionStart 인덱스가 같은 기준을 쓴다 */
+export function isStale(m: MemoryRecord, ageDays: number): boolean {
+  if (reviewOverdue(m)) return true;
+  return ageDays >= (STALE_OVERRIDE ?? STALE_DAYS_BY_TYPE[m.type]);
+}
 
 /**
  * 이력 한 줄 추가 + 상한 유지.
@@ -462,7 +496,12 @@ export class MemoryStore {
     return verify(this.buildIdIndex().get(idOrSlug));
   }
 
-  remember(input: RememberInput): { record: MemoryRecord; similar: MemoryRecord[]; dangling: string[] } {
+  remember(input: RememberInput): {
+    record: MemoryRecord;
+    similar: MemoryRecord[];
+    contradictions: { record: MemoryRecord; reasons: string[] }[];
+    dangling: string[];
+  } {
     const now = nowIso();
     // 슬러그를 제목과 분리한다. 종전에는 제목에서만 파생돼, 위키링크 대상을 안정적으로
     // 유지하려면 **제목 자체를 영문 케밥으로 강제**해야 했다(실사용에서 이관 시 한국어
@@ -491,6 +530,7 @@ export class MemoryStore {
         const from = (input.derivedFrom ?? []).filter((s) => this.vault.find(s) !== null);
         return from.length > 0 ? from : undefined;
       })(),
+      reviewAfter: input.reviewAfter || undefined,
       links: [],
       history: [`${today()}: created${input.source ? ` (source: ${input.source})` : ""}`],
       body: input.content.trim(),
@@ -509,6 +549,13 @@ export class MemoryStore {
       record.supersedes = superseded.slug;
       pushHistory(record, `${today()}: supersedes [[${superseded.slug}]]`);
     }
+
+    // 모순 가능성 — 유사 기억 중 숫자·버전·부정어가 갈리는 것만 신호로 돌려준다(병합·삭제 없음, P6)
+    const newText = `${record.title} ${record.description} ${record.body}`;
+    const contradictions = similar
+      .filter((m) => m.slug !== superseded?.slug)
+      .map((m) => ({ record: m, reasons: contradictionReasons(newText, `${m.title} ${m.description} ${m.body}`) }))
+      .filter((c) => c.reasons.length > 0);
 
     // 원자적 생성 — slug 확정과 파일 생성이 한 연산이라 동시 remember 가 서로를
     // 덮어쓰지 못한다(감사 A5). 충돌 시 record.slug 가 -2, -3 … 으로 갱신된다.
@@ -554,7 +601,7 @@ export class MemoryStore {
 
     this.regenerateIndex();
     const final = this.vault.read(finalSlug) ?? record;
-    return { record: final, similar, dangling: this.danglingLinks(final) };
+    return { record: final, similar, contradictions, dangling: this.danglingLinks(final) };
   }
 
   /**
@@ -751,6 +798,7 @@ export class MemoryStore {
     if (input.confidence !== undefined) m.confidence = Math.min(1, Math.max(0, input.confidence));
     if (input.source !== undefined) m.source = input.source;
     if (input.project !== undefined) m.project = input.project || undefined; // 빈 문자열 = 전역으로 되돌리기
+    if (input.reviewAfter !== undefined) m.reviewAfter = input.reviewAfter || undefined; // 빈 문자열 = 검토일 해제
     // 유형 교정 (T35). 종전에는 생성 시 정해진 뒤 바뀔 길이 없어 오분류조차 못 고쳤고,
     // 반복 경험이 일화에서 의미로 넘어가는 전이를 표현할 수단도 없었다.
     // 바뀌었을 때만 이력에 남긴다 — 무엇이 왜 재분류됐는지가 감사 대상이다.
@@ -962,7 +1010,7 @@ export class MemoryStore {
       for (const m of items.sort((a, b) => b.confidence - a.confidence)) {
         const ageDays = Math.max(0, Math.floor((now - Date.parse(m.updated)) / 86_400_000));
         const age = Number.isFinite(ageDays)
-          ? ageDays >= INDEX_STALE_DAYS
+          ? isStale(m, ageDays)
             ? ` · ${ageDays}일 전, 대조 필요`
             : ` · ${ageDays}일 전`
           : "";

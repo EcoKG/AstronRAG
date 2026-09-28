@@ -304,6 +304,7 @@ export class Vault {
     // 공고화 출처는 frontmatter 에 둔다 — 본문에만 적으면 revise 한 번에 사라져
     // 파생물이 손으로 쓴 단정문과 구별되지 않는다(출처혼동의 인공 버전, P8)
     if (record.derivedFrom && record.derivedFrom.length > 0) fm.derived_from = record.derivedFrom;
+    if (record.reviewAfter) fm.review_after = record.reviewAfter;
     if (record.supersededBy) fm.superseded_by = record.supersededBy;
     if (record.archiveReason) fm.archive_reason = record.archiveReason;
     return matter.stringify(`\n${record.body}\n`, fm);
@@ -527,6 +528,8 @@ export class Vault {
       project: str(data.project) || undefined,
       links: arr(data.links),
       derivedFrom: arr(data.derived_from).length > 0 ? arr(data.derived_from) : undefined,
+      // 인용부호 없는 날짜는 Date 로 파싱돼 ISO 문자열이 되므로 앞 10자(YYYY-MM-DD)만 쓴다
+      reviewAfter: str(data.review_after).slice(0, 10) || undefined,
       supersedes: str(data.supersedes) || undefined,
       supersededBy: str(data.superseded_by) || undefined,
       archiveReason: str(data.archive_reason) || undefined,
