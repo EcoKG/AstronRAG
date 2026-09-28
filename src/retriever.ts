@@ -1,10 +1,19 @@
-import type { Vault } from "./vault.js";
+import fs from "node:fs";
+import path from "node:path";
+import { logWarn } from "./log.js";
+import { type Vault, cloneRecord, writeFileAtomic } from "./vault.js";
 import type { MemoryRecord, MemoryType } from "./types.js";
 
 /** 이보다 토큰이 적은 집합은 유사도 판단 근거가 부족하다고 보고 비교하지 않는다 */
 export const MIN_OVERLAP_TOKENS = 3;
 /** 동의어로만 맞은 토큰의 가중 — 정확히 일치한 기억이 여전히 위로 오게 한다 (감사 D1) */
 export const SYNONYM_WEIGHT = 0.6;
+/** 영속 역색인 디렉터리 — 볼트 루트 아래에 두고, 안에 "*" 한 줄 .gitignore 를 둔다 */
+export const INDEX_DIR = ".bbm-index";
+/** 역색인 형식 버전 — 토큰화·조사 목록·파일 구조가 바뀌면 올린다 */
+export const INDEX_VERSION = 1;
+/** 역색인 파일 이름 */
+export const INDEX_FILE = `lexical.v${INDEX_VERSION}.json`;
 
 /** 텍스트를 소문자 문자·숫자 연속열(2자 이상) 토큰으로 자른다 */
 export function tokenize(text: string): string[] {
@@ -133,17 +142,16 @@ export interface Retriever {
 	sync(vault: Vault): void;
 }
 
-/** 레코드 1건의 필드 원문과 사전 토큰화 결과 */
+/** 레코드 1건의 색인 항목 — 항목 키, 파일 신원, 레코드, 필드별 사전 토큰 */
 interface Entry {
+	key: string;
+	/** 읽기 직전에 뜬 (ino, mtimeNs, size) — 디스크와 대조하지 않은 항목(upsert)은 null */
+	stat: FileStat | null;
 	record: MemoryRecord;
-	title: string;
-	description: string;
-	body: string;
-	tags: string;
 	titleT: string[];
+	tagT: string[];
 	descT: string[];
 	bodyT: string[];
-	tagT: string[];
 	titleDescT: string[];
 }
 
@@ -152,99 +160,447 @@ function entryKey(slug: string, archived: boolean): string {
 	return `${archived ? "a" : "m"}:${slug}`;
 }
 
-/** 필드 가중 키워드 점수(제목 5·태그 4·설명 3·본문 최대 3, 동의어 0.6배)를 내는 인메모리 검색기 */
+/** 파일 신원 (ino, mtimeNs, size) — 십진 문자열 */
+type FileStat = [string, string, string];
+
+/** 인덱스 파일의 문서 1건 — 항목 키, 파일 신원, 필드별 토큰 수·토큰, 제목+설명 토큰, 레코드 */
+interface IndexDoc {
+	key: string;
+	stat: FileStat | null;
+	len: number[];
+	title: string[];
+	tags: string[];
+	description: string[];
+	body: string[];
+	titleDesc: string[];
+	record: MemoryRecord;
+}
+
+/** 인덱스 파일 — 문서, 표층 토큰 posting([문서 위치, 필드 번호, 빈도] 반복), 어간 → 표층 토큰 사전(어간 오름차순) */
+interface IndexFile {
+	version: number;
+	docs: IndexDoc[];
+	postings: [string, number[]][];
+	stems: [string, string[]][];
+}
+
+/** 파일의 (ino, mtimeNs, size) — 없거나 stat 이 실패하면 null */
+function fileStat(fp: string): FileStat | null {
+	try {
+		const st = fs.statSync(fp, { bigint: true, throwIfNoEntry: false });
+		return st ? [String(st.ino), String(st.mtimeNs), String(st.size)] : null;
+	} catch {
+		return null;
+	}
+}
+
+/** 두 파일 신원이 모두 있고 세 값이 전부 같은지 */
+function sameStat(a: FileStat | null, b: FileStat | null): boolean {
+	return !!a && !!b && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+}
+
+/** 항목 키가 가리키는 기억 파일 경로 */
+function keyPath(root: string, key: string): string {
+	return path.join(root, key.startsWith("a:") ? "archive" : "memories", `${key.slice(2)}.md`);
+}
+
+/** 문자열 배열인지 */
+function isStrings(v: unknown): v is string[] {
+	return Array.isArray(v) && v.every((x) => typeof x === "string");
+}
+
+const RECORD_STRINGS = ["id", "slug", "title", "description", "type", "status", "created", "updated", "lastAccessed", "lastReinforced", "body"];
+const RECORD_OPTIONAL = ["source", "project", "reviewAfter", "supersedes", "supersededBy", "archiveReason"];
+const RECORD_NUMBERS = ["confidence", "storageStrength", "accessCount"];
+const RECORD_LISTS = ["tags", "links", "history"];
+
+/** 검색·순위화가 읽는 레코드 필드가 전부 제 형태인지 */
+function validRecord(v: unknown): v is MemoryRecord {
+	if (!v || typeof v !== "object") return false;
+	const r = v as Record<string, unknown>;
+	return (
+		RECORD_STRINGS.every((k) => typeof r[k] === "string") &&
+		RECORD_OPTIONAL.every((k) => r[k] === undefined || typeof r[k] === "string") &&
+		RECORD_NUMBERS.every((k) => typeof r[k] === "number") &&
+		RECORD_LISTS.every((k) => isStrings(r[k])) &&
+		(r.derivedFrom === undefined || isStrings(r.derivedFrom))
+	);
+}
+
+/** 인덱스 파일 내용이 이 버전의 형태인지 — posting 이 가리키는 문서 위치·필드 번호까지 본다 */
+function validIndex(v: unknown): v is IndexFile {
+	if (!v || typeof v !== "object") return false;
+	const d = v as Record<string, unknown>;
+	if (d.version !== INDEX_VERSION || !Array.isArray(d.docs) || !Array.isArray(d.postings) || !Array.isArray(d.stems)) return false;
+	const keys = new Set<string>();
+	for (const doc of d.docs as IndexDoc[]) {
+		// slug 는 빈 문자열일 수 있다(파일명이 ".md") — 위치 접두만 보고 slug 는 레코드와 대조한다
+		if (!doc || typeof doc.key !== "string" || !/^[am]:/.test(doc.key) || keys.has(doc.key)) return false;
+		keys.add(doc.key);
+		if (doc.stat !== null && !(isStrings(doc.stat) && doc.stat.length === 3)) return false;
+		if (![doc.title, doc.tags, doc.description, doc.body, doc.titleDesc].every(isStrings)) return false;
+		if (!validRecord(doc.record) || doc.record.slug !== doc.key.slice(2)) return false;
+	}
+	const n = d.docs.length;
+	for (const p of d.postings as unknown[]) {
+		if (!Array.isArray(p) || typeof p[0] !== "string" || !Array.isArray(p[1]) || p[1].length % 3 !== 0) return false;
+		const list = p[1] as unknown[];
+		for (let i = 0; i < list.length; i += 3) {
+			const [doc, field, tf] = [list[i], list[i + 1], list[i + 2]];
+			if (!Number.isInteger(doc) || (doc as number) < 0 || (doc as number) >= n) return false;
+			if (!Number.isInteger(field) || (field as number) < 0 || (field as number) > 3) return false;
+			if (!Number.isInteger(tf) || (tf as number) < 1) return false;
+		}
+	}
+	return (d.stems as unknown[]).every((s) => Array.isArray(s) && typeof s[0] === "string" && isStrings(s[1]));
+}
+
+/** 인덱스 파일을 읽는다 — 없거나 읽지 못하면 undefined, 파싱 실패·버전 불일치·형태 불량이면 null */
+function readIndexFile(fp: string): IndexFile | null | undefined {
+	let text: string;
+	try {
+		text = fs.readFileSync(fp, "utf-8");
+	} catch {
+		return undefined;
+	}
+	try {
+		const data: unknown = JSON.parse(text);
+		return validIndex(data) ? data : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * 필드 가중 키워드 점수(제목 5·태그 4·설명 3·본문 최대 3, 동의어 0.6배)를 내는 검색기.
+ * 표층 토큰 posting 과 어간 사전으로 후보를 찾고, 역색인을 볼트의 .bbm-index/ 에 영속해 새 프로세스가 파일을 다시 파싱하지 않게 한다.
+ */
 export class LexicalRetriever implements Retriever {
 	readonly name = "lexical" as const;
-	private entries = new Map<string, Entry>();
+	/** 항목이 속한 볼트 루트 — sync 가 다른 볼트를 받으면 그 볼트의 인덱스 파일을 새로 적재한다 */
+	private root: string | null = null;
+	/** 항목 — listSlugs(true) 순서, upsert 로 새로 든 항목은 끝에 붙는다 */
+	private docs: Entry[] = [];
+	private keyIndex = new Map<string, number>();
+	/** 표층 토큰 → [문서 위치, 필드 번호, 빈도] 반복 — null 이면 다음 조회·저장 때 항목에서 다시 만든다 */
+	private postings: Map<string, number[]> | null = null;
+	/** 어간 → 표층 토큰 */
+	private stemTerms = new Map<string, string[]>();
+	/** 어간 오름차순 목록 — 접두 이분 탐색용 */
+	private stems: string[] = [];
+	/** 마지막 저장이 실패했으면 다음 sync 가 다시 저장한다 */
+	private unsaved = false;
+	/** 읽기 전용 검색기의 볼트 루트 — 있으면 인덱스를 저장하지 않고, isCurrent 가 이 루트의 파일과 대조한다 */
+	private readOnlyRoot: string | null = null;
+	/** 이 검색기가 마지막으로 적재·저장한 인덱스 파일의 신원 — 달라졌으면 지워졌거나 다른 프로세스가 덮어쓴 것이다 */
+	private indexStat: FileStat | null = null;
 
-	/** 필드 문자열이 같으면 이전 토큰을 재사용하고 레코드만 새것으로 바꾼 항목을 만든다 */
-	private entryFor(rec: MemoryRecord, archived: boolean): Entry {
+	/**
+	 * 훅용 읽기 전용 검색기 — 볼트의 인덱스 파일만 읽는다. 인덱스가 없거나 손상·버전 불일치면 null.
+	 * 파일을 만들거나 지우지 않고 기억 파일도 읽지 않는다. 결과가 색인 뒤 바뀌었는지는 isCurrent 로 대조한다.
+	 */
+	static openReadOnly(vaultRoot: string): LexicalRetriever | null {
+		const root = path.resolve(vaultRoot);
+		const data = readIndexFile(path.join(root, INDEX_DIR, INDEX_FILE));
+		if (!data) return null;
+		const r = new LexicalRetriever();
+		r.adopt(data);
+		r.root = root;
+		r.readOnlyRoot = root;
+		return r;
+	}
+
+	/**
+	 * 읽기 전용 검색기에서 slug 의 항목이 지금 파일과 같은 파일 신원인지 — 파일이 없거나 바뀌었으면 false.
+	 * 그 slug 의 파일만 stat 한다. 읽기 전용이 아니면 sync 가 이미 대조했으므로 항상 true.
+	 */
+	isCurrent(slug: string): boolean {
+		const root = this.readOnlyRoot;
+		if (!root) return true;
+		const keys = [entryKey(slug, false), entryKey(slug, true)].filter((k) => this.keyIndex.has(k));
+		return keys.length > 0 && keys.every((k) => sameStat(this.docs[this.keyIndex.get(k) as number].stat, fileStat(keyPath(root, k))));
+	}
+
+	/** 볼트의 인덱스 파일을 적재한다 — 없으면 빈 상태, 손상·버전 불일치면 지우고 빈 상태에서 다시 만든다 */
+	private load(vault: Vault): void {
+		this.root = path.resolve(vault.root);
+		this.docs = [];
+		this.keyIndex = new Map();
+		this.postings = null;
+		this.unsaved = false;
+		this.indexStat = null;
+		if (vault.nativeMemoryFiles.length > 0) return; // 남의 저장소에는 인덱스를 두지 않는다 (T26)
+		const fp = path.join(this.root, INDEX_DIR, INDEX_FILE);
+		// 읽기 전에 뜬다 — 읽는 사이 다른 프로세스가 바꾸면 신원이 달라져 다음 sync 가 다시 저장한다
+		const st = fileStat(fp);
+		const data = readIndexFile(fp);
+		if (data === null) {
+			logWarn(`역색인 손상·버전 불일치(재생성): ${fp}`);
+			try {
+				fs.rmSync(fp, { force: true });
+			} catch {
+				/* 지우지 못해도 다음 저장이 통째로 덮어쓴다 */
+			}
+			return;
+		}
+		if (!data) return;
+		this.adopt(data);
+		this.indexStat = st;
+	}
+
+	/** 인덱스 파일 내용을 항목·posting·어간 사전으로 옮긴다 */
+	private adopt(data: IndexFile): void {
+		this.docs = data.docs.map((d) => ({
+			key: d.key,
+			stat: d.stat,
+			record: d.record,
+			titleT: d.title,
+			tagT: d.tags,
+			descT: d.description,
+			bodyT: d.body,
+			titleDescT: d.titleDesc,
+		}));
+		this.keyIndex = new Map(this.docs.map((e, i) => [e.key, i]));
+		this.postings = new Map(data.postings);
+		this.stemTerms = new Map(data.stems);
+		this.stems = data.stems.map((s) => s[0]);
+	}
+
+	/** 인덱스 파일과 "*" 한 줄 .gitignore 를 쓴다 — 실패는 경고만 남긴다(인덱스는 캐시다) */
+	private persist(vault: Vault): void {
+		if (this.readOnlyRoot || !this.root || vault.nativeMemoryFiles.length > 0) return;
+		const postings = this.ensurePostings();
+		const data: IndexFile = {
+			version: INDEX_VERSION,
+			docs: this.docs.map((e) => ({
+				key: e.key,
+				stat: e.stat,
+				len: [e.titleT.length, e.tagT.length, e.descT.length, e.bodyT.length],
+				title: e.titleT,
+				tags: e.tagT,
+				description: e.descT,
+				body: e.bodyT,
+				titleDesc: e.titleDescT,
+				record: e.record,
+			})),
+			postings: [...postings],
+			stems: this.stems.map((s): [string, string[]] => [s, this.stemTerms.get(s) ?? []]),
+		};
+		const dir = path.join(this.root, INDEX_DIR);
+		try {
+			fs.mkdirSync(dir, { recursive: true });
+			const ignore = path.join(dir, ".gitignore");
+			if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, "*\n", "utf-8");
+			writeFileAtomic(path.join(dir, INDEX_FILE), JSON.stringify(data));
+			this.unsaved = false;
+			this.indexStat = fileStat(path.join(dir, INDEX_FILE));
+		} catch (err) {
+			this.unsaved = true;
+			logWarn(`역색인 저장 실패(다음 sync 에 재시도): ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	/** posting 과 어간 사전을 항목에서 다시 만든다 — 항목이 바뀐 뒤 첫 조회·저장 때 한 번 */
+	private ensurePostings(): Map<string, number[]> {
+		if (this.postings) return this.postings;
+		const postings = new Map<string, number[]>();
+		this.docs.forEach((e, doc) => {
+			[e.titleT, e.tagT, e.descT, e.bodyT].forEach((tokens, field) => {
+				const tf = new Map<string, number>();
+				for (const u of tokens) tf.set(u, (tf.get(u) ?? 0) + 1);
+				for (const [u, n] of tf) {
+					const list = postings.get(u);
+					if (list) list.push(doc, field, n);
+					else postings.set(u, [doc, field, n]);
+				}
+			});
+		});
+		const stemTerms = new Map<string, string[]>();
+		for (const u of postings.keys()) {
+			const s = stripParticle(u);
+			const terms = stemTerms.get(s);
+			if (terms) terms.push(u);
+			else stemTerms.set(s, [u]);
+		}
+		this.postings = postings;
+		this.stemTerms = stemTerms;
+		this.stems = [...stemTerms.keys()].sort();
+		return postings;
+	}
+
+	/**
+	 * tokenMatch(t, u) 가 참인 표층 토큰 u 전부.
+	 * 어간이 t 의 어간과 같은 것, t 의 어간으로 시작하고 2자 이내로 긴 어간(정렬 목록 이분 탐색),
+	 * t 의 어간이 그것으로 시작하고 2자 이내로 짧은 3자 이상 어간(접두 직접 조회)을 모은 뒤 tokenMatch 로 다시 거른다.
+	 */
+	private termsMatching(t: string): string[] {
+		const nt = stripParticle(t);
+		const found = new Set<string>();
+		const addStem = (s: string) => {
+			for (const u of this.stemTerms.get(s) ?? []) found.add(u);
+		};
+		addStem(nt);
+		if (nt.length >= 3) {
+			let lo = 0;
+			let hi = this.stems.length;
+			while (lo < hi) {
+				const mid = (lo + hi) >>> 1;
+				if (this.stems[mid] < nt) lo = mid + 1;
+				else hi = mid;
+			}
+			for (let i = lo; i < this.stems.length && this.stems[i].startsWith(nt); i++) {
+				if (this.stems[i].length - nt.length <= 2) addStem(this.stems[i]);
+			}
+			for (let len = Math.max(3, nt.length - 2); len < nt.length; len++) addStem(nt.slice(0, len));
+		}
+		return [...found].filter((u) => tokenMatch(t, u));
+	}
+
+	/** 필드 문자열이 같으면 이전 토큰을 재사용하고 레코드·파일 신원만 새것으로 바꾼 항목을 만든다 */
+	private entryFor(rec: MemoryRecord, archived: boolean, prev: Entry | undefined, stat: FileStat | null): Entry {
+		const key = entryKey(rec.slug, archived);
 		const tags = rec.tags.join(" ");
-		const prev = this.entries.get(entryKey(rec.slug, archived));
 		if (
 			prev &&
-			prev.title === rec.title &&
-			prev.description === rec.description &&
-			prev.body === rec.body &&
-			prev.tags === tags
+			prev.record.title === rec.title &&
+			prev.record.description === rec.description &&
+			prev.record.body === rec.body &&
+			prev.record.tags.join(" ") === tags
 		) {
-			return { ...prev, record: rec };
+			return { ...prev, key, stat, record: rec };
 		}
 		return {
+			key,
+			stat,
 			record: rec,
-			title: rec.title,
-			description: rec.description,
-			body: rec.body,
-			tags,
 			titleT: tokenize(rec.title),
+			tagT: tokenize(tags),
 			descT: tokenize(rec.description),
 			bodyT: tokenize(stripLinkSection(rec.body)), // 링크 메타데이터 제외 (D6)
-			tagT: tokenize(tags),
 			titleDescT: tokenize(rec.title + " " + rec.description),
 		};
 	}
 
-	/** 볼트를 listSlugs(true) 순서로 다시 읽어 항목을 맞춘다 — 읽기는 볼트의 파일 캐시를 탄다 */
+	/**
+	 * 볼트를 listSlugs(true) 순서로 맞춘다. 파일마다 stat 을 먼저 떠 기록된 파일 신원과 같으면 항목을 그대로 쓰고,
+	 * 다르면 vault.read 로 다시 읽는다(T38 읽기 캐시와 같은 키·순서). 바뀐 것이 있으면 인덱스 파일을 통째로 교체한다.
+	 * 기억 파일이 그대로여도 인덱스 파일이 마지막 적재·저장 때와 다르면(지워짐·다른 프로세스가 덮어씀) 교체한다.
+	 */
 	sync(vault: Vault): void {
-		const next = new Map<string, Entry>();
+		if (path.resolve(vault.root) !== this.root) this.load(vault);
+		const next: Entry[] = [];
+		let changed = false;
+		let reindex = false;
 		for (const { slug, archived } of vault.listSlugs(true)) {
-			const rec = vault.read(slug, archived);
-			if (rec) next.set(entryKey(slug, archived), this.entryFor(rec, archived));
+			const at = this.keyIndex.get(entryKey(slug, archived));
+			const prev = at === undefined ? undefined : this.docs[at];
+			// 읽기 전에 뜬다 — 뒤에 뜨면 "옛 내용 + 새 신원" 이 기록돼 다음 변경까지 낡은 항목이 남는다
+			const st = fileStat(vault.filePath(slug, archived));
+			let e = prev;
+			if (!prev || !sameStat(prev.stat, st)) {
+				const rec = vault.read(slug, archived);
+				if (!rec) continue;
+				e = this.entryFor(rec, archived, prev, st);
+				changed = true;
+				if (!prev || e.titleT !== prev.titleT) reindex = true;
+			}
+			if (at !== next.length) {
+				changed = true;
+				reindex = true;
+			}
+			next.push(e as Entry);
 		}
-		this.entries = next;
+		if (next.length !== this.docs.length) {
+			changed = true;
+			reindex = true;
+		}
+		this.docs = next;
+		this.keyIndex = new Map(next.map((e, i) => [e.key, i]));
+		if (reindex) this.postings = null;
+		const replaced = !!this.indexStat && !sameStat(this.indexStat, fileStat(path.join(vault.root, INDEX_DIR, INDEX_FILE)));
+		if (changed || this.unsaved || replaced) this.persist(vault);
 	}
 
-	/** 항목을 추가하거나 교체한다 — 새 항목은 순서의 끝에 붙는다 */
+	/** 항목을 추가하거나 교체한다 — 새 항목은 순서의 끝에 붙고, 디스크와의 대조·저장은 다음 sync 가 한다 */
 	upsert(rec: MemoryRecord, archived = false): void {
-		this.entries.set(entryKey(rec.slug, archived), this.entryFor(rec, archived));
+		const key = entryKey(rec.slug, archived);
+		const at = this.keyIndex.get(key);
+		const prev = at === undefined ? undefined : this.docs[at];
+		const e = this.entryFor(cloneRecord(rec), archived, prev, null);
+		if (at === undefined) {
+			this.keyIndex.set(key, this.docs.length);
+			this.docs.push(e);
+			this.postings = null;
+		} else {
+			this.docs[at] = e;
+			if (e.titleT !== prev?.titleT) this.postings = null;
+		}
 	}
 
 	/** slug 의 항목을 memories·archive 양쪽에서 지운다 */
 	remove(slug: string): void {
-		this.entries.delete(entryKey(slug, false));
-		this.entries.delete(entryKey(slug, true));
+		const gone = new Set([entryKey(slug, false), entryKey(slug, true)]);
+		const kept = this.docs.filter((e) => !gone.has(e.key));
+		if (kept.length === this.docs.length) return;
+		this.docs = kept;
+		this.keyIndex = new Map(kept.map((e, i) => [e.key, i]));
+		this.postings = null;
 	}
 
 	/**
 	 * 키워드 점수가 0 보다 큰 후보를 항목 순서대로 돌려준다.
 	 * 후보가 k 를 넘으면 점수 상위 k 건(동점은 앞선 항목)만 남기되 순서는 유지한다.
+	 * 레코드는 복제해 내보낸다 — 호출부(강화)가 변이해도 항목이 바뀌지 않게 한다.
 	 */
 	search(q: ParsedQuery, k: number, filter: ScopeFilter): Candidate[] {
+		// 필드를 **사전 토큰화**해 비교한다(감사 D4). 종전에는 includes/indexOf 라
+		// 토큰 경계가 없어 'cat' 질의가 Concatenation·concat·category 를 포함한
+		// 무관한 기억을 고득점(7.68/3.84)으로 끌어왔고, 반환된 결과는 능동 인출로
+		// 강화까지 받아 오탐이 시간이 갈수록 더 잘 회상되는 방향으로 드리프트했다.
+		// 조사 흡수는 tokenMatch 가 담당하므로 한국어 회수율 손실은 없다.
+		const postings = this.ensurePostings();
+		const width = q.expanded.length * 4;
+		// 문서 위치 → [질의 토큰 × 필드] 적중 수 (본문은 일치 토큰 등장 횟수)
+		const hits = new Map<number, number[]>();
+		q.expanded.forEach((t, ti) => {
+			for (const u of this.termsMatching(t)) {
+				const list = postings.get(u);
+				if (!list) continue;
+				for (let i = 0; i < list.length; i += 3) {
+					let h = hits.get(list[i]);
+					if (!h) hits.set(list[i], (h = new Array<number>(width).fill(0)));
+					h[ti * 4 + list[i + 1]] += list[i + 2];
+				}
+			}
+		});
 		const out: Candidate[] = [];
-		for (const e of this.entries.values()) {
+		for (const doc of [...hits.keys()].sort((a, b) => a - b)) {
+			const e = this.docs[doc];
 			const m = e.record;
 			if ((filter.type && m.type !== filter.type) || !inScope(m, filter.project)) continue;
+			const h = hits.get(doc) as number[];
 			let keyword = 0;
 			const fields: FieldHit[] = [];
-			// 필드를 **사전 토큰화**해 비교한다(감사 D4). 종전에는 includes/indexOf 라
-			// 토큰 경계가 없어 'cat' 질의가 Concatenation·concat·category 를 포함한
-			// 무관한 기억을 고득점(7.68/3.84)으로 끌어왔고, 반환된 결과는 능동 인출로
-			// 강화까지 받아 오탐이 시간이 갈수록 더 잘 회상되는 방향으로 드리프트했다.
-			// 조사 흡수는 tokenMatch 가 담당하므로 한국어 회수율 손실은 없다.
-			for (const t of q.expanded) {
+			q.expanded.forEach((t, ti) => {
 				const w = q.exact.has(t) ? 1 : SYNONYM_WEIGHT;
-				if (e.titleT.some((u) => tokenMatch(t, u))) {
+				if (h[ti * 4] > 0) {
 					keyword += 5 * w;
 					fields.push({ field: "title", token: t, weight: 5 * w });
 				}
-				if (e.tagT.some((u) => tokenMatch(t, u))) {
+				if (h[ti * 4 + 1] > 0) {
 					keyword += 4 * w;
 					fields.push({ field: "tags", token: t, weight: 4 * w });
 				}
-				if (e.descT.some((u) => tokenMatch(t, u))) {
+				if (h[ti * 4 + 2] > 0) {
 					keyword += 3 * w;
 					fields.push({ field: "description", token: t, weight: 3 * w });
 				}
-				let hits = 0;
-				for (const u of e.bodyT) {
-					if (hits >= 3) break;
-					if (tokenMatch(t, u)) hits++;
-				}
-				keyword += hits * w;
-				if (hits > 0) fields.push({ field: "body", token: t, weight: hits * w });
-			}
+				const body = Math.min(3, h[ti * 4 + 3]);
+				keyword += body * w;
+				if (body > 0) fields.push({ field: "body", token: t, weight: body * w });
+			});
 			if (keyword === 0) continue;
-			out.push({ slug: m.slug, score: keyword, fields, record: m, titleDescTokens: e.titleDescT });
+			out.push({ slug: m.slug, score: keyword, fields, record: cloneRecord(m), titleDescTokens: e.titleDescT });
 		}
 		if (out.length <= k) return out;
 		const keep = out

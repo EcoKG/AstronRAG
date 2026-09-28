@@ -262,6 +262,42 @@ export function parseQuery(query: string): ParsedQuery {
 }
 
 /**
+ * 훅용 읽기 전용 회상 — 볼트의 영속 역색인(.bbm-index/)만 읽어 검색한다.
+ * 인덱스를 만들거나 고치지 않고, 기억 파일을 읽지 않으며, 강화·연상 확산도 하지 않는다. 인덱스가 없거나 손상·버전 불일치면 빈 결과다.
+ * 반환할 결과와 그 억제자만 stat 해, 서버가 마지막으로 sync 한 뒤 바뀌거나 사라진 기억은 후보에서 빼고 다시 순위화한다.
+ * 세 바퀴 뒤에도 낡은 결과가 나오면 남은 후보를 모두 stat 해 한 번 더 순위화한다. 볼트 복사·일괄 편집으로 대부분이 낡아도 순위화는 네 번 이하다.
+ * 그래서 limit 은 지금 파일과 맞는 후보로 채워지고, totalMatched 에서는 대조로 드러난 낡은 후보만 빠진다. 그 뒤 새로 생긴 기억은 보이지 않는다.
+ */
+export function searchPersistedIndex(
+  vaultRoot: string,
+  query: string,
+  opts?: { type?: MemoryType; limit?: number; project?: string },
+): SearchOutcome {
+  const q = parseQuery(query);
+  if (q.tokens.length === 0) return { results: [], totalMatched: 0 };
+  const retriever = LexicalRetriever.openReadOnly(vaultRoot);
+  if (!retriever) return { results: [], totalMatched: 0 };
+  let candidates = retriever.search(q, Infinity, { type: opts?.type, project: opts?.project });
+  const rankOpts = { limit: opts?.limit ?? 5, now: Date.now(), includeLinked: false, project: opts?.project };
+  const current = new Map<string, boolean>();
+  const isCurrent = (slug: string): boolean => {
+    let ok = current.get(slug);
+    if (ok === undefined) current.set(slug, (ok = retriever.isCurrent(slug)));
+    return ok;
+  };
+  // 반환 결과와 그 억제자만 대조해 낡은 후보를 빼고 다시 순위화한다. 이 바퀴 수를 넘으면 남은 후보를 모두 대조해 순위화 횟수를 묶는다
+  const partialRounds = 3;
+  for (let round = 1; ; round++) {
+    const ranked = rank(candidates, q, rankOpts);
+    const checked = ranked.results.flatMap((r) => (r.inhibitedBy ? [r.record.slug, r.inhibitedBy] : [r.record.slug]));
+    const stale = new Set(checked.filter((slug) => !isCurrent(slug)));
+    if (stale.size === 0) return ranked;
+    if (round === partialRounds) return rank(candidates.filter((c) => isCurrent(c.slug)), q, rankOpts);
+    candidates = candidates.filter((c) => !stale.has(c.slug));
+  }
+}
+
+/**
  * 다음 강화까지 필요한 간격 — **확장 간격**(expanding spacing, 감사 C3).
  *
  * 종전에는 고정 10분 창이라 "10분짜리 벼락치기" 가 그대로 통과했다:
@@ -482,6 +518,7 @@ export class MemoryStore {
 
     this.regenerateIndex();
     const final = this.vault.read(finalSlug) ?? record;
+    this.retriever.upsert(final);
     return { record: final, similar, contradictions, dangling: this.danglingLinks(final) };
   }
 
@@ -603,6 +640,7 @@ export class MemoryStore {
       `${today()}: ${contentChanged ? "revised" : "reconfirmed"} — ${input.reason}${input.source ? ` (source: ${input.source})` : ""}`,
     );
     this.vault.write(m, found.archived);
+    this.retriever.upsert(m, found.archived);
     this.regenerateIndex();
     return m;
   }
@@ -622,6 +660,7 @@ export class MemoryStore {
     } else {
       this.vault.write(m, true);
     }
+    this.retriever.remove(m.slug);
     this.regenerateIndex();
     return m;
   }

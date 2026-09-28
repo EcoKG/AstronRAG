@@ -1,12 +1,20 @@
 // RIF 비용 벤치 — 합성 볼트에서 구 RIF(쌍마다 재토큰화·전 후보 비교)와 신 RIF(사전 토큰·조기 종료)를 같은 입력으로 잰다.
 //
 // 사용:
-//   node scripts/bench-rif.mjs [--base <기준 dist 디렉터리>] [--count 950] [--rounds 5] [--seed 42]
+//   node scripts/bench-rif.mjs [--base <기준 dist 디렉터리>] [--count 950] [--rounds 5] [--seed 42] [--cold]
 //
 // 볼트는 %TEMP% 에 만들고 끝나면 지운다. 제목·본문·slug 는 전부 시드 고정 가짜 음절이다.
 // --base 를 주면 기준 dist 와 현재 dist 의 searchDetailed(limit 5) 끝단 시간·출력도 비교한다.
+// --cold 는 역색인을 만든 뒤 질의마다 새 프로세스를 rounds 번 띄워 콜드 질의를 잰다(p95 를 보려면 --rounds 20 이상).
+//   phases: node 기동·import·인덱스 적재·전체 stat 대조·검색(search+rank)을 단계별로 잰다.
+//     인덱스 적재 + 검색의 p95 가 100ms 를 넘으면 1 로 끝난다(기동·import·전체 stat 대조 제외).
+//   server(new Vault + searchDetailed)·hook(searchPersistedIndex)·base(--base 의 searchDetailed):
+//     import·질의, 프로세스 시작~질의 끝, 부모가 잰 spawn~종료 시간을 잰다.
+//   hookAllStale: 볼트를 fs.cpSync 로 복사해 모든 파일 신원이 바뀐 사본에서 hook 을 잰다(결과는 빈 목록이어야 한다).
+//   지표마다 p50·p95 를 낸다.
 // 시계는 고정하고 강화는 끈다. 구·신 출력이 하나라도 다르면 1 로 끝난다.
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -20,6 +28,8 @@ const NOW = Date.parse("2026-07-01T00:00:00.000Z");
 const DAY = 86_400_000;
 const LIMIT = 5;
 const CLUSTER = 10;
+/** 콜드 기준 — 새 프로세스에서 인덱스 적재 + 검색 p95 상한(ms) */
+const COLD_LIMIT_MS = 100;
 
 function die(msg, code = 2) {
 	console.error(`bench-rif: ${msg}`);
@@ -37,6 +47,7 @@ function readArgs(argv) {
 				count: { type: "string", default: "950" },
 				rounds: { type: "string", default: "5" },
 				seed: { type: "string", default: "42" },
+				cold: { type: "boolean", default: false },
 			},
 		}));
 	} catch (e) {
@@ -55,7 +66,7 @@ function readArgs(argv) {
 			if (!fs.existsSync(path.join(base, f))) die(`--base 디렉터리에 ${f} 가 없다: ${base}`);
 		}
 	}
-	return { base, count, rounds, seed };
+	return { base, count, rounds, seed, cold: values.cold };
 }
 
 /** 시드 고정 32비트 난수 생성기 (mulberry32) */
@@ -144,10 +155,15 @@ function buildVault(vault, count, rnd) {
 	];
 }
 
+/** 배열의 nearest-rank 백분위수 */
+function pctl(xs, p) {
+	const s = [...xs].sort((a, b) => a - b);
+	return s[Math.max(0, Math.ceil(p * s.length) - 1)];
+}
+
 /** 정렬된 배열의 중앙값(nearest-rank) */
 function p50(xs) {
-	const s = [...xs].sort((a, b) => a - b);
-	return s[Math.max(0, Math.ceil(0.5 * s.length) - 1)];
+	return pctl(xs, 0.5);
 }
 
 /** fn 을 rounds 번 돌린 시간(ms) 중앙값 — 매 회 prepare() 로 새 입력을 만들고 그 비용은 빼고 잰다 */
@@ -162,6 +178,72 @@ function time(rounds, prepare, fn) {
 	return { ms: p50(ms), out };
 }
 
+/** 콜드 측정 자식 프로세스 코드 — 단계별(phases) 또는 끝단(server·hook·base) 시간과 출력 JSON 을 한 줄로 낸다 */
+function coldCode(mode, dist, dir, query) {
+	const url = (f) => JSON.stringify(pathToFileURL(path.join(dist, f)).href);
+	const head = `import { statSync } from "node:fs";
+Date.now = () => ${NOW};
+const dir = ${JSON.stringify(dir)};
+const query = ${JSON.stringify(query)};
+const t0 = performance.now();`;
+	// 서버 경로를 단계로 나눠 잰다 — 인덱스 적재(readIndexFile+adopt)·전체 stat 대조·검색(search+rank) 순서도 서버와 같다
+	if (mode === "phases") {
+		return `${head}
+const { Vault } = await import(${url("vault.js")});
+const { parseQuery } = await import(${url("store.js")});
+const { LexicalRetriever } = await import(${url("retriever.js")});
+const { rank } = await import(${url("ranker.js")});
+const t1 = performance.now();
+const retriever = LexicalRetriever.openReadOnly(dir);
+const t2 = performance.now();
+const vault = new Vault(dir);
+for (const { slug, archived } of vault.listSlugs(true)) statSync(vault.filePath(slug, archived), { bigint: true });
+const t3 = performance.now();
+const q = parseQuery(query);
+const out = rank(retriever.search(q, Infinity, {}), q, { limit: ${LIMIT}, now: Date.now(), vault });
+const t4 = performance.now();
+process.stdout.write(JSON.stringify({ bootMs: t0, importMs: t1 - t0, loadMs: t2 - t1, statMs: t3 - t2, searchMs: t4 - t3, out: JSON.stringify(out) }));`;
+	}
+	const run =
+		mode === "hook"
+			? `const { searchPersistedIndex } = await import(${url("store.js")});
+const t1 = performance.now();
+const out = searchPersistedIndex(dir, query, { limit: ${LIMIT} });`
+			: `const { Vault } = await import(${url("vault.js")});
+const { MemoryStore } = await import(${url("store.js")});
+const t1 = performance.now();
+const store = new MemoryStore(new Vault(dir));
+store.reinforce = () => {};
+const out = store.searchDetailed(query, { limit: ${LIMIT} });`;
+	return `${head}
+${run}
+const t2 = performance.now();
+process.stdout.write(JSON.stringify({ importMs: t1 - t0, queryMs: t2 - t1, untilQueryEndMs: t2, out: JSON.stringify(out) }));`;
+}
+
+/** mode 의 콜드 질의를 새 프로세스로 rounds 번 돌려 지표마다 p50·p95 와 출력 일치 여부를 낸다 */
+function coldRun(mode, dist, dir, query, rounds, want) {
+	const code = coldCode(mode, dist, dir, query);
+	const runs = Array.from({ length: rounds }, () => {
+		const t0 = performance.now();
+		const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], { encoding: "utf8" });
+		const wallMs = performance.now() - t0;
+		if (r.status !== 0) die(`콜드 ${mode} 자식 실패(status ${r.status}): ${r.stderr.slice(0, 400)}`, 1);
+		const x = JSON.parse(r.stdout);
+		const sums =
+			mode === "phases"
+				? { loadSearchMs: x.loadMs + x.searchMs, totalMs: x.bootMs + x.importMs + x.loadMs + x.statMs + x.searchMs }
+				: {};
+		return { ...x, ...sums, wallMs };
+	});
+	const metrics = Object.keys(runs[0]).filter((k) => k !== "out");
+	const stat = (k) => {
+		const xs = runs.map((x) => x[k]);
+		return { p50: pctl(xs, 0.5), p95: pctl(xs, 0.95) };
+	};
+	return { ms: Object.fromEntries(metrics.map((k) => [k, stat(k)])), identical: runs.every((x) => x.out === want) };
+}
+
 const opts = readArgs(process.argv.slice(2));
 
 // 사용자 동의어 사전은 모듈 로드 시 병합되므로 import 전에 지운다
@@ -170,7 +252,7 @@ const distUrl = (f) => pathToFileURL(path.join(root, "dist", f)).href;
 if (!fs.existsSync(path.join(root, "dist", "ranker.js"))) die("dist/ranker.js 가 없다 — 먼저 npm run build", 1);
 const { Vault } = await import(distUrl("vault.js"));
 const { MemoryStore, parseQuery } = await import(distUrl("store.js"));
-const { LexicalRetriever, overlap, tokenize } = await import(distUrl("retriever.js"));
+const { LexicalRetriever, overlap, tokenize, INDEX_DIR, INDEX_FILE } = await import(distUrl("retriever.js"));
 const { finish, inhibit, RIF_THRESHOLD } = await import(distUrl("ranker.js"));
 
 /** 조기 종료 전 RIF — 쌍마다 제목+설명을 다시 토큰화하고 각 후보를 앞선 모든 후보와 비교한다 */
@@ -200,6 +282,7 @@ function legacyInhibit(scored, limit, counter) {
 
 const realNow = Date.now;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-rif-bench-"));
+const staleDir = `${dir}-copy`;
 let allIdentical = true;
 try {
 	Date.now = () => NOW;
@@ -267,6 +350,39 @@ try {
 		});
 	}
 
+	let cold;
+	if (opts.cold) {
+		const quiet = new MemoryStore(new Vault(dir));
+		quiet.reinforce = () => {};
+		quiet.searchDetailed(queries[0].query, { limit: LIMIT }); // 역색인을 최신으로 만든다
+		const indexFile = path.join(dir, INDEX_DIR, INDEX_FILE);
+		if (!fs.existsSync(indexFile)) die(`역색인이 만들어지지 않았다: ${indexFile}`, 1);
+		const before = fs.statSync(indexFile, { bigint: true });
+		fs.cpSync(dir, staleDir, { recursive: true });
+		const dist = path.join(root, "dist");
+		const runs = queries.map(({ label, query }) => {
+			const want = JSON.stringify(quiet.searchDetailed(query, { limit: LIMIT }));
+			const wantHook = JSON.stringify(quiet.searchDetailed(query, { limit: LIMIT, includeLinked: false }));
+			const row = {
+				label,
+				phases: coldRun("phases", dist, dir, query, opts.rounds, want),
+				server: coldRun("server", dist, dir, query, opts.rounds, want),
+				hook: coldRun("hook", dist, dir, query, opts.rounds, wantHook),
+				hookAllStale: coldRun("hook", dist, staleDir, query, opts.rounds, JSON.stringify({ results: [], totalMatched: 0 })),
+				base: opts.base ? coldRun("base", opts.base, dir, query, opts.rounds, want) : undefined,
+			};
+			if (![row.phases, row.server, row.hook, row.hookAllStale, row.base].every((m) => !m || m.identical)) allIdentical = false;
+			return row;
+		});
+		const after = fs.statSync(indexFile, { bigint: true });
+		// 볼트가 그대로면 콜드 질의는 인덱스를 다시 쓰지 않아야 한다
+		const indexUntouched = before.ino === after.ino && before.mtimeNs === after.mtimeNs && before.size === after.size;
+		if (!indexUntouched) allIdentical = false;
+		const worstP95 = Math.max(...runs.map((r) => r.phases.ms.loadSearchMs.p95));
+		const criterion = { metric: "phases.ms.loadSearchMs p95 (인덱스 적재 + 검색)", limitMs: COLD_LIMIT_MS, worstP95, ok: worstP95 <= COLD_LIMIT_MS };
+		cold = { rounds: opts.rounds, criterion, runs, indexBytes: Number(after.size), indexUntouched };
+	}
+
 	const result = {
 		count: opts.count,
 		cluster: CLUSTER,
@@ -276,11 +392,13 @@ try {
 		node: process.version,
 		rif,
 		e2e: e2e ?? "생략(--base 없음)",
+		cold: cold ?? "생략(--cold 없음)",
 		identical: allIdentical,
 	};
 	process.stdout.write(JSON.stringify(result, null, 2) + "\n");
-	if (!allIdentical) process.exitCode = 1;
+	if (!allIdentical || (cold && !cold.criterion.ok)) process.exitCode = 1;
 } finally {
 	Date.now = realNow;
 	fs.rmSync(dir, { recursive: true, force: true });
+	fs.rmSync(staleDir, { recursive: true, force: true });
 }

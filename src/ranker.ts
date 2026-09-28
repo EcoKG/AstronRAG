@@ -177,13 +177,13 @@ export function inhibit(scored: Scored[], limit: number): SearchResult[] {
 	return results.slice(0, limit);
 }
 
-/** 순위화 옵션 — 컷오프, 기준 시각, 연상 확산 여부와 스코프, 연상 이웃을 찾을 볼트 */
+/** 순위화 옵션 — 컷오프, 기준 시각, 연상 확산 여부와 스코프, 연상 이웃을 찾을 볼트(없으면 연상 확산을 하지 않는다) */
 export interface RankOptions {
 	limit: number;
 	now: number;
 	includeLinked?: boolean;
 	project?: string;
-	vault: Vault;
+	vault?: Vault;
 }
 
 /** 후보를 가중·정렬하고 RIF 와 연상 확산을 적용해 회상 결과를 만든다 (강화는 하지 않는다) */
@@ -197,13 +197,14 @@ export function rank(cands: Candidate[], q: ParsedQuery, opts: RankOptions): Sea
 	let results = inhibit(scored, limit);
 
 	// 연상: 상위 결과의 링크 1-hop 이웃 (P: 확산활성 근사)
-	if (opts.includeLinked !== false) {
+	const vault = opts.vault;
+	if (opts.includeLinked !== false && vault) {
 		const have = new Set(results.map((r) => r.record.slug));
 		const assoc: SearchResult[] = [];
 		for (const r of results.slice(0, 3)) {
 			for (const linkSlug of r.record.links) {
 				if (have.has(linkSlug)) continue;
-				const found = opts.vault.find(linkSlug);
+				const found = vault.find(linkSlug);
 				// 연상으로도 스코프 밖 기억이 새어 들어오면 안 된다
 				if (found && found.record.status === "active" && inScope(found.record, opts.project)) {
 					have.add(linkSlug);
