@@ -10,7 +10,7 @@
 //
 // 라이브 볼트는 건드리지 않는다 — 전부 os.tmpdir() 임시 볼트.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,6 +21,7 @@ const root = path.resolve(here, "..");
 const distUrl = (f) => `file://${path.join(root, "dist", f).replace(/\\/g, "/")}`;
 const { Vault } = await import(distUrl("vault.js"));
 const { MemoryStore } = await import(distUrl("store.js"));
+const { SqliteStore } = await import(distUrl("stores/sqlite-store.js"));
 
 let failures = 0;
 function check(name, cond, detail = "") {
@@ -31,9 +32,11 @@ function check(name, cond, detail = "") {
   }
 }
 
-const cleanups = [];
+const cleanups = /** @type {string[]} */ (Array());
+const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+fs.mkdirSync(testTmp, { recursive: true });
 function freshDir() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-race-"));
+  const d = fs.mkdtempSync(path.join(testTmp, "bbm-race-"));
   cleanups.push(d);
   return d;
 }
@@ -51,6 +54,16 @@ function openGate(dir, slug) {
 function diskAccessCount(dir, slug) {
   const fp = fs.existsSync(memPath(dir, slug)) ? memPath(dir, slug) : arcPath(dir, slug);
   return Number(/access_count: (\d+)/.exec(fs.readFileSync(fp, "utf-8"))?.[1] ?? -1);
+}
+
+function storedAccessCount(kind, dir, slug) {
+  if (kind === "file") return diskAccessCount(dir, slug);
+  const store = new SqliteStore(dir);
+  try {
+    return store.read(slug)?.accessCount ?? -1;
+  } finally {
+    store.close();
+  }
 }
 
 /**
@@ -132,6 +145,7 @@ console.log("3) 강화 실패는 best-effort — 회상은 계속된다");
   seed.remember({ title: "베스트에포트", content: "오스카 파파 회상되어야 한다.", type: "semantic" });
 
   const origRename = fs.renameSync;
+  /** @type {any[] | null} */
   let results = null;
   let readOk = null;
   try {
@@ -146,7 +160,7 @@ console.log("3) 강화 실패는 best-effort — 회상은 계속된다");
   } finally {
     fs.renameSync = origRename;
   }
-  check("쓰기 실패에도 search 가 결과를 반환", (results ?? []).length === 1, `len=${results?.length}`);
+  check("쓰기 실패에도 search 가 결과를 반환", Number(Object(results).length) === 1, `len=${Object(results).length}`);
   check("쓰기 실패에도 read_memory 가 동작", readOk !== null);
 }
 
@@ -154,16 +168,28 @@ console.log("3) 강화 실패는 best-effort — 회상은 계속된다");
 console.log("4) 2프로세스 동시 recall — 강화 소실률 (A4)");
 {
   const dir = freshDir();
-  const seed = new MemoryStore(new Vault(dir));
+  const kind = process.env.BBM_STORE === "file" ? "file" : "sqlite";
+  const backend = kind === "file" ? new Vault(dir) : new SqliteStore(dir);
+  const seed = new MemoryStore(backend);
   const rec = seed.remember({ title: "경합 카운터", content: "퀘벡 로미오 경합 대상.", type: "semantic" }).record;
-  // 부모 쪽 store.read 는 부수효과가 있으므로 파일에서 직접 읽는다
-  const baseline = diskAccessCount(dir, rec.slug);
+  if (kind === "sqlite") backend.close();
+  const baseline = storedAccessCount(kind, dir, rec.slug);
 
   const N = 300;
   const child = path.join(dir, "child.mjs");
   fs.writeFileSync(
     child,
-    `import { Vault } from ${JSON.stringify(distUrl("vault.js"))};
+    kind === "sqlite"
+      ? `import { SqliteStore } from ${JSON.stringify(distUrl("stores/sqlite-store.js"))};
+import { MemoryStore } from ${JSON.stringify(distUrl("store.js"))};
+const backend = new SqliteStore(process.argv[2]);
+const s = new MemoryStore(backend);
+let noResult = 0;
+for (let i = 0; i < ${N}; i++) if (s.search("퀘벡").length === 0) noResult++;
+backend.appendUsageEvent({ tool: "concurrency_reinforcement_summary", ok: noResult === 0, reason: noResult === 0 ? "applied" : "no_result", count: noResult });
+backend.close();
+`
+      : `import { Vault } from ${JSON.stringify(distUrl("vault.js"))};
 import { MemoryStore } from ${JSON.stringify(distUrl("store.js"))};
 const s = new MemoryStore(new Vault(process.argv[2]));
 for (let i = 0; i < ${N}; i++) s.search("퀘벡");
@@ -172,19 +198,87 @@ for (let i = 0; i < ${N}; i++) s.search("퀘벡");
   );
 
   const t0 = Date.now();
-  const kids = [0, 1].map(() =>
-    spawnSync(process.execPath, [child, dir], { encoding: "utf-8", env: { ...process.env, BIGBRAIN_SPACING_MS: "0" } }),
-  );
+  const childEnv = {
+    ...process.env,
+    BIGBRAIN_SPACING_MS: "0",
+    ...(kind === "sqlite" ? { BIGBRAIN_FLUSH_EVERY_ACCESS: "1" } : {}),
+  };
+  const kids = kind === "sqlite"
+    ? await Promise.all([0, 1].map(() => new Promise((resolve) => {
+      const childProcess = spawn(process.execPath, [child, dir], { env: childEnv });
+      let stderr = "";
+      childProcess.stderr.on("data", (chunk) => { stderr += chunk; });
+      childProcess.on("close", (status) => resolve({ status, stderr }));
+    })))
+    : [0, 1].map(() => spawnSync(process.execPath, [child, dir], { encoding: "utf-8", env: childEnv }));
   const elapsed = Date.now() - t0;
-  check("자식 프로세스 2개 정상 종료", kids.every((k) => k.status === 0), kids.map((k) => k.stderr?.slice(0, 200)).join(" | "));
+  check("자식 프로세스 2개 정상 종료", kids.every((k) => Object(k).status === 0), kids.map((k) => Object(k).stderr?.slice(0, 200)).join(" | "));
 
-  const final = diskAccessCount(dir, rec.slug);
+  const final = storedAccessCount(kind, dir, rec.slug);
   const expected = baseline + 2 * N;
   const lost = expected - final;
   const lossRate = (lost / (2 * N)) * 100;
-  console.log(`    기대 ${expected} / 실측 ${final} / 소실 ${lost} (${lossRate.toFixed(1)}%, ${elapsed}ms)`);
-  check(`강화 소실률 < 5% (실측 ${lossRate.toFixed(1)}%)`, lossRate < 5, `lost=${lost}/${2 * N}`);
-  check("파일이 손상되지 않음", new MemoryStore(new Vault(dir)).read(rec.slug) !== null);
+  const failureEvents = kind === "sqlite" ? new SqliteStore(dir) : null;
+  const reasons = failureEvents
+    ? failureEvents.readUsageEvents().filter((event) => event.tool === "reinforcement_unapplied" || event.tool === "concurrency_reinforcement_summary")
+    : [];
+  failureEvents?.close();
+  const unapplied = reasons.filter((event) => event.tool === "reinforcement_unapplied").length
+    + reasons.reduce((sum, event) => sum + (event.reason === "no_result" ? Number(event.count ?? 0) : 0), 0);
+  const reasonCounts = reasons.reduce((counts, event) => {
+    const reason = String(event.reason ?? "other");
+    counts[reason] = (counts[reason] ?? 0) + (event.tool === "concurrency_reinforcement_summary" ? Number(event.count ?? 0) : 1);
+    return counts;
+  }, {});
+  if (kind === "sqlite" && lost > unapplied) reasonCounts.gate_not_flushed = lost - unapplied;
+  console.log(`    ${kind} 기대 ${expected} / 실측 ${final} / 소실 ${lost} (${lossRate.toFixed(1)}%, ${elapsed}ms)`);
+  if (kind === "sqlite") console.log(`    미반영 ${unapplied} / 사유 ${JSON.stringify(reasonCounts)}`);
+  check(kind === "sqlite" ? "SQLite 강화 소실 0" : `FileStore 강화 소실률 < 5% (실측 ${lossRate.toFixed(1)}%)`, kind === "sqlite" ? lost === 0 : lossRate < 5, `lost=${lost}/${2 * N}`);
+  if (kind === "sqlite") check("SQLite 강화 미반영 카운트 0", unapplied === 0, JSON.stringify(reasonCounts));
+  check("저장소가 손상되지 않음", final >= 0);
+}
+
+console.log("4-1) SQLite 간격 게이트 원자 판정");
+{
+  const dir = freshDir();
+  const backend = new SqliteStore(dir);
+  const seed = new MemoryStore(backend);
+  const rec = seed.remember({ title: "간격 게이트", content: "시에라 탱고 원자 강화 대상.", type: "semantic" }).record;
+  backend.updateRecord(rec.slug, (current) => ({
+    ...current,
+    storageStrength: 2,
+    lastReinforced: "2000-01-01T00:00:00.000Z",
+  }));
+  backend.close();
+
+  const child = path.join(dir, "spacing-child.mjs");
+  fs.writeFileSync(child, `import fs from "node:fs";
+import path from "node:path";
+import { SqliteStore } from ${JSON.stringify(distUrl("stores/sqlite-store.js"))};
+import { MemoryStore } from ${JSON.stringify(distUrl("store.js"))};
+const dir = process.argv[2];
+const worker = process.argv[3];
+const backend = new SqliteStore(dir);
+const original = backend.updateRecord.bind(backend);
+backend.updateRecord = (slug, update) => {
+  fs.writeFileSync(path.join(dir, "ready-" + worker), "ready");
+  const deadline = Date.now() + 10000;
+  while ((!fs.existsSync(path.join(dir, "ready-0")) || !fs.existsSync(path.join(dir, "ready-1"))) && Date.now() < deadline) {}
+  return original(slug, update);
+};
+new MemoryStore(backend).search("시에라 탱고", { active: true });
+backend.close();
+`, "utf-8");
+  const outcomes = await Promise.all([0, 1].map((worker) => new Promise((resolve) => {
+    const childProcess = spawn(process.execPath, [child, dir, String(worker)], { env: { ...process.env, BIGBRAIN_SPACING_MS: "600000" } });
+    let stderr = "";
+    childProcess.stderr.on("data", (chunk) => { stderr += chunk; });
+    childProcess.on("close", (status) => resolve({ status, stderr }));
+  })));
+  const resultStore = new SqliteStore(dir);
+  const result = resultStore.read(rec.slug);
+  resultStore.close();
+  check("test_sqlite_spacing_gate_is_atomic_across_processes", outcomes.every((outcome) => Object(outcome).status === 0) && result?.storageStrength === 3, `strength=${result?.storageStrength} outcomes=${JSON.stringify(outcomes)}`);
 }
 
 // ── 5. 동시 동일 제목 remember — 무흔적 소실 없음 (A5)
@@ -198,6 +292,7 @@ console.log("5) 동시 동일 제목 remember (A5)");
   // A 가 slug 후보를 정한 직후·파일 생성 전에 B 가 같은 제목으로 완주하도록 창을 연다
   const origMakeSlug = vaultA.makeSlug.bind(vaultA);
   let fired = false;
+  /** @type {any} */
   let bRec = null;
   vaultA.makeSlug = (title) => {
     const s = origMakeSlug(title);
@@ -210,7 +305,7 @@ console.log("5) 동시 동일 제목 remember (A5)");
   const aRec = storeA.remember({ title: "동시성 데모 제목", content: "A 의 본문 MARKER-AAA.", type: "semantic" }).record;
 
   check("경쟁 창이 실제로 열렸음(전제 확인)", fired);
-  check("두 기억이 서로 다른 slug 를 받음", aRec.slug !== bRec.slug, `a=${aRec.slug} b=${bRec.slug}`);
+  check("두 기억이 서로 다른 slug 를 받음", aRec.slug !== Object(bRec).slug, `a=${aRec.slug} b=${Object(bRec).slug}`);
 
   const files = fs.readdirSync(path.join(dir, "memories")).filter((f) => f.endsWith(".md"));
   check("파일 2개 모두 존재", files.length === 2, files.join(","));
@@ -221,9 +316,9 @@ console.log("5) 동시 동일 제목 remember (A5)");
 
   const s = new MemoryStore(new Vault(dir));
   check("A 를 id 로 조회 가능", s.resolve(aRec.id)?.record?.id === aRec.id);
-  check("B 를 id 로 조회 가능", s.resolve(bRec.id)?.record?.id === bRec.id);
+  check("B 를 id 로 조회 가능", s.resolve(Object(bRec).id)?.record?.id === Object(bRec).id);
   check("A 를 반환된 slug 로 조회 가능", s.resolve(aRec.slug)?.record?.id === aRec.id);
-  check("B 를 반환된 slug 로 조회 가능", s.resolve(bRec.slug)?.record?.id === bRec.id);
+  check("B 를 반환된 slug 로 조회 가능", s.resolve(Object(bRec).slug)?.record?.id === Object(bRec).id);
 }
 
 // ── 6. slug 충돌 시에도 supersede 역참조가 실제 파일을 가리킨다
@@ -259,6 +354,34 @@ console.log("6) slug 충돌 + supersede 정합성");
   check("구 기억에 superseded_by 기록됨", !!m, oldAfter.slice(0, 200));
   check("superseded_by 가 최종 slug 와 일치", m?.[1] === neo.slug, `by=${m?.[1]} final=${neo.slug}`);
   check("superseded_by 가 실제 존재하는 파일을 가리킴", fs.existsSync(memPath(dir, m?.[1] ?? "")));
+}
+
+// ── 7. SQLite 실제 병렬 다중 프로세스 쓰기
+console.log("7) SQLite 실제 병렬 다중 프로세스 쓰기");
+{
+  const dir = freshDir();
+  new SqliteStore(dir).close();
+  const childCode = `
+import { SqliteStore } from ${JSON.stringify(distUrl("stores/sqlite-store.js"))};
+const [dir, worker] = process.argv.slice(1);
+const store = new SqliteStore(dir);
+for (let n = 0; n < 20; n++) {
+  const now = "2026-01-02T03:04:05.000Z";
+  store.createNew({ id: "mem-" + worker + "-" + n, slug: "worker-" + worker + "-" + n, title: "worker", description: "worker", type: "semantic", tags: [], confidence: 0.8, storageStrength: 1, status: "active", created: now, updated: now, lastAccessed: now, lastReinforced: now, accessCount: 0, links: [], history: [], body: "worker" });
+}
+store.close();
+`;
+  /** @type {{ code: number | null, stderr: string }[]} */
+  const outcomes = await Promise.all(Array.from({ length: 4 }, (_, worker) => new Promise((resolve) => {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", childCode, dir, String(worker)]);
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (code) => resolve({ code, stderr }));
+  })));
+  const store = new SqliteStore(dir);
+  check("test_sqlite_multi_process_writes_without_loss_or_busy", outcomes.every((outcome) => Object(outcome).code === 0 && !/SQLITE_BUSY/.test(Object(outcome).stderr)) && store.listSlugs(true).length === 80, JSON.stringify(outcomes));
+  check("test_sqlite_integrity_after_concurrent_writes", store.integrityCheck() === "ok", store.integrityCheck());
+  store.close();
 }
 
 for (const d of cleanups) fs.rmSync(d, { recursive: true, force: true });

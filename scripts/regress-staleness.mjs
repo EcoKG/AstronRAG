@@ -31,7 +31,7 @@ function check(name, cond, detail = "") {
   }
 }
 
-const cleanups = [];
+const cleanups = /** @type {string[]} */ (Array());
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-stale-"));
 cleanups.push(dir);
 
@@ -51,7 +51,7 @@ async function withClient(fn) {
     command: process.execPath,
     args: [entry],
     cwd: root,
-    env: { ...process.env, BIGBRAIN_VAULT: dir },
+    env: { ...process.env, BIGBRAIN_VAULT: dir, BBM_STORE: "file" },
   });
   const client = new Client({ name: "regress-staleness", version: "0.0.1" });
   await client.connect(transport);
@@ -111,7 +111,7 @@ console.log("3) BIGBRAIN_STALE_DAYS 임계 조정");
       command: process.execPath,
       args: [entry],
       cwd: root,
-      env: { ...process.env, BIGBRAIN_VAULT: dir, BIGBRAIN_STALE_DAYS: String(days) },
+      env: { ...process.env, BIGBRAIN_VAULT: dir, BBM_STORE: "file", BIGBRAIN_STALE_DAYS: String(days) },
     });
     const client = new Client({ name: "regress-staleness", version: "0.0.1" });
     await client.connect(transport);

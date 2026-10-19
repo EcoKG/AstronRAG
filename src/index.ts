@@ -6,11 +6,11 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { Vault } from "./vault.js";
-import { MAX_ALT_QUERIES, MemoryStore, isStale, reviewOverdue } from "./store.js";
+import { createMemoryStore, requiresVaultMigration } from "./stores/index.js";
+import { MAX_ALT_QUERIES, MemoryService, isStale, reviewOverdue } from "./store.js";
 import { initUsageLog, logUsage, queryField } from "./usage.js";
 import { logError, logInfo, logWarn } from "./log.js";
-import { INDEX_DIR, type ScopeFilter } from "./retriever.js";
+import { type ScopeFilter } from "./retriever.js";
 import type { MemoryRecord, SearchResult } from "./types.js";
 import type { VectorRetriever } from "./vector-retriever.js";
 import { ontologySchema } from "./ontology.js";
@@ -46,9 +46,11 @@ const vaultDir = process.env.BIGBRAIN_VAULT
   ? path.resolve(process.env.BIGBRAIN_VAULT)
   : path.resolve(here, "..", "vault");
 
-const vault = new Vault(vaultDir);
-const store = new MemoryStore(vault);
-initUsageLog(vaultDir);
+const vault = createMemoryStore(vaultDir);
+const store = new MemoryService(vault);
+const MIGRATION_REQUIRED = requiresVaultMigration(vault);
+const MIGRATION_REQUIRED_MESSAGE = "이관 필요: migrate 도구 실행 또는 BBM_STORE=file 로 되돌리기";
+initUsageLog(vault);
 
 /**
  * 볼트가 "지정됐는데 비어 있고 마커도 없는" 상태면 경로 오타/드라이브 이동을 의심한다 (감사 E3).
@@ -454,6 +456,10 @@ function fail(message: string) {
   return { content: [{ type: "text" as const, text: message }], isError: true as const };
 }
 
+function migrationGuard() {
+  return MIGRATION_REQUIRED ? fail(MIGRATION_REQUIRED_MESSAGE) : null;
+}
+
 /**
  * `remember` / `recall` 을 **지연 로드에서 제외**시키는 표식.
  *
@@ -537,6 +543,8 @@ server.registerTool(
     },
   },
   async (args) => {
+    const guard = migrationGuard();
+    if (guard) return guard;
     const secret = findSecret(args.title, args.description, args.content);
     if (secret) {
       logUsage({ tool: "remember", ok: false, secretBlocked: secret });
@@ -620,6 +628,8 @@ server.registerTool(
     },
   },
   async ({ query, alt_queries, type, limit, include_linked, project }) => {
+    const guard = migrationGuard();
+    if (guard) return guard;
     const scope = project === undefined ? DEFAULT_PROJECT : project || undefined;
     const { results, totalMatched } = store.searchDetailed(query, {
       type,
@@ -681,6 +691,8 @@ server.registerTool(
     inputSchema: { id: z.string().describe("Memory slug or id") },
   },
   async ({ id }) => {
+    const guard = migrationGuard();
+    if (guard) return guard;
     const m = store.read(id);
     logUsage({ tool: "read_memory", ok: m !== null });
     if (!m) return fail(`Memory not found: ${id}`);
@@ -719,6 +731,8 @@ server.registerTool(
     },
   },
   async ({ id, reason, content, title, description, tags, confidence, source, project, type, review_after }) => {
+    const guard = migrationGuard();
+    if (guard) return guard;
     const secret = findSecret(title, description, content);
     if (secret) {
       logUsage({ tool: "revise", ok: false, secretBlocked: secret });
@@ -762,6 +776,8 @@ server.registerTool(
     },
   },
   async ({ id, reason }) => {
+    const guard = migrationGuard();
+    if (guard) return guard;
     const m = store.forget(id, reason);
     logUsage({ tool: "forget", ok: m !== null });
     if (!m) return fail(`Memory not found: ${id}`);
@@ -783,6 +799,8 @@ server.registerTool(
     },
   },
   async ({ source, target, relation }) => {
+    const guard = migrationGuard();
+    if (guard) return guard;
     const linked = store.link(source, target, relation);
     logUsage({ tool: "link", ok: linked !== null, hasRelation: relation !== undefined });
     if (!linked) return fail(`Could not link: one of [${source}, ${target}] not found, or they are the same memory.`);
@@ -800,6 +818,8 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
+    const guard = migrationGuard();
+    if (guard) return guard;
     const r = store.reflect();
     logUsage({
       tool: "reflect",
@@ -851,6 +871,8 @@ server.registerTool(
     },
   },
   async ({ type, status, project }) => {
+    const guard = migrationGuard();
+    if (guard) return guard;
     const scope = project === undefined ? DEFAULT_PROJECT : project || undefined;
     const items = store.list({ type, status, project: scope });
     logUsage({ tool: "list_memories", ok: true, resultCount: items.length, scoped: project !== undefined });
@@ -938,21 +960,25 @@ async function main() {
   // 인덱스 재생성 실패가 서버 기동을 막아서는 안 된다(감사 A1: 손상 파일 1개로
   // process.exit(1) → 8개 도구 전부 사용 불능). MEMORY.md 는 파생 파일이고
   // 기억 조회 자체는 인덱스 없이도 동작한다.
-  try {
-    store.regenerateIndex();
-  } catch (err) {
-    logWarn(`인덱스 재생성 실패(계속 진행): ${err instanceof Error ? err.message : String(err)}`);
+  if (!MIGRATION_REQUIRED) {
+    try {
+      store.regenerateIndex();
+    } catch (err) {
+      logWarn(`인덱스 재생성 실패(계속 진행): ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
   // 영속 역색인을 기동 시 볼트와 맞춘다 — 훅의 읽기 전용 회상이 최신 인덱스를 보게 한다
-  try {
-    store.retriever.sync(vault);
-  } catch (err) {
-    logWarn(`역색인 동기화 실패(계속 진행): ${err instanceof Error ? err.message : String(err)}`);
+  if (!MIGRATION_REQUIRED) {
+    try {
+      store.retriever.sync(vault);
+    } catch (err) {
+      logWarn(`역색인 동기화 실패(계속 진행): ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
   // 벡터 계층은 켰을 때만 불러온다 — 연결 전에 만들어 두어 첫 recall 부터 상태(warming)를 알린다
   if (process.env.BIGBRAIN_VECTOR === "1") {
     const mod = await import("./vector-retriever.js");
-    vector = { vr: new mod.VectorRetriever(vault.nativeMemoryFiles.length > 0 ? null : path.join(vaultDir, INDEX_DIR)), mod };
+    vector = { vr: new mod.VectorRetriever(vault.nativeMemoryFiles.length > 0 ? null : vault), mod };
   }
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -987,5 +1013,8 @@ async function main() {
 
 main().catch((err) => {
   logError("fatal", err);
+  vault.close();
   process.exit(1);
 });
+
+process.once("exit", () => vault.close());

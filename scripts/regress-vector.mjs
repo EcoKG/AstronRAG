@@ -86,9 +86,11 @@ function check(name, cond, detail = "") {
 }
 
 const temps = new Array();
+const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+fs.mkdirSync(testTmp, { recursive: true });
 /** %TEMP% 아래 새 디렉터리 (끝나면 지운다) */
 function tempDir(tag) {
-	const d = fs.mkdtempSync(path.join(os.tmpdir(), `bbm-vector-${tag}-`));
+	const d = fs.mkdtempSync(path.join(testTmp, `bbm-vector-${tag}-`));
 	temps.push(d);
 	return d;
 }
@@ -154,7 +156,7 @@ async function serverRecall({ entryFile = entry, vault = "", env = {}, preload =
 		command: process.execPath,
 		args: [...(preload ? ["--import", preload] : []), entryFile],
 		cwd: path.dirname(path.dirname(entryFile)),
-		env: { ...process.env, BIGBRAIN_VAULT: vault, ...env },
+		env: { ...process.env, BIGBRAIN_VAULT: vault, BBM_STORE: "file", ...env },
 		stderr: "pipe",
 	});
 	const client = new Client({ name: "regress-vector", version: "0.0.1" });
@@ -417,7 +419,7 @@ async function defaultChecks() {
 			input: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "V6", prompt: "Postgres connection pool 설정을 알려줘" }),
 			encoding: "utf-8",
 			timeout: 15000,
-			env: { ...process.env, USERPROFILE: home, HOME: home, BIGBRAIN_AUTO_RECALL: "1", BIGBRAIN_VECTOR: "1" },
+			env: { ...process.env, USERPROFILE: home, HOME: home, BIGBRAIN_AUTO_RECALL: "1", BIGBRAIN_VECTOR: "1", BBM_STORE: "file" },
 		});
 		const resolved = fs.existsSync(log) ? JSON.parse(fs.readFileSync(log, "utf-8")) : [];
 		check("훅이 dist/store.js 를 불러왔다(시험이 공허하지 않음)", resolved.some((x) => x.includes("dist/store.js")), `status=${r.status} ${JSON.stringify(resolved).slice(0, 300)}`);

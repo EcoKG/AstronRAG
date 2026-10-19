@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import type { MemoryStore as Storage } from "./stores/memory-store.js";
 
 /**
  * 사용 계측 — append-only JSONL 로그 (T33).
@@ -41,9 +42,16 @@ export type UsageEvent = {
 };
 
 let logPath: string | null = null;
+let storage: Storage | null = null;
 
-export function initUsageLog(vaultDir: string): void {
-  logPath = path.join(vaultDir, ".bbm-usage.jsonl");
+export function initUsageLog(target: string | Storage): void {
+  if (typeof target === "string") {
+    storage = null;
+    logPath = path.join(target, ".bbm-usage.jsonl");
+    return;
+  }
+  storage = target;
+  logPath = null;
 }
 
 /** 질의문은 기본적으로 길이만 남긴다 (내용 비기록 원칙) */
@@ -53,16 +61,21 @@ export function queryField(q: string | undefined): Record<string, unknown> {
 }
 
 export function logUsage(event: UsageEvent): void {
-  if (DISABLED || !logPath) return;
+  if (DISABLED || (!storage && !logPath)) return;
   try {
-    // 크기 상한 — 넘으면 한 번만 굴린다. 두 세대 이상 보관하지 않는다(계측용 로그다)
+    const row = { ts: new Date().toISOString(), pid: PROCESS_ID, ...event };
+    if (storage) {
+      storage.appendUsageEvent(row);
+      return;
+    }
+    if (!logPath) return;
     try {
       if (fs.statSync(logPath).size > MAX_BYTES) fs.renameSync(logPath, `${logPath}.old`);
     } catch {
-      /* 파일이 없거나 rename 실패 — 그냥 이어서 쓴다 */
+      /* 파일이 없거나 rename 실패 시 다음 append가 처리한다. */
     }
-    fs.appendFileSync(logPath, `${JSON.stringify({ ts: new Date().toISOString(), pid: PROCESS_ID, ...event })}\n`, "utf-8");
+    fs.appendFileSync(logPath, `${JSON.stringify(row)}\n`, "utf-8");
   } catch {
-    /* 계측은 best-effort — 실패해도 조용히 넘어간다 */
+    /* 사용량 계측은 기억 동작을 막지 않는다. */
   }
 }

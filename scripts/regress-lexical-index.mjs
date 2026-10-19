@@ -205,7 +205,7 @@ try {
 		const boot = freshDir();
 		new Vault(boot).write(record("b-one", { title: "boot fig" }));
 		const r = spawnSync(process.execPath, [path.join(root, "dist", "index.js")], {
-			env: { ...process.env, BIGBRAIN_VAULT: boot, BIGBRAIN_HOOK_CHECK: "0" },
+			env: { ...process.env, BIGBRAIN_VAULT: boot, BBM_STORE: "file", BIGBRAIN_HOOK_CHECK: "0" },
 			input: "",
 			encoding: "utf8",
 			timeout: 30_000,

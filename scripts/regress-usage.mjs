@@ -19,6 +19,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createMemoryStore } from "../dist/stores/index.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -36,20 +37,21 @@ function check(name, cond, detail = "") {
 
 /** 시험이 끝나면 지울 임시 볼트 경로 목록 */
 const cleanups = new Array();
+const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+fs.mkdirSync(testTmp, { recursive: true });
 const freshDir = (tag) => {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), `bbm-use-${tag}-`));
+  const d = fs.mkdtempSync(path.join(testTmp, `bbm-use-${tag}-`));
   cleanups.push(d);
   return d;
 };
 const readLog = (v) => {
+  const store = createMemoryStore(v, fs.existsSync(path.join(v, ".bbm-usage.jsonl")) ? { BBM_STORE: "file" } : process.env);
   try {
-    return fs
-      .readFileSync(path.join(v, ".bbm-usage.jsonl"), "utf-8")
-      .split("\n")
-      .filter((l) => l.trim() !== "")
-      .map((l) => JSON.parse(l));
+    return store.readUsageEvents();
   } catch {
     return [];
+  } finally {
+    store.close();
   }
 };
 
@@ -73,7 +75,7 @@ const startEvent = (o = {}) => JSON.stringify({ hook_event_name: "SessionStart",
 const stopEvent = (o = {}) => JSON.stringify({ hook_event_name: "Stop", ...o });
 const runGuard = (args, cwd, input) => {
   try {
-    return execFileSync(process.execPath, [guard, ...args], { cwd, encoding: "utf-8", timeout: 15000, input });
+    return execFileSync(process.execPath, [guard, ...args], { cwd, encoding: "utf-8", timeout: 15000, input, env: { ...process.env, BBM_STORE: "file" } });
   } catch (err) {
     return err.stdout ?? "";
   }
@@ -117,7 +119,7 @@ console.log("2) 내용 비기록");
     await call("remember", { title: SECRET_TITLE, description: "설명", content: SECRET_BODY, type: "semantic" });
     await call("recall", { query: SECRET_QUERY });
   });
-  const raw = fs.readFileSync(path.join(v, ".bbm-usage.jsonl"), "utf-8");
+  const raw = JSON.stringify(readLog(v));
   check("제목이 로그에 없음", !raw.includes(SECRET_TITLE), raw.slice(0, 300));
   check("본문이 로그에 없음", !raw.includes(SECRET_BODY), raw.slice(0, 300));
   check("질의문이 로그에 없음", !raw.includes(SECRET_QUERY), raw.slice(0, 300));
@@ -143,7 +145,7 @@ console.log("2-1) 그림자 로그");
     await call("recall", { query: `${SECRET_QUERY} 배포` });
     await call("recall", { query: "절대로없는키워드zzz" });
   }, shadowEnv);
-  const raw = fs.readFileSync(path.join(v, ".bbm-usage.jsonl"), "utf-8");
+  const raw = JSON.stringify(readLog(v));
   const [hit, miss] = readLog(v).filter((e) => e.tool === "recall");
   check("적중 회상에 shadowTop5 수치(0~1)", typeof hit?.shadowTop5 === "number" && hit.shadowTop5 >= 0 && hit.shadowTop5 <= 1, JSON.stringify(hit));
   check("0건 회상에는 shadowTop5 없음", miss !== undefined && !("shadowTop5" in miss), JSON.stringify(miss));
@@ -165,8 +167,10 @@ console.log("3) 비활성화");
     const r = await call("remember", { title: "끈-상태-저장", description: "설명", content: "본문", type: "semantic" });
     check("계측을 꺼도 저장은 정상", !r.isError, JSON.stringify(r).slice(0, 200));
   }, { BIGBRAIN_USAGE_LOG: "0" });
-  check("로그 파일이 생기지 않음", !fs.existsSync(path.join(v, ".bbm-usage.jsonl")));
-  check("기억은 실제로 저장됨", fs.readdirSync(path.join(v, "memories")).length === 1);
+  check("로그 이벤트가 생기지 않음", readLog(v).length === 0);
+  const stored = createMemoryStore(v);
+  check("기억은 실제로 저장됨", stored.listSlugs().length === 1);
+  stored.close();
 }
 
 // ── 4. 세션 결과는 세션당 1회만 (Stop 은 매 턴 발화한다)
@@ -219,6 +223,7 @@ console.log("4) 세션 결과 1회 기록");
     cwd: root,
     encoding: "utf-8",
     timeout: 15000,
+    env: { ...process.env, BBM_STORE: "file" },
   });
   const lateRep = JSON.parse(lateOut);
   check("리포트는 최종 결과(저장)를 취함", lateRep.sessions.storedAtLeastOne === 1, lateOut.slice(0, 400));
@@ -257,6 +262,7 @@ console.log("5) 리포트 집계");
     cwd: root,
     encoding: "utf-8",
     timeout: 15000,
+    env: { ...process.env, BBM_STORE: "file" },
   });
   const rep = JSON.parse(out);
   check("작업 세션 2개로 집계", rep.sessions.workSessions === 2, out.slice(0, 400));
@@ -269,6 +275,7 @@ console.log("5) 리포트 집계");
     cwd: root,
     encoding: "utf-8",
     timeout: 15000,
+    env: { ...process.env, BBM_STORE: "file" },
   });
   check("손상 줄을 보고", JSON.parse(out2).window.malformedLines === 1, out2.slice(0, 300));
 }

@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -29,9 +30,11 @@ function check(name, cond, detail = "") {
   }
 }
 
-const cleanups = [];
+const cleanups = /** @type {string[]} */ (Array());
+const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+fs.mkdirSync(testTmp, { recursive: true });
 function seeded() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-quiet-"));
+  const dir = fs.mkdtempSync(path.join(testTmp, "bbm-quiet-"));
   cleanups.push(dir);
   const s = new MemoryStore(new Vault(dir));
   const a = s.remember({ title: "조용한 기억 A", content: "탱고 앰버 본문.", type: "semantic" }).record;
@@ -135,6 +138,12 @@ console.log("5) 기억이 늘면 인덱스는 갱신됨");
   store.remember({ title: "새로 추가된 기억", content: "찰리 신규.", type: "semantic" });
   const after = fs.readFileSync(idx, "utf-8");
   check("새 기억이 인덱스에 반영됨", after !== before && after.includes("새로 추가된 기억"));
+}
+
+console.log("6) node:sqlite 경고 stdout 분리");
+{
+  const child = spawnSync(process.execPath, ["-e", "import('node:sqlite').then(()=>console.log('sqlite-ok'))"], { encoding: "utf8" });
+  check("test_node_sqlite_warning_never_uses_stdout", child.status === 0 && child.stdout === "sqlite-ok\n" && !child.stdout.includes("ExperimentalWarning"), JSON.stringify({ stdout: child.stdout, stderr: child.stderr }));
 }
 
 for (const d of cleanups) fs.rmSync(d, { recursive: true, force: true });

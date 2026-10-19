@@ -50,7 +50,7 @@ async function withClient(dir, fn, env = {}) {
     command: process.execPath,
     args: [entry],
     cwd: root,
-    env: { ...process.env, BIGBRAIN_VAULT: dir, ...env },
+    env: { ...process.env, BIGBRAIN_VAULT: dir, BBM_STORE: "file", ...env },
   });
   const client = new Client({ name: "regress-quality", version: "0.0.1" });
   await client.connect(transport);

@@ -2,15 +2,15 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
-const testVault = path.join(root, "test-vault");
-
-// 테스트 볼트 초기화
-fs.rmSync(testVault, { recursive: true, force: true });
+const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+fs.mkdirSync(testTmp, { recursive: true });
+const testVault = fs.mkdtempSync(path.join(testTmp, "bbm-smoke-"));
 
 // 기본은 간격 게이트 0 (매 회상마다 강화 검증). 8번 항목에서 별도 볼트로 게이트 동작을 검증
 const transport = new StdioClientTransport({
@@ -32,7 +32,7 @@ function check(name, cond, detail = "") {
 async function call(name, args = {}) {
   const res = await client.callTool({ name, arguments: args });
   const text = res.content?.[0]?.text ?? "";
-  let json = null;
+  let json = /** @type {any} */ (JSON.parse("null"));
   try {
     json = JSON.parse(text);
   } catch {
@@ -40,6 +40,8 @@ async function call(name, args = {}) {
   }
   return { res, text, json };
 }
+
+const toolText = (/** @type {any} */ result) => result.content[0].text;
 
 await client.connect(transport);
 console.log("1) 서버 연결 및 도구 목록");
@@ -106,17 +108,16 @@ const r6 = await call("revise", {
 check("교정 반영 + 이력 기록", r6.json?.revised?.confidence === 0.75 && r6.json?.revised?.history?.some((h) => h.includes("revised")));
 
 console.log("7) 회상 강화 확인 — 능동 recall이 저장강도를 올린다 (P4 검사효과, 간격게이트 0)");
-const before = (await call("read_memory", { id: slug1 })).json;
+const before = (await call("list_memories")).json?.memories?.find((memory) => memory.slug === slug1);
 const ssBefore = before.storage_strength;
 await call("recall", { query: "typescript strict 선호 모드" });
-const after = (await call("read_memory", { id: slug1 })).json;
-check("능동 회상 후 저장강도 증가", after.storage_strength > ssBefore, `${ssBefore} -> ${after.storage_strength}`);
+const after = (await call("list_memories")).json?.memories?.find((memory) => memory.slug === slug1);
+check("test_smoke_active_recall_strength_uses_nonreinforcing_baseline", after.storage_strength > ssBefore, `${ssBefore} -> ${after.storage_strength}`);
 check("access_count 누적", after.access_count >= 2, `count=${after.access_count}`);
 
 console.log("8) 간격효과 — 게이트가 켜지면 벼락치기 반복이 저장강도를 부풀리지 않는다 (P3)");
 {
-  const gatedVault = path.join(root, "test-vault-gated");
-  fs.rmSync(gatedVault, { recursive: true, force: true });
+  const gatedVault = fs.mkdtempSync(path.join(testTmp, "bbm-smoke-gated-"));
   const t2 = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(root, "dist", "index.js")],
@@ -124,10 +125,10 @@ console.log("8) 간격효과 — 게이트가 켜지면 벼락치기 반복이 �
   });
   const c2 = new Client({ name: "gated", version: "0.0.1" });
   await c2.connect(t2);
-  const g = JSON.parse((await c2.callTool({ name: "remember", arguments: { title: "간격 테스트 기억", content: "벼락치기 반복 강화 방지 검증.", type: "semantic" } })).content[0].text);
+  const g = JSON.parse(toolText(await c2.callTool({ name: "remember", arguments: { title: "간격 테스트 기억", content: "벼락치기 반복 강화 방지 검증.", type: "semantic" } })));
   const gslug = g.stored.slug;
   for (let i = 0; i < 4; i++) await c2.callTool({ name: "recall", arguments: { query: "간격 테스트 기억" } });
-  const gAfter = JSON.parse((await c2.callTool({ name: "read_memory", arguments: { id: gslug } })).content[0].text);
+  const gAfter = JSON.parse(toolText(await c2.callTool({ name: "read_memory", arguments: { id: gslug } })));
   check("게이트 내 반복 회상은 저장강도를 1회만 올림", gAfter.storage_strength <= 2, `ss=${gAfter.storage_strength}`);
   await c2.close();
   fs.rmSync(gatedVault, { recursive: true, force: true });
@@ -141,20 +142,18 @@ check("weakened/forget_candidates 필드 존재", Array.isArray(r8.json?.weakene
 console.log("10) forget — 망각(아카이브 이동)");
 const r9 = await call("forget", { id: slug2, reason: "테스트 종료" });
 check("아카이브 이동", r9.json?.forgotten?.status === "archived");
-check("파일이 archive/로 이동", fs.existsSync(path.join(testVault, "archive", `${slug2}.md`)));
+const archived = await call("list_memories", { status: "archived" });
+check("보관 목록으로 이동", archived.json?.memories?.some((memory) => memory.slug === slug2));
 
 console.log("11) 볼트 파일 구조 확인");
 check("MEMORY.md 인덱스 생성", fs.existsSync(path.join(testVault, "MEMORY.md")));
-check(
-  "망각된 기억이 memories/에 부활하지 않음",
-  !fs.existsSync(path.join(testVault, "memories", `${r3.json.stored.slug}.md`)) &&
-    !fs.existsSync(path.join(testVault, "memories", `${slug2}.md`)),
-);
-const noteRaw = fs.readFileSync(path.join(testVault, "memories", `${slug1}.md`), "utf-8");
-check("frontmatter에 storage_strength/last_reinforced 포함", noteRaw.includes("storage_strength:") && noteRaw.includes("last_reinforced:"));
-check("위키링크 본문 포함", noteRaw.includes(`[[${slug2}]]`));
+const active = await call("list_memories");
+check("망각된 기억이 활성 목록에 부활하지 않음", !active.json?.memories?.some((memory) => [r3.json.stored.slug, slug2].includes(memory.slug)));
+const linked = (await call("read_memory", { id: slug1 })).json;
+check("연결 정보 보존", linked.links.includes(slug2));
 
 await client.close();
+fs.rmSync(testVault, { recursive: true, force: true });
 
 if (failures > 0) {
   console.error(`\n실패: ${failures}건`);

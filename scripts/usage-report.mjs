@@ -17,6 +17,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createMemoryStore } from "../dist/stores/index.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, "..");
@@ -28,27 +29,37 @@ const VAULT = arg("--vault", process.env.BIGBRAIN_VAULT || path.join(repo, "vaul
 const SINCE = arg("--since", null);
 const AS_JSON = process.argv.includes("--json");
 
-const logPath = path.join(VAULT, ".bbm-usage.jsonl");
-let lines = [];
+let store;
+let rawEvents = /** @type {any[]} */ (Array());
+let malformed = 0;
 try {
-  lines = fs.readFileSync(logPath, "utf-8").split("\n");
+  store = createMemoryStore(VAULT);
+  if ((process.env.BBM_STORE || "sqlite") === "file") {
+    rawEvents = fs.readFileSync(path.join(VAULT, ".bbm-usage.jsonl"), "utf8")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line)];
+        } catch {
+          malformed++;
+          return [];
+        }
+      });
+  } else {
+    rawEvents = store.readUsageEvents();
+  }
 } catch {
-  console.error(`사용 로그가 없습니다: ${logPath}`);
+  console.error(`사용 로그가 없습니다: ${VAULT}`);
   console.error("아직 아무것도 기록되지 않았거나 BIGBRAIN_USAGE_LOG=0 으로 꺼져 있습니다.");
   process.exit(1);
 }
+process.once("exit", () => store?.close());
 
-const events = [];
-let malformed = 0;
-for (const line of lines) {
-  if (line.trim() === "") continue;
-  try {
-    const e = JSON.parse(line);
-    if (SINCE && typeof e.ts === "string" && e.ts < SINCE) continue;
-    events.push(e);
-  } catch {
-    malformed++; // 동시 append 로 찢긴 줄 — 버리고 수를 보고한다(조용히 삼키지 않는다)
-  }
+const events = /** @type {any[]} */ (Array());
+for (const event of rawEvents) {
+  if (SINCE && typeof event.ts === "string" && event.ts < SINCE) continue;
+  events.push(event);
 }
 
 // ── 세션 단위 (훅이 기록) — 저장률의 분모는 세션이다
@@ -56,7 +67,7 @@ const starts = events.filter((e) => e.event === "session_start");
 // 한 세션이 session_end 를 두 번 남길 수 있다: 먼저 "저장 0" 으로 경고하고, 그 경고를 보고
 // 저장하면 "저장 n" 을 한 번 더 남긴다. **최종 결과는 최대값이다** — 먼저 온 기록을 쓰면
 // 경고가 유도한 저장이 통계에서 사라져, 우리가 재려는 개선을 지표가 못 잡는다.
-const endBySession = new Map();
+const endBySession = /** @type {Map<string, any>} */ (new Map());
 for (const e of events) {
   if (e.event !== "session_end") continue;
   const key = e.sessionId ?? `anon-${endBySession.size}`;
@@ -71,7 +82,7 @@ const storedAfterWarning = storedSessions.filter((e) => e.warned === true);
 const lossEvents = starts.filter((e) => (e.lost ?? 0) > 0);
 
 // ── 도구 단위 (서버가 기록)
-const byTool = {};
+const byTool = /** @type {Record<string, { calls: number, failed: number }>} */ ({});
 for (const e of events) {
   if (!e.tool) continue;
   byTool[e.tool] = byTool[e.tool] ?? { calls: 0, failed: 0 };
@@ -152,7 +163,9 @@ console.log("── 도구 호출");
 if (Object.keys(byTool).length === 0) {
   console.log("  (도구 호출 기록 없음 — 서버가 한 번도 도구를 처리하지 않았습니다)");
 } else {
-  for (const [t, v] of Object.entries(byTool).sort((a, b) => b[1].calls - a[1].calls)) {
+  const toolNames = Object.keys(byTool).sort((a, b) => byTool[b].calls - byTool[a].calls);
+  for (const t of toolNames) {
+    const v = byTool[t];
     console.log(`  ${t.padEnd(15)} ${String(v.calls).padStart(5)}회${v.failed > 0 ? `  (실패 ${v.failed})` : ""}`);
   }
 }
