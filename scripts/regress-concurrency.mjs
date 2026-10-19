@@ -21,6 +21,7 @@ const root = path.resolve(here, "..");
 const distUrl = (f) => `file://${path.join(root, "dist", f).replace(/\\/g, "/")}`;
 const { Vault } = await import(distUrl("vault.js"));
 const { MemoryStore } = await import(distUrl("store.js"));
+const { FileStore } = await import(distUrl("stores/file-store.js"));
 const { SqliteStore } = await import(distUrl("stores/sqlite-store.js"));
 
 let failures = 0;
@@ -141,10 +142,12 @@ console.log("2) 동시 forget 유지 — 부활 없음 (A4)");
 console.log("3) 강화 실패는 best-effort — 회상은 계속된다");
 {
   const dir = freshDir();
-  const seed = new MemoryStore(new Vault(dir));
+  const seed = new MemoryStore(new FileStore(dir));
   seed.remember({ title: "베스트에포트", content: "오스카 파파 회상되어야 한다.", type: "semantic" });
 
   const origRename = fs.renameSync;
+  const origError = console.error;
+  let warnings = "";
   /** @type {any[] | null} */
   let results = null;
   let readOk = null;
@@ -152,16 +155,19 @@ console.log("3) 강화 실패는 best-effort — 회상은 계속된다");
     fs.renameSync = () => {
       throw new Error("주입된 쓰기 실패");
     };
-    const s = new MemoryStore(new Vault(dir));
+    console.error = (...parts) => { warnings += `${parts.join(" ")}\n`; };
+    const s = new MemoryStore(new FileStore(dir));
     results = s.search("오스카");
     readOk = s.read("베스트에포트");
   } catch (err) {
     check("회상이 예외로 죽지 않음", false, String(err?.message ?? err));
   } finally {
     fs.renameSync = origRename;
+    console.error = origError;
   }
   check("쓰기 실패에도 search 가 결과를 반환", Number(Object(results).length) === 1, `len=${Object(results).length}`);
   check("쓰기 실패에도 read_memory 가 동작", readOk !== null);
+  check("test_concurrency_failure_uses_file_store_usage_contract", !warnings.includes("이벤트 기록 실패"));
 }
 
 // ── 4. 2프로세스 동시 강화 — 소실률 (A4)

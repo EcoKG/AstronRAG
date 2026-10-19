@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import crypto from "node:crypto";
 import type { MemoryRecord, MemoryStatus, MemoryType } from "../types.js";
 import { Vault } from "../vault.js";
 import { assertSafeSlug, type MemoryStore, type StoreInspection, type StoreUsageEvent, type StoredEmbedding } from "./memory-store.js";
@@ -36,6 +37,37 @@ type MemoryRow = {
 type UsageRow = { ts: string; payload: string };
 type EmbeddingRow = { key: string; hash: string; dim: number; vector: Uint8Array };
 
+export type VaultImportRecord = { record: MemoryRecord; archived: boolean; hasExplicitId: boolean };
+export type VaultImportRevision = { slug: string; created: string; record: MemoryRecord };
+export type VaultImportSnapshot = {
+	records: VaultImportRecord[];
+	revisions: VaultImportRevision[];
+	usageEvents: StoreUsageEvent[];
+	embeddings: { model: string; rows: StoredEmbedding[] }[];
+};
+export type VaultImportResult = {
+	status: "imported" | "already_migrated" | "verified";
+	completedAt: string | null;
+	counts: Record<string, number>;
+	hashes: { matched: number; mismatches: string[] };
+};
+
+const stableRecord = (record: MemoryRecord, archived: boolean): string => JSON.stringify({
+	archived,
+	record: {
+		id: record.id, slug: record.slug, title: record.title, description: record.description,
+		type: record.type, tags: record.tags, confidence: record.confidence,
+		storageStrength: record.storageStrength, status: record.status, created: record.created,
+		updated: record.updated, lastAccessed: record.lastAccessed, lastReinforced: record.lastReinforced,
+		accessCount: record.accessCount, source: record.source, project: record.project,
+		links: record.links, derivedFrom: record.derivedFrom, reviewAfter: record.reviewAfter,
+		supersedes: record.supersedes, supersededBy: record.supersededBy,
+		archiveReason: record.archiveReason, history: record.history, body: record.body,
+	},
+});
+
+const recordHash = (record: MemoryRecord, archived: boolean): string => crypto.createHash("sha256").update(stableRecord(record, archived)).digest("hex");
+
 /** SQLite가 기억 레코드와 부속 데이터를 원자적으로 영속한다. */
 export class SqliteStore implements MemoryStore {
 	readonly root: string;
@@ -45,15 +77,16 @@ export class SqliteStore implements MemoryStore {
 	private readonly vaultResources: Vault;
 	private closed = false;
 
-	constructor(root: string, databasePath = path.join(root, ".bbm", "store.sqlite")) {
+	constructor(root: string, databasePath = path.join(root, ".bbm", "store.sqlite"), options: { readOnly?: boolean } = {}) {
 		this.root = path.resolve(root);
 		this.databasePath = path.resolve(databasePath);
-		fs.mkdirSync(path.dirname(this.databasePath), { recursive: true });
-		this.vaultResources = new Vault(this.root);
+		if (!options.readOnly) fs.mkdirSync(path.dirname(this.databasePath), { recursive: true });
+		this.vaultResources = new Vault(this.root, { readOnly: options.readOnly });
 		this.nativeMemoryFiles = this.vaultResources.nativeMemoryFiles;
-		this.db = new DatabaseSync(this.databasePath);
+		this.db = new DatabaseSync(this.databasePath, options.readOnly ? { readOnly: true } : {});
 		this.db.exec("PRAGMA foreign_keys = ON");
 		this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+		if (options.readOnly) return;
 		// DELETE 저널은 SQLite WAL-reset 결함을 피한다. 런타임 SQLite가 3.51.3 이상 또는 3.50.7 백포트가 되면 WAL을 재검토한다: https://www.sqlite.org/wal.html
 		this.db.exec(`PRAGMA journal_mode = ${JOURNAL_MODE}`);
 		this.initializeSchema();
@@ -231,6 +264,116 @@ export class SqliteStore implements MemoryStore {
 		this.writeChildren("memory_links", record.slug, record.links);
 		this.writeChildren("memory_history", record.slug, record.history);
 		this.writeChildren("memory_derived_from", record.slug, record.derivedFrom ?? []);
+	}
+
+	/** Vault 스냅샷 전체를 하나의 즉시 트랜잭션으로 이관한다. */
+	importVaultSnapshot(snapshot: VaultImportSnapshot, options: { merge?: boolean; markerKey: string; beforeCommit?: () => void; skipMarker?: boolean } ): VaultImportResult {
+		return this.transaction(() => {
+			const marker = this.getMeta(options.markerKey);
+			if (marker) return { status: "already_migrated", completedAt: marker, counts: this.importCounts(), hashes: { matched: snapshot.records.length, mismatches: [] } };
+			const existing = (this.db.prepare("SELECT COUNT(*) AS count FROM memories").get() as { count: number }).count;
+			if (existing > 0 && !options.merge) throw new Error("표식 없는 비어 있지 않은 DB입니다 — --merge가 필요합니다");
+
+			for (const item of snapshot.records) {
+				assertSafeSlug(item.record.slug);
+				if (item.hasExplicitId) {
+					const byId = this.db.prepare("SELECT slug FROM memories WHERE id = ?").get(item.record.id) as { slug: string } | undefined;
+					if (byId && byId.slug !== item.record.slug) this.db.prepare("DELETE FROM memories WHERE slug = ?").run(byId.slug);
+				}
+				const next = item.archived && item.record.status !== "archived" ? { ...item.record, status: "archived" as const } : item.record;
+				const current = this.selectRecord(next.slug);
+				if (!current || recordHash(current, current.status === "archived") !== recordHash(next, item.archived)) this.writeRecord(next);
+			}
+
+			if (!options.merge) this.db.exec("DELETE FROM memory_revisions");
+			const revision = this.db.prepare("INSERT INTO memory_revisions(slug, created, record_json) VALUES(?, ?, ?)");
+			for (const item of snapshot.revisions) revision.run(item.slug, item.created, JSON.stringify(item.record));
+			if (!options.merge) this.db.exec("DELETE FROM usage_events");
+			const usage = this.db.prepare("INSERT INTO usage_events(ts, payload) VALUES(?, ?)");
+			for (const event of snapshot.usageEvents) usage.run(event.ts, JSON.stringify({ ...event, ts: undefined }));
+			if (!options.merge) this.db.exec("DELETE FROM embeddings");
+			const embedding = this.db.prepare(`
+				INSERT INTO embeddings(model, key, hash, dim, vector, position) VALUES(?, ?, ?, ?, ?, ?)
+				ON CONFLICT(model, key) DO UPDATE SET hash=excluded.hash, dim=excluded.dim, vector=excluded.vector, position=excluded.position
+			`);
+			for (const group of snapshot.embeddings) group.rows.forEach((row, position) => {
+				const bytes = new Uint8Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength);
+				embedding.run(group.model, row.key, row.hash, row.vector.length, bytes, position);
+			});
+
+			const comparison = this.compareVaultSnapshot(snapshot);
+			if (comparison.mismatches.length > 0) throw new Error(`이관 대조 불일치: ${comparison.mismatches.join(", ")}`);
+			options.beforeCommit?.();
+			const completedAt = new Date().toISOString();
+			if (!options.skipMarker) this.setMeta(options.markerKey, completedAt);
+			return { status: "imported", completedAt: options.skipMarker ? null : completedAt, counts: this.importCounts(), hashes: comparison };
+		});
+	}
+
+	/** Vault 스냅샷과 현재 SQLite 레코드 해시를 비교한다. */
+	compareVaultSnapshot(snapshot: VaultImportSnapshot): { matched: number; mismatches: string[] } {
+		const mismatches: string[] = [];
+		const compareMultiset = (label: string, expected: string[], actual: string[]): number => {
+			const counts = (values: string[]): Map<string, number> => {
+				const result = new Map<string, number>();
+				for (const value of values) result.set(value, (result.get(value) ?? 0) + 1);
+				return result;
+			};
+			const left = counts(expected);
+			const right = counts(actual);
+			let matched = 0;
+			for (const [value, count] of left) matched += Math.min(count, right.get(value) ?? 0);
+			if (expected.length !== actual.length || [...new Set([...left.keys(), ...right.keys()])].some((value) => left.get(value) !== right.get(value))) {
+				mismatches.push(label);
+			}
+			return matched;
+		};
+
+		const expectedRecords = snapshot.records.map((item) => {
+			const expected = item.archived && item.record.status !== "archived" ? { ...item.record, status: "archived" as const } : item.record;
+			return `${expected.slug}\u0000${recordHash(expected, item.archived)}`;
+		});
+		const actualRecords = (this.db.prepare("SELECT slug, status FROM memories ORDER BY slug").all() as { slug: string; status: MemoryRecord["status"] }[])
+			.map((row) => {
+				const record = this.selectRecord(row.slug);
+				return record ? `${row.slug}\u0000${recordHash(record, row.status === "archived")}` : `${row.slug}\u0000missing`;
+			});
+		const matched = compareMultiset("memories", expectedRecords, actualRecords);
+
+		const expectedRevisions = snapshot.revisions.map((item) => `${item.slug}\u0000${item.created}\u0000${JSON.stringify(item.record)}`);
+		const actualRevisions = (this.db.prepare("SELECT slug, created, record_json FROM memory_revisions").all() as { slug: string; created: string; record_json: string }[])
+			.map((row) => `${row.slug}\u0000${row.created}\u0000${row.record_json}`);
+		compareMultiset("revisions", expectedRevisions, actualRevisions);
+
+		const canonicalEvent = (event: StoreUsageEvent): string => JSON.stringify(Object.keys(event).sort().map((key) => [key, event[key]]));
+		compareMultiset("usage_events", snapshot.usageEvents.map(canonicalEvent), this.readUsageEvents().map(canonicalEvent));
+
+		const expectedEmbeddings = snapshot.embeddings.flatMap((group) => group.rows.map((row, position) => {
+			const bytes = Buffer.from(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength).toString("base64");
+			return `${group.model}\u0000${row.key}\u0000${row.hash}\u0000${row.vector.length}\u0000${position}\u0000${bytes}`;
+		}));
+		const actualEmbeddings = (this.db.prepare("SELECT model, key, hash, dim, position, vector FROM embeddings").all() as { model: string; key: string; hash: string; dim: number; position: number; vector: Uint8Array }[])
+			.map((row) => `${row.model}\u0000${row.key}\u0000${row.hash}\u0000${row.dim}\u0000${row.position}\u0000${Buffer.from(row.vector).toString("base64")}`);
+		compareMultiset("embeddings", expectedEmbeddings, actualEmbeddings);
+		return { matched, mismatches };
+	}
+
+	private importCounts(): Record<string, number> {
+		const count = (table: string): number => (this.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
+		const statuses = this.db.prepare("SELECT status, COUNT(*) AS count FROM memories GROUP BY status ORDER BY status").all() as { status: string; count: number }[];
+		return {
+			memories: count("memories"),
+			statusActive: statuses.find((row) => row.status === "active")?.count ?? 0,
+			statusSuperseded: statuses.find((row) => row.status === "superseded")?.count ?? 0,
+			statusArchived: statuses.find((row) => row.status === "archived")?.count ?? 0,
+			tags: count("memory_tags"),
+			links: count("memory_links"),
+			history: count("memory_history"),
+			derivedFrom: count("memory_derived_from"),
+			revisions: count("memory_revisions"),
+			usageEvents: count("usage_events"),
+			embeddings: count("embeddings"),
+		};
 	}
 
 	listSlugs(includeArchived = false): { slug: string; archived: boolean }[] {

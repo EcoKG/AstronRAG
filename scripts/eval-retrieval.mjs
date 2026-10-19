@@ -30,6 +30,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { runMigration } from "./migrate-vault-to-store.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -621,6 +622,18 @@ const distUrl = (f) => pathToFileURL(path.join(root, "dist", f)).href;
 if (!fs.existsSync(path.join(root, "dist", "store.js"))) die("dist/store.js 가 없다 — 먼저 npm run build");
 const { Vault } = await import(distUrl("vault.js"));
 const { MemoryStore } = await import(distUrl("store.js"));
+const { FileStore } = await import(distUrl("stores/file-store.js"));
+const { SqliteStore } = await import(distUrl("stores/sqlite-store.js"));
+
+function openEvaluationBackend(dir, tag) {
+	if (process.env.BBM_STORE === "file") {
+		return new FileStore(dir);
+	}
+	const databasePath = path.join(dir, ".bbm", `${tag}.sqlite`);
+	const backupPath = `${dir}-${tag}-backup`;
+	runMigration({ vault: dir, storePath: databasePath, backupPath, dryRun: false, merge: false, verify: false });
+	return new SqliteStore(dir, databasePath);
+}
 
 // die() 는 finally 를 건너뛰므로 임시 사본을 만들기 전에 골든셋을 검증한다
 const fixtureSlugs = new Set(
@@ -635,6 +648,8 @@ const altsOf = (row) => usedAlts?.get(`${row.split}\u0000${row.query}`);
 const realNow = Date.now;
 let metricDir = "";
 let latDir = "";
+let metricBackend;
+let liveBackend;
 const diffDirs = [];
 // --baseline·--min-exact-r1 은 필요한 계산만 하고 break 로 이 블록을 빠져나가 finally 정리를 탄다
 evaluation: try {
@@ -650,7 +665,8 @@ evaluation: try {
 	// 지표: 고정 시계 + 강화 끔 + 전체 순위
 	metricDir = copyFixture("metric");
 	Date.now = () => FROZEN_NOW;
-	const store = new MemoryStore(new Vault(metricDir));
+	metricBackend = openEvaluationBackend(metricDir, "metric");
+	const store = new MemoryStore(metricBackend);
 	store.reinforce = () => {};
 	const records = store.loadAll(true);
 	if (records.length !== fixtureSlugs.size) throw new Error(`픽스처 파싱 수 불일치: ${records.length}/${fixtureSlugs.size}`);
@@ -659,7 +675,7 @@ evaluation: try {
 
 	// 벡터: 임베딩은 실제 시계로 한 번만 계산하고, 순위화는 고정 시계에서 한다
 	Date.now = realNow;
-	const vec = opts.vector ? await prepareVector(store, new Vault(metricDir), golden) : null;
+	const vec = opts.vector ? await prepareVector(store, metricBackend, golden) : null;
 	Date.now = () => FROZEN_NOW;
 	if (vec && opts.auc) {
 		Date.now = realNow;
@@ -710,7 +726,8 @@ evaluation: try {
 
 	// 지연: 실제 시계·실제 강화, 서버 recall 기본값(limit 5, 연상 포함)
 	latDir = copyFixture("latency");
-	const live = new MemoryStore(new Vault(latDir));
+	liveBackend = openEvaluationBackend(latDir, "latency");
+	const live = new MemoryStore(liveBackend);
 	for (const row of golden) live.searchDetailed(row.query, { limit: 5, altQueries: altsOf(row) });
 	const times = Array.from({ length: LATENCY_ROUNDS }, () =>
 		golden.map((row) => {
@@ -777,5 +794,9 @@ evaluation: try {
 	emit(result, opts.out, ["scorer", "shadow", "fixture", "splits", "g2", "latencyMs", "permuteControl", "multi", "vector"]);
 } finally {
 	Date.now = realNow;
+	metricBackend?.close();
+	liveBackend?.close();
 	for (const d of [metricDir, latDir, ...diffDirs]) if (d) fs.rmSync(d, { recursive: true, force: true });
+	if (metricDir) fs.rmSync(`${metricDir}-metric-backup`, { recursive: true, force: true });
+	if (latDir) fs.rmSync(`${latDir}-latency-backup`, { recursive: true, force: true });
 }
