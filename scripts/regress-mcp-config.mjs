@@ -11,6 +11,7 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +19,8 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
+const testTmpDir = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+fs.mkdirSync(testTmpDir, { recursive: true });
 
 let failures = 0;
 function check(name, cond, detail = "") {
@@ -26,6 +29,16 @@ function check(name, cond, detail = "") {
     failures++;
     console.error(`  ✘ ${name} ${detail}`);
   }
+}
+
+function removeTree(directory) {
+  if (!fs.existsSync(directory)) return;
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const target = path.join(directory, entry.name);
+    if (entry.isDirectory()) removeTree(target);
+    else fs.unlinkSync(target);
+  }
+  fs.rmdirSync(directory);
 }
 
 console.log("1) .mcp.json 파싱 및 스폰 계약");
@@ -64,7 +77,12 @@ check(
 
 console.log("3) 실제 스폰 — 설정 그대로(cwd=저장소 루트) 서버가 뜨는가");
 // 라이브 볼트를 건드리지 않도록 볼트만 임시 디렉터리로 우회한다.
-const tmpVault = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-regress-"));
+const tmpVault = fs.mkdtempSync(path.join(testTmpDir, "bbm-regress-"));
+check(
+  "test_mcp_config_temp_directory_uses_selected_base",
+  path.dirname(tmpVault) === testTmpDir,
+  `temp=${tmpVault}`,
+);
 const transport = new StdioClientTransport({
   command: server.command,
   args: server.args,
@@ -77,14 +95,26 @@ try {
   await client.connect(transport);
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name).sort();
-  const expected = ["forget", "link", "list_memories", "read_memory", "recall", "reflect", "remember", "revise"];
-  check("서버 기동 성공", true);
-  check("8개 도구 등록", expected.every((n) => names.includes(n)), `got: ${names.join(",")}`);
+	const expected = ["forget", "link", "list_memories", "read_memory", "recall", "recommend", "reflect", "remember", "revise"];
+	const existing = tools.filter((tool) => tool.name !== "recommend").sort((a, b) => a.name.localeCompare(b.name)).map((tool) => ({ name: tool.name, inputSchema: tool.inputSchema }));
+	const schemaHash = crypto.createHash("sha256").update(JSON.stringify(existing)).digest("hex");
+	check("서버 기동 성공", true);
+	check(
+		"test_existing_tools_contract_snapshot_unchanged",
+		JSON.stringify(names) === JSON.stringify(expected) && schemaHash === "39ad221b780b67dddd5a9008496f430b6267b008ddd345211c00629f7c092141",
+		`got: ${names.join(",")} schema=${schemaHash}`,
+	);
+	const recommend = tools.find((tool) => tool.name === "recommend");
+	check(
+		"recommend 입력 스키마",
+		JSON.stringify(Object.keys(recommend?.inputSchema?.properties ?? {}).sort()) === JSON.stringify(["description", "role"]),
+		JSON.stringify(recommend?.inputSchema),
+	);
   await client.close();
 } catch (err) {
   check("서버 기동 성공", false, String(err?.message ?? err));
 } finally {
-  fs.rmSync(tmpVault, { recursive: true, force: true });
+  removeTree(tmpVault);
 }
 
 console.log("4) 라이브 볼트 무변형 확인");

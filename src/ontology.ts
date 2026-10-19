@@ -1,0 +1,132 @@
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import { z } from "zod";
+
+const require = createRequire(import.meta.url);
+
+interface YamlModule {
+	JSON_SCHEMA: unknown;
+	load(source: string, options: { schema: unknown }): unknown;
+}
+
+const id = z.string().min(1);
+const namedNode = z.object({ "@id": id, name: z.string().min(1) }).strict();
+const evidenceNode = z.object({ "@id": id, label: z.string().min(1), link: z.string().min(1) }).strict();
+const sourceNode = z.object({
+	url: z.string().url(),
+	checkedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+	fields: z.array(z.string().min(1)).min(1),
+}).strict();
+const priceTier = z.object({
+	promptTokens: z.number().int().positive().nullable(),
+	input: z.number().nonnegative(),
+	cacheWrite5m: z.number().nonnegative(),
+	cacheWrite1h: z.number().nonnegative(),
+	cacheRead: z.number().nonnegative(),
+	output: z.number().nonnegative(),
+}).strict();
+const modelNode = z.object({
+	"@id": id,
+	id: z.string().min(1),
+	name: z.string().min(1),
+	contextTokens: z.number().int().positive(),
+	maxOutputTokens: z.number().int().positive(),
+	defaultEffort: z.enum(["low", "medium", "high", "xhigh", "max"]),
+	supportedEfforts: z.array(z.enum(["low", "medium", "high", "xhigh", "max"])).min(1),
+	features: z.array(z.string().min(1)).min(1),
+	platforms: z.array(id).min(1),
+	pricing: z.array(priceTier).min(1),
+	sources: z.array(sourceNode).min(1),
+}).strict();
+const constraintNode = z.object({
+	"@id": id,
+	kind: z.enum(["exclude", "default"]),
+	models: z.array(z.string().min(1)).min(1),
+	reason: z.string().min(1),
+}).strict();
+const ruleNode = z.object({
+	"@id": id,
+	priority: z.number().int(),
+	conditions: z.array(z.object({ type: z.enum(["role", "keyword", "difficulty", "risk"]), values: z.array(z.string().min(1)).min(1) }).strict()),
+	model: z.string().min(1),
+	effort: z.enum(["low", "medium", "high", "xhigh", "max"]),
+	reason: z.string().min(1),
+	evidence: z.array(id).min(1),
+	confidence: z.number().min(0).max(1),
+}).strict();
+const graphNode = z.object({ "@id": id, name: z.string().min(1), nodes: z.array(id).min(1) }).strict();
+
+export const ontologySchema = z.object({
+	version: z.literal(1),
+	taskTypes: z.array(namedNode).min(1),
+	difficulties: z.array(namedNode).min(1),
+	risks: z.array(namedNode).min(1),
+	nodeRoles: z.array(namedNode).min(1),
+	models: z.array(modelNode).min(1),
+	efforts: z.array(namedNode).min(1),
+	platforms: z.array(namedNode).min(1),
+	graphs: z.array(graphNode).min(1),
+	resultMetrics: z.array(namedNode).min(1),
+	evidence: z.array(evidenceNode).min(1),
+	constraints: z.array(constraintNode).min(1),
+	rules: z.array(ruleNode).min(1),
+}).strict();
+
+export type Ontology = z.infer<typeof ontologySchema>;
+
+function assertSafeYaml(source: string): void {
+	if (/(?:^\s*|[{,]\s*)<<\s*:/m.test(source)) throw new Error("YAML merge keys are not allowed");
+	let depth = 0;
+	for (const character of source) {
+		if (character === "{" || character === "[") depth++;
+		if (character === "}" || character === "]") depth--;
+		if (depth > 64) throw new Error("YAML depth exceeds 64");
+	}
+}
+
+function validateReferences(ontology: Ontology): Ontology {
+	const ids: string[] = [];
+	for (const collection of [ontology.taskTypes, ontology.difficulties, ontology.risks, ontology.nodeRoles, ontology.models, ontology.efforts, ontology.platforms, ontology.graphs, ontology.resultMetrics, ontology.evidence, ontology.constraints, ontology.rules]) {
+		ids.push(...collection.map((node) => node["@id"]));
+	}
+	const duplicates = ids.filter((value, index) => ids.indexOf(value) !== index);
+	if (duplicates.length > 0) throw new Error(`duplicate @id: ${[...new Set(duplicates)].join(", ")}`);
+	const allIds = new Set(ids);
+	const modelIds = new Map(ontology.models.map((model) => [model.id, model]));
+	const roleIds = new Set(ontology.nodeRoles.map((role) => role["@id"].replace(/^role:/, "")));
+	const requiredRoles = ["coordinator", "impl", "ops", "plan", "research", "review", "ship"];
+	if (JSON.stringify([...roleIds].sort()) !== JSON.stringify(requiredRoles)) throw new Error("node roles must match the registered role set");
+	const platformIds = new Set(ontology.platforms.map((platform) => platform["@id"]));
+	const evidenceIds = new Set(ontology.evidence.map((evidence) => evidence["@id"]));
+	for (const model of ontology.models) {
+		if (model["@id"] !== `model:${model.id}`) throw new Error(`model @id does not match id: ${model.id}`);
+		for (const platform of model.platforms) if (!platformIds.has(platform)) throw new Error(`unregistered platform: ${platform}`);
+	}
+	for (const constraint of ontology.constraints) {
+		if (constraint.kind === "default") for (const model of constraint.models) if (!modelIds.has(model)) throw new Error(`unregistered default model: ${model}`);
+	}
+	for (const graph of ontology.graphs) {
+		for (const ref of graph.nodes) if (!allIds.has(ref)) throw new Error(`unresolved graph reference: ${ref}`);
+	}
+	for (const rule of ontology.rules) {
+		const model = modelIds.get(rule.model);
+		if (!model) throw new Error(`unregistered model: ${rule.model}`);
+		if (!model.supportedEfforts.includes(rule.effort)) throw new Error(`unsupported effort ${rule.effort} for ${rule.model}`);
+		for (const ref of rule.evidence) if (!evidenceIds.has(ref)) throw new Error(`unresolved evidence reference: ${ref}`);
+		for (const condition of rule.conditions) {
+			if (condition.type === "role") for (const role of condition.values) if (!roleIds.has(role)) throw new Error(`unregistered role: ${role}`);
+		}
+	}
+	return ontology;
+}
+
+export function parseOntology(source: string): Ontology {
+	assertSafeYaml(source);
+	const yaml = require("js-yaml") as YamlModule;
+	const parsed = yaml.load(source, { schema: yaml.JSON_SCHEMA });
+	return validateReferences(ontologySchema.parse(parsed));
+}
+
+export function loadOntology(file: string): Ontology {
+	return parseOntology(fs.readFileSync(file, "utf8"));
+}

@@ -13,8 +13,12 @@ import { logError, logInfo, logWarn } from "./log.js";
 import { INDEX_DIR, type ScopeFilter } from "./retriever.js";
 import type { MemoryRecord, SearchResult } from "./types.js";
 import type { VectorRetriever } from "./vector-retriever.js";
+import { ontologySchema } from "./ontology.js";
+import { recommendModel, type Role } from "./recommender.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const ontologyOverride = process.env.BBM_ONTOLOGY_PATH?.trim();
+const ontologyPath = ontologyOverride ? path.resolve(ontologyOverride) : path.resolve(here, "..", "ontology", "ontology.json");
 
 /** 버전은 package.json 이 단일 출처다 — 종전에는 여기 하드코딩돼 이중 관리였다 (T39) */
 const PKG_VERSION = (() => {
@@ -908,6 +912,26 @@ server.registerPrompt(
       },
     ],
   }),
+);
+
+server.registerTool(
+	"recommend",
+	{
+		title: "Recommend model placement",
+		description: "Recommend a model and effort for an AstronAgent node role from the packaged ontology.",
+		inputSchema: {
+			description: z.string().trim().min(1).max(4000),
+			role: z.enum(["research", "plan", "impl", "review", "ship", "ops", "coordinator"]),
+		},
+	},
+	async ({ description, role }) => {
+		try {
+			const ontology = ontologySchema.parse(JSON.parse(fs.readFileSync(ontologyPath, "utf8")));
+			return ok(recommendModel(ontology, description, role as Role));
+		} catch (error) {
+			return fail(`Recommendation unavailable: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	},
 );
 
 async function main() {
