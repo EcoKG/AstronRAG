@@ -13,6 +13,7 @@ const tempRoot = fs.mkdtempSync(path.join(testTmpDir, "bbm-recommend-"));
 const tempVault = path.join(tempRoot, "vault");
 const ontologyPath = path.join(tempRoot, "ontology.json");
 const repositoryOntologyPath = path.join(root, "ontology", "ontology.json");
+const snapshotsPath = path.join(root, "test", "fixtures", "recommend-output-snapshots.json");
 const repositoryOntologyBefore = fs.readFileSync(repositoryOntologyPath, "utf8");
 fs.mkdirSync(tempVault);
 fs.copyFileSync(repositoryOntologyPath, ontologyPath);
@@ -37,6 +38,10 @@ function addOwnerExceptionEvidence(ontology) {
 	const id = "evidence:owner-exception";
 	ontology.evidence.push({ "@id": id, label: "Owner-approved test exception", link: "https://example.test/owner-exception" });
 	return id;
+}
+
+function addOwnerException(ontology, rule) {
+	ontology.constraints.push({ "@id": `constraint:test-owner-exception:${rule}`, kind: "owner-exception", rule, approvedBy: "p1", approvedAt: "2026-10-19", link: "https://example.test/owner-exception" });
 }
 
 async function call(description, role) {
@@ -122,12 +127,12 @@ try {
 
 	await test("test_recommend_filters_constraints_before_candidate_limit", async () => {
 		await withOntology((ontology) => {
-			const ownerException = addOwnerExceptionEvidence(ontology);
 			ontology.rules = [
 				{ "@id": "rule:test-fable", priority: 999, conditions: [{ type: "role", values: ["impl"] }], model: "claude-fable-5-1", effort: "high", reason: "test forbidden rule", evidence: ["evidence:official-models"], confidence: 1 },
-				{ "@id": "rule:test-sonnet-after-filter", priority: 100, conditions: [{ type: "role", values: ["impl"] }], model: "claude-sonnet-5-5", effort: "xhigh", reason: "test allowed rule", evidence: ["evidence:official-models", ownerException], confidence: 0.5 },
+				{ "@id": "rule:test-sonnet-after-filter", priority: 100, conditions: [{ type: "role", values: ["impl"] }], model: "claude-sonnet-5-5", effort: "xhigh", reason: "test allowed rule", evidence: ["evidence:official-models"], confidence: 0.5 },
 				...ontology.rules.filter((rule) => rule.conditions.length === 0),
 			];
+			addOwnerException(ontology, "rule:test-sonnet-after-filter");
 		}, async () => {
 			const result = payload(await call("ordinary task", "impl"));
 			assert.deepEqual(result.candidates, [{ model: "claude-sonnet-5-5", effort: "xhigh" }]);
@@ -151,11 +156,11 @@ try {
 
 	await test("test_recommend_reports_only_constraints_that_changed_result", async () => {
 		await withOntology((ontology) => {
-			const ownerException = addOwnerExceptionEvidence(ontology);
 			ontology.rules = [
-				{ "@id": "rule:test-allowed", priority: 200, conditions: [{ type: "role", values: ["impl"] }], model: "claude-sonnet-5-5", effort: "medium", reason: "allowed", evidence: ["evidence:official-models", ownerException], confidence: 0.7 },
+				{ "@id": "rule:test-allowed", priority: 200, conditions: [{ type: "role", values: ["impl"] }], model: "claude-sonnet-5-5", effort: "medium", reason: "allowed", evidence: ["evidence:official-models"], confidence: 0.7 },
 				...ontology.rules.filter((rule) => rule.conditions.length === 0),
 			];
+			addOwnerException(ontology, "rule:test-allowed");
 		}, async () => {
 			assert.deepEqual(payload(await call("ordinary task", "impl")).appliedConstraints, []);
 		});
@@ -163,8 +168,9 @@ try {
 
 	await test("test_recommend_enforces_opus_without_owner_exception", async () => {
 		await withOntology((ontology) => {
+			const forgedEvidence = addOwnerExceptionEvidence(ontology);
 			ontology.rules = [
-				{ "@id": "rule:test-unapproved-sonnet", priority: 999, conditions: [{ type: "role", values: ["impl"] }], model: "claude-sonnet-5-5", effort: "high", reason: "unapproved", evidence: ["evidence:official-models"], confidence: 1 },
+				{ "@id": "rule:test-unapproved-sonnet", priority: 999, conditions: [{ type: "role", values: ["impl"] }], model: "claude-sonnet-5-5", effort: "high", reason: "unapproved", evidence: ["evidence:official-models", forgedEvidence], confidence: 1 },
 				...ontology.rules.filter((rule) => rule.conditions.length === 0),
 			];
 		}, async () => {
@@ -177,12 +183,12 @@ try {
 
 	await test("test_recommend_allows_explicit_owner_exception", async () => {
 		await withOntology((ontology) => {
-			const ownerException = addOwnerExceptionEvidence(ontology);
 			ontology.rules = [
 				{ "@id": "rule:test-unapproved-haiku", priority: 999, conditions: [{ type: "role", values: ["impl"] }], model: "claude-haiku-5-5", effort: "high", reason: "unapproved", evidence: ["evidence:official-models"], confidence: 1 },
-				{ "@id": "rule:test-approved-sonnet", priority: 900, conditions: [{ type: "role", values: ["impl"] }], model: "claude-sonnet-5-5", effort: "high", reason: "approved", evidence: ["evidence:official-models", ownerException], confidence: 0.9 },
+				{ "@id": "rule:test-approved-sonnet", priority: 900, conditions: [{ type: "role", values: ["impl"] }], model: "claude-sonnet-5-5", effort: "high", reason: "approved", evidence: ["evidence:official-models"], confidence: 0.9 },
 				...ontology.rules.filter((rule) => rule.conditions.length === 0),
 			];
+			addOwnerException(ontology, "rule:test-approved-sonnet");
 		}, async () => {
 			const result = payload(await call("ordinary task", "impl"));
 			assert.equal(result.model, "claude-sonnet-5-5");
@@ -193,13 +199,16 @@ try {
 
 	await test("test_recommend_candidates_follow_matching_rules_by_confidence", async () => {
 		await withOntology((ontology) => {
-			const evidence = ["evidence:official-models", addOwnerExceptionEvidence(ontology)];
+			const evidence = ["evidence:official-models"];
 			ontology.rules = [
 				{ "@id": "rule:test-opus", priority: 300, conditions: [{ type: "role", values: ["impl"] }], model: "claude-opus-5-5", effort: "high", reason: "opus", evidence, confidence: 0.7 },
 				{ "@id": "rule:test-sonnet", priority: 200, conditions: [{ type: "role", values: ["impl"] }], model: "claude-sonnet-5-5", effort: "medium", reason: "sonnet", evidence, confidence: 0.8 },
 				{ "@id": "rule:test-haiku", priority: 100, conditions: [{ type: "role", values: ["impl"] }], model: "claude-haiku-5-5", effort: "low", reason: "haiku", evidence, confidence: 0.9 },
 				{ "@id": "rule:test-unmatched", priority: 999, conditions: [{ type: "role", values: ["review"] }], model: "claude-haiku-5-5", effort: "high", reason: "unmatched", evidence, confidence: 1 },
 			];
+			addOwnerException(ontology, "rule:test-sonnet");
+			addOwnerException(ontology, "rule:test-haiku");
+			addOwnerException(ontology, "rule:test-unmatched");
 		}, async () => {
 			const result = payload(await call("ordinary task", "impl"));
 			assert.deepEqual(result.candidates.map((candidate) => candidate.model), ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]);
@@ -209,11 +218,11 @@ try {
 
 	await test("test_recommend_returns_single_candidate_for_single_matching_rule", async () => {
 		await withOntology((ontology) => {
-			const ownerException = addOwnerExceptionEvidence(ontology);
 			ontology.rules = [
-				{ "@id": "rule:test-only", priority: 200, conditions: [{ type: "role", values: ["impl"] }], model: "claude-sonnet-5-5", effort: "medium", reason: "only", evidence: ["evidence:official-models", ownerException], confidence: 0.8 },
+				{ "@id": "rule:test-only", priority: 200, conditions: [{ type: "role", values: ["impl"] }], model: "claude-sonnet-5-5", effort: "medium", reason: "only", evidence: ["evidence:official-models"], confidence: 0.8 },
 				...ontology.rules.filter((rule) => rule.conditions.length === 0),
 			];
+			addOwnerException(ontology, "rule:test-only");
 		}, async () => {
 			assert.deepEqual(payload(await call("ordinary task", "impl")).candidates, [{ model: "claude-sonnet-5-5", effort: "medium" }]);
 		});
@@ -252,6 +261,14 @@ try {
 		const first = await call("Review concurrent cache security", "review");
 		const second = await call("Review concurrent cache security", "review");
 		assert.equal(first.content[0].text, second.content[0].text);
+	});
+
+	await test("test_recommend_output_matches_committed_snapshots", async () => {
+		const snapshots = JSON.parse(fs.readFileSync(snapshotsPath, "utf8"));
+		for (const snapshot of snapshots) {
+			const result = await call(snapshot.description, snapshot.role);
+			assert.equal(result.content[0].text, JSON.stringify(snapshot.output, null, 2), snapshot.name);
+		}
 	});
 
 	await test("test_recommend_cannot_access_user_supplied_paths", async () => {

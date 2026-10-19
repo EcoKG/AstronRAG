@@ -38,12 +38,27 @@ const modelNode = z.object({
 	pricing: z.array(priceTier).min(1),
 	sources: z.array(sourceNode).min(1),
 }).strict();
-const constraintNode = z.object({
+const excludeConstraintNode = z.object({
 	"@id": id,
-	kind: z.enum(["exclude", "default"]),
+	kind: z.literal("exclude"),
 	models: z.array(z.string().min(1)).min(1),
 	reason: z.string().min(1),
 }).strict();
+const defaultConstraintNode = z.object({
+	"@id": id,
+	kind: z.literal("default"),
+	models: z.array(z.string().min(1)).min(1),
+	reason: z.string().min(1),
+}).strict();
+const ownerExceptionConstraintNode = z.object({
+	"@id": id,
+	kind: z.literal("owner-exception"),
+	rule: id,
+	approvedBy: z.literal("p1"),
+	approvedAt: z.string().date(),
+	link: z.string().url(),
+}).strict();
+const constraintNode = z.discriminatedUnion("kind", [excludeConstraintNode, defaultConstraintNode, ownerExceptionConstraintNode]);
 const ruleNode = z.object({
 	"@id": id,
 	priority: z.number().int(),
@@ -70,7 +85,14 @@ export const ontologySchema = z.object({
 	evidence: z.array(evidenceNode).min(1),
 	constraints: z.array(constraintNode).min(1),
 	rules: z.array(ruleNode).min(1),
-}).strict();
+}).strict().superRefine((ontology, context) => {
+	const ruleIds = new Set(ontology.rules.map((rule) => rule["@id"]));
+	ontology.constraints.forEach((constraint, index) => {
+		if (constraint.kind === "owner-exception" && !ruleIds.has(constraint.rule)) {
+			context.addIssue({ code: z.ZodIssueCode.custom, path: ["constraints", index, "rule"], message: `unregistered owner-exception rule: ${constraint.rule}` });
+		}
+	});
+});
 
 export type Ontology = z.infer<typeof ontologySchema>;
 

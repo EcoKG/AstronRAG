@@ -1,0 +1,102 @@
+[
+	{
+		"name": "일반 구현 요청",
+		"description": "Implement a small Claude feature",
+		"role": "impl",
+		"output": {
+			"model": "claude-opus-5-5",
+			"effort": "medium",
+			"role": "impl",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "normal",
+				"risk": "normal"
+			},
+			"reasons": [
+				"Claude work defaults to Opus 5.5 medium under the owner constraint."
+			],
+			"appliedConstraints": [
+				{
+					"id": "constraint:owner-claude-default",
+					"reason": "Owner constraint makes Claude Opus the default model."
+				}
+			],
+			"evidence": [
+				"https://platform.claude.com/docs/en/about-claude/models/overview",
+				"https://platform.claude.com/docs/en/build-with-claude/effort"
+			],
+			"candidates": [
+				{
+					"model": "claude-opus-5-5",
+					"effort": "medium"
+				}
+			],
+			"ruleConfidence": 0.2
+		}
+	},
+	{
+		"name": "보안 동시성 검토",
+		"description": "Review concurrent cache security",
+		"role": "review",
+		"output": {
+			"model": "claude-opus-5-5",
+			"effort": "high",
+			"role": "review",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "high",
+				"risk": "high"
+			},
+			"reasons": [
+				"Planning and review use the measured high-effort Opus placement."
+			],
+			"appliedConstraints": [],
+			"evidence": [
+				"https://platform.claude.com/docs/en/build-with-claude/effort",
+				"ontology/evidence/measurements-2026-10-19.md"
+			],
+			"candidates": [
+				{
+					"model": "claude-opus-5-5",
+					"effort": "high"
+				}
+			],
+			"ruleConfidence": 0.2
+		}
+	},
+	{
+		"name": "특수문자 연구 요청",
+		"description": "Research quoted 'value', backslash \\ and ../path without reading files",
+		"role": "research",
+		"output": {
+			"model": "claude-opus-5-5",
+			"effort": "medium",
+			"role": "research",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "normal",
+				"risk": "normal"
+			},
+			"reasons": [
+				"Claude work defaults to Opus 5.5 medium under the owner constraint."
+			],
+			"appliedConstraints": [
+				{
+					"id": "constraint:owner-claude-default",
+					"reason": "Owner constraint makes Claude Opus the default model."
+				}
+			],
+			"evidence": [
+				"https://platform.claude.com/docs/en/about-claude/models/overview",
+				"https://platform.claude.com/docs/en/build-with-claude/effort"
+			],
+			"candidates": [
+				{
+					"model": "claude-opus-5-5",
+					"effort": "medium"
+				}
+			],
+			"ruleConfidence": 0.2
+		}
+	}
+]

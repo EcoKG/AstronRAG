@@ -189,6 +189,9 @@ npm run build
 npm test          # 스모크 1종 + 회귀 14종 (총 363개 단언)
 ```
 
+런타임은 `ontology/ontology.json`을 읽으며, 개발 의존성 `js-yaml`을 사용하는 빌드가 YAML에서 JSON을 다시 생성하므로 생성 JSON도 추적합니다.
+owner-exception의 `approvedBy: p1`에서 `p1`은 주인님을 가리키는 고정 식별자이며 이메일 등 개인정보가 아닙니다.
+
 `npm test`는 실제 stdio MCP 서버를 띄우고 임시 볼트에 파일을 쓰므로 수십 초 걸립니다. 개별 실행:
 
 ```bash

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import yaml from "js-yaml";
 import { collectOfficialModels, diffOfficialModels } from "../dist/model-docs.js";
-import { parseOntology } from "../dist/ontology.js";
+import { ontologySchema, parseOntology } from "../dist/ontology.js";
 import { buildOntologyCache } from "./build-ontology.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -73,6 +73,55 @@ await test("test_ontology_rejects_unsafe_yaml_and_unknown_shape", () => {
 	assert.throws(() => parseOntology(`version: 1\n${"x: {".repeat(70)}x: 1${"}".repeat(70)}\n`), /depth/i);
 });
 
+await test("test_ontology_schema_rejects_owner_exception_missing_required_fields", () => {
+	const ontology = JSON.parse(fs.readFileSync(path.join(root, "ontology", "ontology.json"), "utf8"));
+	const complete = { "@id": "constraint:test-owner-exception", kind: "owner-exception", rule: ontology.rules[0]["@id"], approvedBy: "p1", approvedAt: "2026-10-19", link: "https://example.test/approval" };
+	const accepted = structuredClone(ontology);
+	accepted.constraints.push(complete);
+	assert.doesNotThrow(() => ontologySchema.parse(accepted));
+	for (const field of ["rule", "approvedBy", "approvedAt", "link"]) {
+		const candidate = structuredClone(ontology);
+		const incomplete = { ...complete };
+		delete incomplete[field];
+		candidate.constraints.push(incomplete);
+		assert.throws(() => ontologySchema.parse(candidate), field);
+	}
+});
+
+await test("test_ontology_schema_rejects_invalid_owner_exception_metadata", () => {
+	const ontology = JSON.parse(fs.readFileSync(path.join(root, "ontology", "ontology.json"), "utf8"));
+	const complete = { "@id": "constraint:test-owner-exception", kind: "owner-exception", rule: ontology.rules[0]["@id"], approvedBy: "p1", approvedAt: "2026-10-19", link: "https://example.test/approval" };
+	const accepted = structuredClone(ontology);
+	accepted.constraints.push(complete);
+	assert.doesNotThrow(() => ontologySchema.parse(accepted));
+	for (const invalid of [
+		{ approvedBy: "p2" },
+		{ approvedBy: "" },
+		{ approvedAt: "2026-13-40" },
+		{ approvedAt: "" },
+		{ link: "not-a-url" },
+		{ link: "" },
+	]) {
+		const candidate = structuredClone(ontology);
+		candidate.constraints.push({ ...complete, ...invalid });
+		assert.throws(() => ontologySchema.parse(candidate));
+	}
+});
+
+await test("test_ontology_schema_rejects_owner_exception_for_unknown_rule", () => {
+	const ontology = JSON.parse(fs.readFileSync(path.join(root, "ontology", "ontology.json"), "utf8"));
+	ontology.constraints.push({ "@id": "constraint:test-owner-exception", kind: "owner-exception", rule: "rule:missing", approvedBy: "p1", approvedAt: "2026-10-19", link: "https://example.test/approval" });
+	assert.throws(() => ontologySchema.parse(ontology), /rule:missing/);
+});
+
+await test("test_repository_ontology_contains_no_owner_exceptions", () => {
+	const source = fs.readFileSync(path.join(root, "ontology", "ontology.yaml"), "utf8");
+	const fromYaml = yaml.load(source);
+	const fromJson = JSON.parse(fs.readFileSync(path.join(root, "ontology", "ontology.json"), "utf8"));
+	assert.equal(fromYaml.constraints.filter((constraint) => constraint.kind === "owner-exception").length, 0);
+	assert.equal(fromJson.constraints.filter((constraint) => constraint.kind === "owner-exception").length, 0);
+});
+
 await test("test_official_doc_fixtures_are_versioned_and_attributed", () => {
 	for (const name of ["models-overview.md", "prompt-caching.md", "effort.md", "features.md"]) {
 		const text = fs.readFileSync(path.join(fixtures, name), "utf8");
@@ -100,6 +149,47 @@ await test("test_collector_preserves_haiku_price_tiers", () => {
 	const haiku = collectOfficialModels(fixtures, root).find((model) => model.id === "claude-haiku-5-5");
 	assert.deepEqual(haiku?.pricing.map((tier) => tier.promptTokens), [100000, null]);
 	assert.deepEqual(haiku?.pricing.map((tier) => tier.input), [0.1, 0.5]);
+});
+
+await test("test_diff_added_model_uses_current_source_and_serializes_all_fields", () => {
+	const added = structuredClone(collectOfficialModels(fixtures, root)[0]);
+	added.sources = [{ url: "https://example.test/current", checkedAt: "2026-10-19", fields: ["id"] }];
+	const diffs = diffOfficialModels([], [added]);
+	assert.ok(diffs.length > 0);
+	for (const diff of diffs) {
+		assert.equal(diff.sourceUrl, "https://example.test/current");
+		assert.equal(diff.checkedAt, "2026-10-19");
+		assert.equal(diff.previous, null);
+		assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(diff))), ["path", "kind", "previous", "current", "sourceUrl", "checkedAt"]);
+	}
+});
+
+await test("test_diff_removed_middle_model_uses_previous_source_and_serializes_all_fields", () => {
+	const previous = structuredClone(collectOfficialModels(fixtures, root));
+	const removed = previous[1];
+	removed.sources = [{ url: "https://example.test/previous-middle", checkedAt: "2026-10-18", fields: ["id"] }];
+	const current = previous.filter((model) => model.id !== removed.id);
+	const diffs = diffOfficialModels(previous, current).filter((diff) => diff.path.startsWith(`${removed.id}.`));
+	assert.ok(diffs.length > 0);
+	for (const diff of diffs) {
+		assert.equal(diff.sourceUrl, "https://example.test/previous-middle");
+		assert.equal(diff.checkedAt, "2026-10-18");
+		assert.equal(diff.current, null);
+		assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(diff))), ["path", "kind", "previous", "current", "sourceUrl", "checkedAt"]);
+	}
+});
+
+await test("test_diff_removed_last_model_uses_previous_source_and_serializes_all_fields", () => {
+	const removed = structuredClone(collectOfficialModels(fixtures, root)[0]);
+	removed.sources = [{ url: "https://example.test/previous-last", checkedAt: "2026-10-17", fields: ["id"] }];
+	const diffs = diffOfficialModels([removed], []);
+	assert.ok(diffs.length > 0);
+	for (const diff of diffs) {
+		assert.equal(diff.sourceUrl, "https://example.test/previous-last");
+		assert.equal(diff.checkedAt, "2026-10-17");
+		assert.equal(diff.current, null);
+		assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(diff))), ["path", "kind", "previous", "current", "sourceUrl", "checkedAt"]);
+	}
 });
 
 await test("test_collector_reports_sorted_field_diffs", () => {

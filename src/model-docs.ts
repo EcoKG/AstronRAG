@@ -116,16 +116,19 @@ function flatten(value: unknown, prefix = ""): Map<string, unknown> {
 export function diffOfficialModels(previous: OfficialModel[], current: OfficialModel[]): ModelDiff[] {
 	const oldValues = flatten(Object.fromEntries(previous.map((model) => [model.id, model])));
 	const newValues = flatten(Object.fromEntries(current.map((model) => [model.id, model])));
+	const previousById = new Map(previous.map((model) => [model.id, model]));
 	const currentById = new Map(current.map((model) => [model.id, model]));
 	const diffs: ModelDiff[] = [];
 	for (const pathName of [...new Set([...oldValues.keys(), ...newValues.keys()])].sort()) {
 		const before = oldValues.get(pathName);
 		const after = newValues.get(pathName);
 		if (JSON.stringify(before) === JSON.stringify(after)) continue;
-		const model = currentById.get(pathName.split(".")[0]) ?? current[0];
+		const kind = before === undefined ? "added" : after === undefined ? "removed" : "changed";
+		const modelId = pathName.split(".")[0];
+		const model = kind === "removed" ? previousById.get(modelId) : currentById.get(modelId);
 		const source = model?.sources.find((item) => item.fields.some((field) => pathName.includes(field))) ?? model?.sources[0];
 		if (!source) throw new Error("diff source unavailable");
-		diffs.push({ path: pathName, kind: before === undefined ? "added" : after === undefined ? "removed" : "changed", previous: before, current: after, sourceUrl: source.url, checkedAt: source.checkedAt });
+		diffs.push({ path: pathName, kind, previous: before ?? null, current: after ?? null, sourceUrl: source.url, checkedAt: source.checkedAt });
 	}
 	return diffs;
 }

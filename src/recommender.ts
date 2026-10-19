@@ -29,8 +29,6 @@ export const conditionEvaluators: Record<string, ConditionEvaluator> = {
 	risk: (values, context) => values.includes(context.classification.risk),
 };
 
-const ownerExceptionEvidenceId = "evidence:owner-exception";
-
 export function classifyTask(description: string, role: Role): Classification {
 	const text = description.toLocaleLowerCase();
 	const risky = ["security", "보안", "concurrent", "동시", "timing", "타이밍"].some((keyword) => text.includes(keyword));
@@ -49,8 +47,9 @@ export function recommendModel(ontology: Ontology, description: string, role: Ro
 	const excludeConstraints = ontology.constraints.filter((item) => item.kind === "exclude");
 	const excluded = new Set(excludeConstraints.flatMap((item) => item.models));
 	const exclusionAllowedRules = initialRules.filter((rule) => !excluded.has(rule.model));
+	const ownerExceptionRuleIds = new Set(ontology.constraints.filter((item) => item.kind === "owner-exception").map((item) => item.rule));
 	const blockedByDefault = defaultConstraint
-		? exclusionAllowedRules.filter((rule) => rule.model.startsWith("claude-") && !defaultConstraint.models.includes(rule.model) && !rule.evidence.includes(ownerExceptionEvidenceId))
+		? exclusionAllowedRules.filter((rule) => rule.model.startsWith("claude-") && !defaultConstraint.models.includes(rule.model) && !ownerExceptionRuleIds.has(rule["@id"]))
 		: [];
 	const ownerAllowedRules = exclusionAllowedRules.filter((rule) => !blockedByDefault.includes(rule));
 	const usedConstraintFallback = !usedDefault && initialRules.length > 0 && ownerAllowedRules.length === 0;
