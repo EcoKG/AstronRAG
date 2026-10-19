@@ -39,7 +39,7 @@ function check(name, cond, detail = "") {
   }
 }
 
-const cleanups = [];
+const cleanups = /** @type {string[]} */ (Array());
 function freshDir(tag) {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), `bbm-nat-${tag}-`));
   cleanups.push(d);
@@ -177,6 +177,7 @@ console.log("5) 훅 주입 블록의 검증 지시");
     encoding: "utf-8",
     timeout: 15000,
     input: JSON.stringify({ hook_event_name: "SessionStart", session_id: "N1", source: "startup" }),
+    env: { ...process.env, BBM_STORE: "file" },
   });
   // ★ 패치 전 실패: 주입 블록에 검증 지시가 한 줄도 없었다
   check("시점 관측임을 명시", /point-in-time observations, not live state/.test(out), out.slice(-400));

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { logWarn } from "./log.js";
 import { inScope, stripLinkSection, type ScopeFilter } from "./retriever.js";
+import type { MemoryStore as Storage } from "./stores/memory-store.js";
 import type { MemoryRecord } from "./types.js";
 
 /** 임베딩 모델 — 다국어 e5 small */
@@ -110,6 +111,8 @@ export async function loadEmbedder(): Promise<Embed> {
  * 임베딩은 indexDir 의 vectors.v1.* 에 영속하고, 임베딩 대상 텍스트 해시가 바뀐 기억만 다시 계산한다(모델이 다르면 전체).
  */
 export class VectorRetriever {
+	private readonly indexDir: string | null;
+	private readonly storage: Storage | null;
 	state: VectorState = "warming";
 	/** unavailable 이 된 사유 */
 	reason = "";
@@ -123,10 +126,18 @@ export class VectorRetriever {
 
 	/** indexDir 이 null 이면 영속하지 않는다. embed 를 주면 모델을 올리지 않고 그것을 쓴다 */
 	constructor(
-		private readonly indexDir: string | null,
+		target: string | null | Storage,
 		private embed: Embed | null = null,
 		readonly model = `${MODEL_ID}@${DTYPE}`,
-	) {}
+	) {
+		if (typeof target === "string" || target === null) {
+			this.indexDir = target;
+			this.storage = null;
+		} else {
+			this.indexDir = null;
+			this.storage = target;
+		}
+	}
 
 	/** 모델을 올리고 저장된 임베딩을 적재해 항목과 맞춘 뒤 ready 가 된다 — 실패하면 unavailable */
 	async warm(entries: () => { key: string; record: MemoryRecord }[]): Promise<void> {
@@ -152,6 +163,15 @@ export class VectorRetriever {
 
 	/** 저장된 임베딩을 적재한다 — 없거나 형식·모델·크기·해시가 맞지 않으면 빈 상태로 둔다 */
 	private load(): void {
+		if (this.storage) {
+			const rows = this.storage.loadEmbeddings(this.model);
+			if (rows.length === 0) return;
+			const dim = rows[0].vector.length;
+			if (dim === 0 || rows.some((row) => row.vector.length !== dim)) return;
+			this.dim = dim;
+			this.rows = new Map(rows.map((row) => [row.key, { record: null, hash: row.hash, vec: row.vector }]));
+			return;
+		}
 		if (!this.indexDir) return;
 		let meta: unknown;
 		let bin: Buffer;
@@ -216,7 +236,18 @@ export class VectorRetriever {
 
 	/** 임베딩 행렬과 메타를 쓴다 — 아직 임베딩한 적이 없으면(차원 미정) 쓰지 않고, 실패는 경고만 남긴다(임베딩은 캐시다) */
 	private persist(): void {
-		if (!this.indexDir || this.dim === 0) return;
+		if (this.dim === 0) return;
+		if (this.storage) {
+			try {
+				this.storage.replaceEmbeddings(this.model, [...this.rows].map(([key, row]) => ({ key, hash: row.hash, vector: row.vec })));
+				this.unsaved = false;
+			} catch (err) {
+				this.unsaved = true;
+				logWarn(`벡터 임베딩 저장 실패(다음 sync 에 재시도): ${err instanceof Error ? err.message : String(err)}`);
+			}
+			return;
+		}
+		if (!this.indexDir) return;
 		const dim = this.dim;
 		const bin = new Uint8Array(this.rows.size * dim * 4);
 		let at = 0;

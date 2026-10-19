@@ -16,6 +16,8 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
+const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+fs.mkdirSync(testTmp, { recursive: true });
 const distUrl = (f) => `file://${path.join(root, "dist", f).replace(/\\/g, "/")}`;
 const { Vault } = await import(distUrl("vault.js"));
 const { MemoryStore } = await import(distUrl("store.js"));
@@ -29,15 +31,18 @@ function check(name, cond, detail = "") {
   }
 }
 
-const cleanups = [];
+const cleanups = /** @type {string[]} */ (Array());
 function freshDir() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-space-"));
+  const d = fs.mkdtempSync(path.join(testTmp, "bbm-space-"));
   cleanups.push(d);
   return d;
 }
 const memPath = (dir, slug) => path.join(dir, "memories", `${slug}.md`);
-const strengthOf = (dir, slug) =>
-  Number(/storage_strength: ([\d.]+)/.exec(fs.readFileSync(memPath(dir, slug), "utf-8"))[1]);
+const strengthOf = (dir, slug) => {
+  const match = /storage_strength: ([\d.]+)/.exec(fs.readFileSync(memPath(dir, slug), "utf-8"));
+  if (!match) throw new Error("storage_strength 필드가 없습니다");
+  return Number(match[1]);
+};
 /** last_reinforced 를 n분 전으로 되감아 "그만큼 기다린" 상태를 만든다 */
 function waited(dir, slug, minutes) {
   const fp = memPath(dir, slug);
@@ -230,6 +235,21 @@ console.log("9) 확신도 게이트로 제외된 건수 노출 (C6)");
   const rep = new MemoryStore(new Vault(dir)).reflect();
   check("망각 후보는 0건 (확신도 0.9)", rep.forgetCandidates.length === 0);
   check("제외된 건수가 노출됨", rep.trustedButFaded > 0, `trustedButFaded=${rep.trustedButFaded}`);
+}
+
+// ── 10. 고정 시계로 read 직후 recall 게이트를 재현한다
+console.log("10) 고정 시계 read → recall 게이트 재현");
+{
+  const dir = freshDir();
+  let now = Date.parse("2026-01-01T00:00:00.000Z");
+  const s = new MemoryStore(new Vault(dir), undefined, () => now);
+  const rec = s.remember({ title: "고정 시계 기억", content: "엑스레이 본문.", type: "semantic" }).record;
+  now += 24 * 3_600_000;
+  s.read(rec.slug);
+  const afterRead = s.resolve(rec.slug).record.storageStrength;
+  s.search("엑스레이");
+  const afterRecall = s.resolve(rec.slug).record.storageStrength;
+  check("test_spacing_clock_reproduces_read_then_recall_gate", afterRecall === afterRead, `${afterRead} → ${afterRecall}`);
 }
 
 for (const d of cleanups) fs.rmSync(d, { recursive: true, force: true });

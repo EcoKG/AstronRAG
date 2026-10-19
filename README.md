@@ -189,6 +189,9 @@ npm run build
 npm test          # 스모크 1종 + 회귀 14종 (총 363개 단언)
 ```
 
+런타임은 `ontology/ontology.json`을 읽으며, 개발 의존성 `js-yaml`을 사용하는 빌드가 YAML에서 JSON을 다시 생성하므로 생성 JSON도 추적합니다.
+owner-exception의 `approvedBy: p1`에서 `p1`은 주인님을 가리키는 고정 식별자이며 이메일 등 개인정보가 아닙니다.
+
 `npm test`는 실제 stdio MCP 서버를 띄우고 임시 볼트에 파일을 쓰므로 수십 초 걸립니다. 개별 실행:
 
 ```bash
@@ -537,6 +540,16 @@ npm run usage:report -- --since 2026-07-01
 - 강화 기록은 쓰기 직전 파일을 다시 읽어 증분만 적용합니다. 그 사이 다른 세션이 한 `revise`·`forget`을 되돌리지 않습니다. 2 프로세스 × 300회 동시 회상에서 강화 소실 0건을 실측했습니다.
 - 다만 read-modify-write 자체는 락이 아니라 **창을 좁힌** 것이라, 이론적 경합 가능성은 남습니다. 중요한 볼트는 git으로 관리하세요.
 
+## 저장소와 이관
+
+기본 저장소는 SQLite이며 `BBM_STORE=file`로 기존 Markdown `FileStore`를 계속 사용할 수 있습니다. SQLite 전환 전에는 운영 MCP를 멈춘 뒤 `npm run migrate:vault -- --vault <vault> --store-path <db>`를 실행해야 합니다. 문제가 있으면 `BBM_STORE=file`로 되돌리면 원본 vault를 그대로 사용합니다. DB→Markdown export와 실제 운영 전환 절차는 D4 범위입니다.
+
+이관 도구는 원본을 읽기 전용으로 다루며, 이관 전에 vault 폴더 사본과 파일별 SHA-256 manifest를 저장소·vault 밖에 만듭니다. 기본 백업 위치는 `%LOCALAPPDATA%/AstronRAG/backups/<UTC 시각>`이고 `--backup-dir`로 정확한 목적지를 지정할 수 있습니다. 사본 hash 검증이 실패하면 DB를 열지 않으며, 검증된 백업은 자동 삭제하지 않습니다.
+
+SQLite는 WAL 대신 rollback journal(`DELETE`)과 `busy_timeout=5000`을 사용합니다. 현재 런타임 SQLite 3.50.4는 [WAL-Reset Bug](https://www.sqlite.org/wal.html)의 영향 범위(3.7.0~3.51.2)에 있고 MCP 세션마다 별도 프로세스가 같은 파일을 쓰기 때문입니다. 런타임이 3.51.3 이상 또는 3.50.7 백포트로 올라가면 WAL을 재검토합니다.
+
+강화 갱신과 간격 게이트는 `updateRecord` 콜백 안에서 최신 레코드를 기준으로 다시 계산합니다. SQLite에서는 이 콜백이 `BEGIN IMMEDIATE` 트랜잭션 안에서 실행됩니다. `FLUSH_EVERY_ACCESS=false`일 때 게이트가 닫히면 접근 횟수도 저장하지 않으며 순위에는 사용하지 않습니다. `BEGIN IMMEDIATE`의 `SQLITE_BUSY` 재시도는 CPU 부하 병행 10회에서 소진 0회였던 최대 3회입니다. 끝내 반영하지 못하면 stderr 한 줄과 `reinforcement_unapplied` 사용 이벤트(`busy_exhausted` 또는 `exception_swallowed`)를 남깁니다. 사용 이벤트는 입력에 `ts: undefined`가 있어도 객체 전개 뒤 ISO 기본 시각을 확정해 유지합니다.
+
 ## 환경변수
 
 모두 **서버 기동 시 한 번만** 읽습니다. 값을 바꾸면 MCP 서버를 재시작해야 반영됩니다.
@@ -569,4 +582,4 @@ npm run usage:report -- --since 2026-07-01
 - [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) v1.x — `McpServer` + `StdioServerTransport`
 - `gray-matter` — YAML frontmatter 파싱/직렬화 (Obsidian 호환)
 - `zod` — 도구 입력 스키마
-- 저장소는 순수 파일시스템 — DB 없음, 전부 사람이 읽을 수 있는 마크다운
+- 저장소는 SQLite가 기본이며 `BBM_STORE=file`로 사람이 읽을 수 있는 Markdown 저장소를 선택할 수 있음

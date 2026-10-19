@@ -209,15 +209,31 @@ if (!resolved) process.exit(0);
 
 const vaultDir = resolved.dir;
 const memoriesDir = path.join(vaultDir, "memories");
+if (!fs.existsSync(vaultDir)) process.exit(0);
+let selectedStore = /** @type {any} */ (JSON.parse("null"));
+try {
+	const emitWarning = process.emitWarning;
+	process.emitWarning = function (warning, ...args) {
+		const type = typeof args[0] === "string" ? args[0] : args[0]?.type;
+		if (type === "ExperimentalWarning" && String(warning).includes("SQLite")) return;
+		return emitWarning.call(process, warning, ...args);
+	};
+	const { createMemoryStore, requiresVaultMigration } = await import(new URL("../dist/stores/index.js", import.meta.url).href);
+	selectedStore = createMemoryStore(vaultDir);
+	if (requiresVaultMigration(selectedStore)) {
+		selectedStore.close();
+		process.stderr.write("이관 필요: migrate 도구 실행 또는 BBM_STORE=file 로 되돌리기\n");
+		process.exit(0);
+	}
+} catch {
+	process.exit(0);
+}
+process.once("exit", () => selectedStore?.close());
 const markerPath = path.join(vaultDir, MARKER);
 
 /** 활성 기억 파일 수. 볼트가 아직 없으면 0 */
 function countMemories() {
-  try {
-    return fs.readdirSync(memoriesDir).filter((f) => f.endsWith(".md")).length;
-  } catch {
-    return 0;
-  }
+  return selectedStore?.inspect().memories ?? 0;
 }
 
 /**
@@ -233,14 +249,8 @@ function countMemories() {
  * "건수가 줄었다" 를 보는 눈이 없었다. 기억이 사라지지 않는다는 보장은 대체의 전제다.
  */
 function countTotal() {
-  const n = (dir) => {
-    try {
-      return fs.readdirSync(dir).filter((f) => f.endsWith(".md")).length;
-    } catch {
-      return 0;
-    }
-  };
-  return n(memoriesDir) + n(path.join(vaultDir, "archive"));
+  const state = selectedStore?.inspect();
+  return state ? state.memories + state.archived : 0;
 }
 
 /**
@@ -352,13 +362,9 @@ function readMarker() {
 function logUsage(event) {
   if (process.env.BIGBRAIN_USAGE_LOG === "0") return;
   try {
-    fs.appendFileSync(
-      path.join(vaultDir, ".bbm-usage.jsonl"),
-      `${JSON.stringify({ ts: new Date().toISOString(), src: "hook", ...event })}\n`,
-      "utf-8",
-    );
+    selectedStore?.appendUsageEvent({ src: "hook", ...event });
   } catch {
-    /* 계측 실패가 훅을 망가뜨리면 안 된다 */
+    /* 계측 실패가 훅을 망가뜨리면 안 된다. */
   }
 }
 
@@ -413,7 +419,8 @@ async function autoRecall(prompt, injected) {
   for (let limit = AUTO_MAX * 2; ; limit *= 2) {
     let results;
     try {
-      results = store.searchPersistedIndex(vaultDir, query, { limit, project }).results;
+      const currentFilePath = selectedStore?.constructor?.name === "SqliteStore" ? selectedStore.filePath("", false) : undefined;
+      results = store.searchPersistedIndex(vaultDir, query, { limit, project, currentFilePath }).results;
     } catch {
       return null;
     }

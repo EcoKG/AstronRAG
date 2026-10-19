@@ -30,9 +30,11 @@ function check(name, cond, detail = "") {
   }
 }
 
-const cleanups = [];
+const cleanups = /** @type {string[]} */ (Array());
+const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+fs.mkdirSync(testTmp, { recursive: true });
 function freshDir(name) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), `bbm-hook-${name}-`));
+  const d = fs.mkdtempSync(path.join(testTmp, `bbm-hook-${name}-`));
   cleanups.push(d);
   return d;
 }
@@ -49,13 +51,14 @@ function makeVault(root, label, n) {
 }
 
 /** guard 실행 — { out, code }. input 은 훅이 stdin 으로 받는 이벤트 JSON. */
-function run(args, cwd, input = "") {
+function run(args, cwd, input = "", extraEnv = {}) {
   try {
     const out = execFileSync(process.execPath, [guard, ...args], {
       cwd,
       encoding: "utf-8",
       timeout: 15000,
       input,
+      env: { ...process.env, BBM_STORE: "file", ...extraEnv },
     });
     return { out, code: 0 };
   } catch (err) {
@@ -203,7 +206,7 @@ console.log("3) 무저장 감지");
   // 공식 문서: exit 0 stdout 이 컨텍스트가 되는 이벤트는 UserPromptSubmit/UserPromptExpansion/
   // SessionStart 뿐이고 Stop 은 아니다. Stop 의 비차단 전달 경로는 JSON 의
   // hookSpecificOutput.additionalContext 하나뿐이다.
-  let parsed = null;
+  let parsed = /** @type {any} */ (JSON.parse("null"));
   try {
     parsed = JSON.parse(noSave.out);
   } catch {
@@ -249,6 +252,20 @@ console.log("4) 실패 시 침묵 + 종료코드 0");
 
   const noArgs = run(["--start"], root);
   check("볼트 인자 자체가 없어도 종료코드 0", noArgs.code === 0);
+}
+
+console.log("4-b) SQLite 훅 실패 시 stdout 침묵");
+{
+  const root = freshDir("sqlite-silent");
+  const parentFile = path.join(root, "not-a-directory");
+  fs.writeFileSync(parentFile, "x");
+  const result = run(
+    ["--start", "--vault-force", root],
+    root,
+    startEvent(),
+    { BBM_STORE: "sqlite", BBM_SQLITE_PATH: path.join(parentFile, "store.sqlite") },
+  );
+  check("test_hook_failure_keeps_stdout_empty_with_sqlite_store", result.out === "" && result.code === 0, result.out.slice(0, 200));
 }
 
 // ── 5. 마커 생명주기 (H5)
@@ -306,7 +323,7 @@ console.log("6) 경고 빈도 — Stop 은 매 턴 발화한다");
   const root = freshDir("nag");
   const v = makeVault(root, "N", 1);
   run(["--start", "--vault-force", v], root, startEvent({ session_id: "S1", source: "startup" }));
-  const turns = [];
+  const turns = /** @type {string[]} */ (Array());
   for (let turn = 0; turn < 5; turn++) {
     turns.push(run(["--stop", "--vault-force", v], root, stopEvent({ session_id: "S1" })).out.trim());
   }

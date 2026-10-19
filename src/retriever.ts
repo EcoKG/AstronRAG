@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { logWarn } from "./log.js";
-import { type Vault, cloneRecord, writeFileAtomic } from "./vault.js";
+import type { MemoryStore as Storage } from "./stores/memory-store.js";
+import { cloneRecord, writeFileAtomic } from "./vault.js";
 import type { MemoryRecord, MemoryType } from "./types.js";
 
 /** 이보다 토큰이 적은 집합은 유사도 판단 근거가 부족하다고 보고 비교하지 않는다 */
@@ -149,7 +150,7 @@ export interface Retriever {
 	search(q: ParsedQuery, k: number, filter: ScopeFilter, scorer?: Scorer): Candidate[];
 	upsert(rec: MemoryRecord, archived?: boolean): void;
 	remove(slug: string): void;
-	sync(vault: Vault): void;
+	sync(vault: Storage): void;
 	/** 항목 키와 레코드를 항목 순서대로 — 레코드는 공유 참조라 변이하면 안 된다 */
 	entries(): { key: string; record: MemoryRecord }[];
 	/** 항목 키의 점수 0 후보 — 없거나 범위 밖이면 null */
@@ -377,15 +378,18 @@ export class LexicalRetriever implements Retriever {
 	 * 읽기 전용 검색기에서 slug 의 항목이 지금 파일과 같은 파일 신원인지 — 파일이 없거나 바뀌었으면 false.
 	 * 그 slug 의 파일만 stat 한다. 읽기 전용이 아니면 sync 가 이미 대조했으므로 항상 true.
 	 */
-	isCurrent(slug: string): boolean {
+	isCurrent(slug: string, currentFilePath?: string): boolean {
 		const root = this.readOnlyRoot;
 		if (!root) return true;
 		const keys = [entryKey(slug, false), entryKey(slug, true)].filter((k) => this.keyIndex.has(k));
-		return keys.length > 0 && keys.every((k) => sameStat(this.docs[this.keyIndex.get(k) as number].stat, fileStat(keyPath(root, k))));
+		return keys.length > 0 && keys.every((k) => {
+			const source = currentFilePath ?? keyPath(root, k);
+			return sameStat(this.docs[this.keyIndex.get(k) as number].stat, fileStat(source));
+		});
 	}
 
 	/** 볼트의 인덱스 파일을 적재한다 — 없으면 빈 상태, 손상·버전 불일치면 지우고 빈 상태에서 다시 만든다 */
-	private load(vault: Vault): void {
+	private load(vault: Storage): void {
 		this.root = path.resolve(vault.root);
 		this.docs = [];
 		this.keyIndex = new Map();
@@ -430,7 +434,7 @@ export class LexicalRetriever implements Retriever {
 	}
 
 	/** 인덱스 파일과 "*" 한 줄 .gitignore 를 쓴다 — 실패는 경고만 남긴다(인덱스는 캐시다) */
-	private persist(vault: Vault): void {
+	private persist(vault: Storage): void {
 		if (this.readOnlyRoot || !this.root || vault.nativeMemoryFiles.length > 0) return;
 		const postings = this.ensurePostings();
 		const data: IndexFile = {
@@ -549,7 +553,7 @@ export class LexicalRetriever implements Retriever {
 	 * 다르면 vault.read 로 다시 읽는다(T38 읽기 캐시와 같은 키·순서). 바뀐 것이 있으면 인덱스 파일을 통째로 교체한다.
 	 * 기억 파일이 그대로여도 인덱스 파일이 마지막 적재·저장 때와 다르면(지워짐·다른 프로세스가 덮어씀) 교체한다.
 	 */
-	sync(vault: Vault): void {
+	sync(vault: Storage): void {
 		if (path.resolve(vault.root) !== this.root) this.load(vault);
 		const next: Entry[] = [];
 		let changed = false;

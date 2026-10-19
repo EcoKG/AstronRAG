@@ -19,7 +19,7 @@ const root = path.resolve(here, "..");
 const entry = path.join(root, "dist", "index.js");
 
 let failures = 0;
-function check(name, cond, detail = "") {
+function check(name = "", cond = false, detail = "") {
   if (cond) console.log(`  ✔ ${name}`);
   else {
     failures++;
@@ -52,7 +52,8 @@ console.log("2) 프롬프트 내용");
 {
   const res = await client.getPrompt({ name: "consolidate", arguments: {} });
   check("메시지 1건 반환", res.messages.length === 1, `len=${res.messages.length}`);
-  const text = res.messages[0]?.content?.text ?? "";
+  const content = res.messages[0]?.content;
+  const text = content?.type === "text" ? content.text : "";
   check("role 이 user", res.messages[0]?.role === "user");
   check("본문이 비어있지 않음", text.length > 200, `len=${text.length}`);
 
@@ -79,9 +80,11 @@ console.log("2) 프롬프트 내용");
 console.log("3) 기존 기능 무회귀");
 {
   const { tools } = await client.listTools();
-  check("도구 8개 그대로", tools.length === 8, `len=${tools.length}`);
+  check("도구 9개 계약", tools.length === 9, `len=${tools.length}`);
   const res = await client.callTool({ name: "reflect", arguments: {} });
-  const json = JSON.parse(res.content[0].text);
+  const content = res.content;
+  if (!Array.isArray(content)) throw new TypeError();
+  const json = JSON.parse(content[0].text);
   check("reflect 정상 동작", typeof json.counts?.total === "number");
   check("프롬프트가 참조하는 trusted_but_faded 필드 실재", "trusted_but_faded" in json, Object.keys(json).join(","));
 }

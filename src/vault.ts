@@ -146,15 +146,17 @@ export class Vault {
    */
   readonly nativeMemoryFiles: string[];
 
-  constructor(root: string) {
+  constructor(root: string, options: { readOnly?: boolean } = {}) {
     this.root = root;
     this.memoriesDir = path.join(root, "memories");
     this.archiveDir = path.join(root, "archive");
     this.quarantineDir = path.join(root, "quarantine");
     // mkdir 보다 **먼저** 판정한다 — 디렉터리를 만들고 나면 판정 근거가 흐려진다
     this.nativeMemoryFiles = detectNativeMemoryFiles(root);
-    fs.mkdirSync(this.memoriesDir, { recursive: true });
-    fs.mkdirSync(this.archiveDir, { recursive: true });
+    if (!options.readOnly) {
+      fs.mkdirSync(this.memoriesDir, { recursive: true });
+      fs.mkdirSync(this.archiveDir, { recursive: true });
+    }
   }
 
   /**
@@ -232,20 +234,8 @@ export class Vault {
       return null;
     }
 
-    if (raw.trim() === "") {
-      this.readCache.delete(fp);
-      this.quarantine(slug, archived, "빈 파일");
-      return null;
-    }
-    if (!hasClosingDelimiter(raw)) {
-      this.readCache.delete(fp);
-      this.quarantine(slug, archived, "닫는 frontmatter 구분자(---) 없음 — 쓰기 중 절단 의심");
-      return null;
-    }
-
     try {
-      const { data, content } = loadMatter()(raw, MATTER_OPTIONS);
-      const record = this.fromFrontmatter(slug, data, content.trim());
+      const { record } = this.parseRawRecord(slug, raw);
       // 캐시에는 클론을 넣는다 — 반환본을 호출부가 변이해도 캐시가 오염되지 않도록
       this.readCache.set(fp, { ino: st.ino, mtimeNs: st.mtimeNs, size: st.size, record: cloneRecord(record) });
       return record;
@@ -255,6 +245,17 @@ export class Vault {
       return null;
     }
   }
+
+	/** Markdown 원문을 파일 변경 없이 기억 레코드로 파싱한다. */
+	parseRawRecord(slug: string, raw: string): { record: MemoryRecord; hasExplicitId: boolean } {
+		if (raw.trim() === "") throw new Error("빈 파일");
+		if (!hasClosingDelimiter(raw)) throw new Error("닫는 frontmatter 구분자(---) 없음");
+		const { data, content } = loadMatter()(raw, MATTER_OPTIONS);
+		return {
+			record: this.fromFrontmatter(slug, data, content.trim()),
+			hasExplicitId: typeof data.id === "string" && data.id.length > 0,
+		};
+	}
 
   /**
    * 손상 파일을 quarantine/ 으로 **이동**한다(삭제 아님, 원본 바이트 그대로).

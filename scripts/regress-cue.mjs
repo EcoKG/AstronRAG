@@ -33,7 +33,7 @@ function check(name, cond, detail = "") {
   }
 }
 
-const cleanups = [];
+const cleanups = /** @type {string[]} */ (Array());
 function freshVault(tag, n = 1) {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), `bbm-cue-${tag}-`));
   cleanups.push(d);
@@ -49,7 +49,7 @@ const run = (args, cwd, input, env = {}) => {
       encoding: "utf-8",
       timeout: 15000,
       input,
-      env: { ...process.env, ...env },
+      env: { ...process.env, BBM_STORE: "file", ...env },
     });
   } catch (err) {
     return err.stdout ?? "";
@@ -85,7 +85,7 @@ console.log("2) 세션당 1회");
 {
   const v = freshVault("once");
   run(["--start", "--vault-force", v], v, startEv({ session_id: "C3", source: "startup" }));
-  const outs = [];
+  const outs = /** @type {string[]} */ (Array());
   for (let i = 0; i < 4; i++) {
     outs.push(run(["--prompt", "--vault-force", v], v, promptEv({ session_id: "C3", prompt: "아니야 틀렸어" })).trim());
   }
@@ -98,7 +98,7 @@ console.log("3) prompt 부재 시 턴 기반 폴백");
 {
   const v = freshVault("fallback");
   run(["--start", "--vault-force", v], v, startEv({ session_id: "C4", source: "startup" }));
-  const outs = [];
+  const outs = /** @type {string[]} */ (Array());
   for (let i = 0; i < 3; i++) {
     // prompt 없이 온다 — 문서로 확정되지 않은 필드이므로 이 경로가 실제 환경일 수 있다
     outs.push(run(["--prompt", "--vault-force", v], v, promptEv({ session_id: "C4" }), { BIGBRAIN_CUE_TURNS: "3" }).trim());
@@ -128,7 +128,7 @@ console.log("4) 저장은 큐를 영구히 끄지 않는다");
   check("저장 직후에는 침묵", right.trim() === "", right.slice(0, 200));
 
   // ★ 패치 전 실패: 여기서부터 영원히 침묵했다. 이제는 시계가 다시 흐른다.
-  const outs = [];
+  const outs = /** @type {string[]} */ (Array());
   for (let i = 0; i < 6; i++) {
     outs.push(run(["--prompt", "--vault-force", v], v, promptEv({ session_id: "C5" }), { BIGBRAIN_CUE_TURNS: "4" }).trim());
   }
@@ -148,7 +148,7 @@ console.log("4-b) 쿨다운");
 {
   const v = freshVault("cool");
   run(["--start", "--vault-force", v], v, startEv({ session_id: "C5b", source: "startup" }));
-  const outs = [];
+  const outs = /** @type {string[]} */ (Array());
   for (let i = 0; i < 12; i++) {
     outs.push(
       run(["--prompt", "--vault-force", v], v, promptEv({ session_id: "C5b", prompt: "아니야 틀렸어" }), {
@@ -190,7 +190,7 @@ console.log("6) 무해성");
   // stdin 이 아예 없어도 죽지 않는다
   let code = 0;
   try {
-    execFileSync(process.execPath, [guard, "--prompt", "--vault-force", v], { cwd: root, encoding: "utf-8", timeout: 15000, input: "" });
+    execFileSync(process.execPath, [guard, "--prompt", "--vault-force", v], { cwd: root, encoding: "utf-8", timeout: 15000, input: "", env: { ...process.env, BBM_STORE: "file" } });
   } catch (err) {
     code = err.status ?? -1;
   }
@@ -199,7 +199,7 @@ console.log("6) 무해성");
   // 깨진 stdin 도 마찬가지
   let code2 = 0;
   try {
-    execFileSync(process.execPath, [guard, "--prompt", "--vault-force", v], { cwd: root, encoding: "utf-8", timeout: 15000, input: "JSON 아님{{{" });
+    execFileSync(process.execPath, [guard, "--prompt", "--vault-force", v], { cwd: root, encoding: "utf-8", timeout: 15000, input: "JSON 아님{{{", env: { ...process.env, BBM_STORE: "file" } });
   } catch (err) {
     code2 = err.status ?? -1;
   }

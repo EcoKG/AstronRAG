@@ -1,0 +1,542 @@
+{
+  "constraints": [
+    {
+      "@id": "constraint:owner-claude-default",
+      "kind": "default",
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "reason": "Owner constraint makes Claude Opus the default model."
+    },
+    {
+      "@id": "constraint:owner-exclusions",
+      "kind": "exclude",
+      "models": [
+        "claude-fable-5-1",
+        "gpt-6-astra"
+      ],
+      "reason": "Owner constraint excludes gpt-6-astra and Fable from recommendations and candidates."
+    }
+  ],
+  "difficulties": [
+    {
+      "@id": "difficulty:high",
+      "name": "High"
+    },
+    {
+      "@id": "difficulty:normal",
+      "name": "Normal"
+    }
+  ],
+  "efforts": [
+    {
+      "@id": "effort:high",
+      "name": "High"
+    },
+    {
+      "@id": "effort:low",
+      "name": "Low"
+    },
+    {
+      "@id": "effort:max",
+      "name": "Maximum"
+    },
+    {
+      "@id": "effort:medium",
+      "name": "Medium"
+    },
+    {
+      "@id": "effort:xhigh",
+      "name": "Extra high"
+    }
+  ],
+  "evidence": [
+    {
+      "@id": "evidence:official-effort",
+      "label": "Official effort guidance",
+      "link": "https://platform.claude.com/docs/en/build-with-claude/effort"
+    },
+    {
+      "@id": "evidence:official-models",
+      "label": "Official model overview",
+      "link": "https://platform.claude.com/docs/en/about-claude/models/overview"
+    },
+    {
+      "@id": "evidence:role-stats",
+      "label": "Role and model measurements",
+      "link": "ontology/evidence/measurements-2026-10-19.md"
+    },
+    {
+      "@id": "evidence:seed-measurements",
+      "label": "Project seed measurements",
+      "link": "ontology/evidence/measurements-2026-10-19.md"
+    }
+  ],
+  "graphs": [
+    {
+      "@id": "graph:model-placement",
+      "name": "Model placement",
+      "nodes": [
+        "difficulty:high",
+        "difficulty:normal",
+        "effort:high",
+        "effort:medium",
+        "metric:coordinator-cost",
+        "metric:coordinator-interventions",
+        "metric:cost",
+        "metric:duration",
+        "metric:intermittent-failure",
+        "metric:rejection",
+        "metric:rollback",
+        "model:claude-haiku-5-5",
+        "model:claude-opus-5-5",
+        "model:claude-sonnet-5-5",
+        "risk:high",
+        "risk:normal",
+        "role:coordinator",
+        "role:impl",
+        "role:ops",
+        "role:plan",
+        "role:research",
+        "role:review",
+        "role:ship",
+        "task:coding",
+        "task:knowledge"
+      ]
+    }
+  ],
+  "models": [
+    {
+      "@id": "model:claude-fable-5-1",
+      "contextTokens": 1000000,
+      "defaultEffort": "high",
+      "features": [
+        "adaptive",
+        "image",
+        "multilingual",
+        "text",
+        "tools",
+        "vision"
+      ],
+      "id": "claude-fable-5-1",
+      "maxOutputTokens": 128000,
+      "name": "Claude Fable 5.1",
+      "platforms": [
+        "platform:bedrock",
+        "platform:claude-api",
+        "platform:foundry",
+        "platform:vertex"
+      ],
+      "pricing": [
+        {
+          "cacheRead": 0.25,
+          "cacheWrite1h": 20,
+          "cacheWrite5m": 12.5,
+          "input": 10,
+          "output": 50,
+          "promptTokens": null
+        }
+      ],
+      "sources": [
+        {
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "contextTokens",
+            "defaultEffort",
+            "features",
+            "maxOutputTokens",
+            "name",
+            "platforms"
+          ],
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview"
+        },
+        {
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "supportedEfforts"
+          ],
+          "url": "https://platform.claude.com/docs/en/build-with-claude/effort"
+        },
+        {
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "pricing"
+          ],
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing"
+        }
+      ],
+      "supportedEfforts": [
+        "high",
+        "low",
+        "max",
+        "medium",
+        "xhigh"
+      ]
+    },
+    {
+      "@id": "model:claude-haiku-5-5",
+      "contextTokens": 1000000,
+      "defaultEffort": "medium",
+      "features": [
+        "adaptive",
+        "image",
+        "multilingual",
+        "text",
+        "tools",
+        "vision"
+      ],
+      "id": "claude-haiku-5-5",
+      "maxOutputTokens": 128000,
+      "name": "Claude Haiku 5.5",
+      "platforms": [
+        "platform:bedrock",
+        "platform:claude-api",
+        "platform:foundry",
+        "platform:vertex"
+      ],
+      "pricing": [
+        {
+          "cacheRead": 0.01,
+          "cacheWrite1h": 0.2,
+          "cacheWrite5m": 0.125,
+          "input": 0.1,
+          "output": 0.5,
+          "promptTokens": 100000
+        },
+        {
+          "cacheRead": 0.05,
+          "cacheWrite1h": 1,
+          "cacheWrite5m": 0.625,
+          "input": 0.5,
+          "output": 2.5,
+          "promptTokens": null
+        }
+      ],
+      "sources": [
+        {
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "contextTokens",
+            "defaultEffort",
+            "features",
+            "maxOutputTokens",
+            "name",
+            "platforms"
+          ],
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview"
+        },
+        {
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "supportedEfforts"
+          ],
+          "url": "https://platform.claude.com/docs/en/build-with-claude/effort"
+        },
+        {
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "pricing"
+          ],
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing"
+        }
+      ],
+      "supportedEfforts": [
+        "high",
+        "low",
+        "max",
+        "medium",
+        "xhigh"
+      ]
+    },
+    {
+      "@id": "model:claude-opus-5-5",
+      "contextTokens": 1000000,
+      "defaultEffort": "medium",
+      "features": [
+        "adaptive",
+        "image",
+        "multilingual",
+        "text",
+        "tools",
+        "vision"
+      ],
+      "id": "claude-opus-5-5",
+      "maxOutputTokens": 128000,
+      "name": "Claude Opus 5.5",
+      "platforms": [
+        "platform:bedrock",
+        "platform:claude-api",
+        "platform:foundry",
+        "platform:vertex"
+      ],
+      "pricing": [
+        {
+          "cacheRead": 0.2,
+          "cacheWrite1h": 8,
+          "cacheWrite5m": 5,
+          "input": 4,
+          "output": 20,
+          "promptTokens": null
+        }
+      ],
+      "sources": [
+        {
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "contextTokens",
+            "defaultEffort",
+            "features",
+            "maxOutputTokens",
+            "name",
+            "platforms"
+          ],
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview"
+        },
+        {
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "supportedEfforts"
+          ],
+          "url": "https://platform.claude.com/docs/en/build-with-claude/effort"
+        },
+        {
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "pricing"
+          ],
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing"
+        }
+      ],
+      "supportedEfforts": [
+        "high",
+        "low",
+        "max",
+        "medium",
+        "xhigh"
+      ]
+    },
+    {
+      "@id": "model:claude-sonnet-5-5",
+      "contextTokens": 1000000,
+      "defaultEffort": "high",
+      "features": [
+        "adaptive",
+        "image",
+        "multilingual",
+        "text",
+        "tools",
+        "vision"
+      ],
+      "id": "claude-sonnet-5-5",
+      "maxOutputTokens": 128000,
+      "name": "Claude Sonnet 5.5",
+      "platforms": [
+        "platform:bedrock",
+        "platform:claude-api",
+        "platform:foundry",
+        "platform:vertex"
+      ],
+      "pricing": [
+        {
+          "cacheRead": 0.1,
+          "cacheWrite1h": 4,
+          "cacheWrite5m": 2.5,
+          "input": 2,
+          "output": 10,
+          "promptTokens": null
+        }
+      ],
+      "sources": [
+        {
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "contextTokens",
+            "defaultEffort",
+            "features",
+            "maxOutputTokens",
+            "name",
+            "platforms"
+          ],
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview"
+        },
+        {
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "supportedEfforts"
+          ],
+          "url": "https://platform.claude.com/docs/en/build-with-claude/effort"
+        },
+        {
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "pricing"
+          ],
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing"
+        }
+      ],
+      "supportedEfforts": [
+        "high",
+        "low",
+        "max",
+        "medium",
+        "xhigh"
+      ]
+    }
+  ],
+  "nodeRoles": [
+    {
+      "@id": "role:coordinator",
+      "name": "Coordinator"
+    },
+    {
+      "@id": "role:impl",
+      "name": "Implementation"
+    },
+    {
+      "@id": "role:ops",
+      "name": "Operations"
+    },
+    {
+      "@id": "role:plan",
+      "name": "Plan"
+    },
+    {
+      "@id": "role:research",
+      "name": "Research"
+    },
+    {
+      "@id": "role:review",
+      "name": "Review"
+    },
+    {
+      "@id": "role:ship",
+      "name": "Ship"
+    }
+  ],
+  "platforms": [
+    {
+      "@id": "platform:bedrock",
+      "name": "Amazon Bedrock"
+    },
+    {
+      "@id": "platform:claude-api",
+      "name": "Claude API"
+    },
+    {
+      "@id": "platform:foundry",
+      "name": "Microsoft Foundry"
+    },
+    {
+      "@id": "platform:vertex",
+      "name": "Google Vertex AI"
+    }
+  ],
+  "resultMetrics": [
+    {
+      "@id": "metric:coordinator-cost",
+      "name": "Coordinator cost"
+    },
+    {
+      "@id": "metric:coordinator-interventions",
+      "name": "Coordinator interventions"
+    },
+    {
+      "@id": "metric:cost",
+      "name": "Cost"
+    },
+    {
+      "@id": "metric:duration",
+      "name": "Duration"
+    },
+    {
+      "@id": "metric:intermittent-failure",
+      "name": "Intermittent failure rate"
+    },
+    {
+      "@id": "metric:rejection",
+      "name": "Rejection count"
+    },
+    {
+      "@id": "metric:rollback",
+      "name": "Rollback count"
+    }
+  ],
+  "risks": [
+    {
+      "@id": "risk:high",
+      "name": "High"
+    },
+    {
+      "@id": "risk:normal",
+      "name": "Normal"
+    }
+  ],
+  "rules": [
+    {
+      "@id": "rule:default-opus",
+      "conditions": [],
+      "confidence": 0.2,
+      "effort": "medium",
+      "evidence": [
+        "evidence:official-effort",
+        "evidence:official-models"
+      ],
+      "model": "claude-opus-5-5",
+      "priority": 100,
+      "reason": "Claude work defaults to Opus 5.5 medium under the owner constraint."
+    },
+    {
+      "@id": "rule:high-risk-opus",
+      "conditions": [
+        {
+          "type": "risk",
+          "values": [
+            "high"
+          ]
+        }
+      ],
+      "confidence": 0.2,
+      "effort": "high",
+      "evidence": [
+        "evidence:official-effort",
+        "evidence:role-stats",
+        "evidence:seed-measurements"
+      ],
+      "model": "claude-opus-5-5",
+      "priority": 200,
+      "reason": "Security, concurrency, and timing risks require the higher Opus effort."
+    },
+    {
+      "@id": "rule:plan-review-opus",
+      "conditions": [
+        {
+          "type": "role",
+          "values": [
+            "plan",
+            "review"
+          ]
+        }
+      ],
+      "confidence": 0.2,
+      "effort": "high",
+      "evidence": [
+        "evidence:official-effort",
+        "evidence:role-stats"
+      ],
+      "model": "claude-opus-5-5",
+      "priority": 190,
+      "reason": "Planning and review use the measured high-effort Opus placement."
+    }
+  ],
+  "taskTypes": [
+    {
+      "@id": "task:coding",
+      "name": "Coding"
+    },
+    {
+      "@id": "task:knowledge",
+      "name": "Knowledge"
+    }
+  ],
+  "version": 1
+}

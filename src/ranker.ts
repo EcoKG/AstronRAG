@@ -1,4 +1,4 @@
-import type { Vault } from "./vault.js";
+import type { MemoryStore as Storage } from "./stores/memory-store.js";
 import type { MemoryRecord, SearchOutcome, SearchResult } from "./types.js";
 import { type Candidate, type ParsedQuery, inScope, overlap, stripLinkSection } from "./retriever.js";
 
@@ -183,7 +183,7 @@ export interface RankOptions {
 	now: number;
 	includeLinked?: boolean;
 	project?: string;
-	vault?: Vault;
+	vault?: Storage;
 }
 
 /** 후보를 가중·정렬하고 RIF 와 연상 확산을 적용해 회상 결과를 만든다 (강화는 하지 않는다) */

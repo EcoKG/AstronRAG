@@ -32,7 +32,7 @@ function check(name, cond, detail = "") {
   }
 }
 
-const cleanups = [];
+const cleanups = /** @type {string[]} */ (Array());
 function freshDir() {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-trig-"));
   cleanups.push(d);
@@ -46,7 +46,7 @@ async function boot(vaultDir, extraEnv = {}) {
     command: process.execPath,
     args: [entry],
     cwd: root,
-    env: { ...process.env, BIGBRAIN_VAULT: vaultDir, ...extraEnv },
+    env: { ...process.env, BBM_STORE: "file", BIGBRAIN_VAULT: vaultDir, ...extraEnv },
     stderr: "pipe",
   });
   const client = new Client({ name: "regress-trigger", version: "0.0.1" });

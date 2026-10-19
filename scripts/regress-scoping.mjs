@@ -33,7 +33,7 @@ function check(name, cond, detail = "") {
   }
 }
 
-const cleanups = [];
+const cleanups = /** @type {string[]} */ (Array());
 function seeded() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-scope-"));
   cleanups.push(dir);
@@ -113,14 +113,14 @@ console.log("5) BIGBRAIN_PROJECT 서버 기본 스코프");
       command: process.execPath,
       args: [entry],
       cwd: root,
-      env: { ...process.env, BIGBRAIN_VAULT: dir, ...env },
+      env: { ...process.env, BIGBRAIN_VAULT: dir, BBM_STORE: "file", ...env },
     });
     const client = new Client({ name: "regress-scoping", version: "0.0.1" });
     await client.connect(transport);
     const instructions = client.getInstructions() ?? "";
     const res = await client.callTool({ name: "recall", arguments: { query: "빌드", ...args } });
     await client.close();
-    return { json: JSON.parse(res.content[0].text), instructions };
+    return { json: JSON.parse(Object(res.content)[0].text), instructions };
   }
 
   const scoped = await callRecall({ BIGBRAIN_PROJECT: "alpha" }, {});

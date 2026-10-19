@@ -1,4 +1,4 @@
-import { Vault } from "./vault.js";
+import type { MemoryStore as Storage } from "./stores/memory-store.js";
 import { logWarn } from "./log.js";
 import { RETRIEVAL_THRESHOLD, activationOf, rank } from "./ranker.js";
 import {
@@ -25,7 +25,6 @@ import type {
 } from "./types.js";
 
 const HOUR_MS = 3_600_000;
-const DAY_MS = 86_400_000;
 /** recall 한 번에 쓰는 변형 질의 수 상한 — 넘는 것은 버린다 */
 export const MAX_ALT_QUERIES = 3;
 /** 키워드 점수 방식 (BIGBRAIN_SCORER) — "bm25f" 일 때만 BM25F, 그 밖의 값은 legacy */
@@ -84,10 +83,6 @@ const WEAKENED_RATIO = (() => {
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 0.2; // 기본 하위 20%
 })();
 // -----------------------------------------------------------------------
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
 
 /**
  * 사람이 읽는 이력용 **로컬** 날짜 (감사 F2).
@@ -292,7 +287,7 @@ function mergeQueries(queries: ParsedQuery[]): ParsedQuery {
 export function searchPersistedIndex(
   vaultRoot: string,
   query: string,
-  opts?: { type?: MemoryType; limit?: number; project?: string },
+  opts?: { type?: MemoryType; limit?: number; project?: string; currentFilePath?: string },
 ): SearchOutcome {
   const q = parseQuery(query);
   if (q.tokens.length === 0) return { results: [], totalMatched: 0 };
@@ -303,10 +298,9 @@ export function searchPersistedIndex(
   const current = new Map<string, boolean>();
   const isCurrent = (slug: string): boolean => {
     let ok = current.get(slug);
-    if (ok === undefined) current.set(slug, (ok = retriever.isCurrent(slug)));
+    if (ok === undefined) current.set(slug, (ok = retriever.isCurrent(slug, opts?.currentFilePath)));
     return ok;
   };
-  // 반환 결과와 그 억제자만 대조해 낡은 후보를 빼고 다시 순위화한다. 이 바퀴 수를 넘으면 남은 후보를 모두 대조해 순위화 횟수를 묶는다
   const partialRounds = 3;
   for (let round = 1; ; round++) {
     const ranked = rank(candidates, q, rankOpts);
@@ -350,12 +344,27 @@ function requiredSpacing(m: MemoryRecord, now: number): number {
  * - P7: 재공고화의 안전한 절반(revise)
  * - P8: verbatim 저장 + 출처 필드
  */
-export class MemoryStore {
+export class MemoryService {
   /** retriever 를 넘기면 여러 진입점이 같은 검색기(후보·관련도 단계)를 공유한다 */
   constructor(
-    private vault: Vault,
+    private vault: Storage,
     readonly retriever: Retriever = new LexicalRetriever(),
+    private readonly clock: () => number = Date.now,
   ) {}
+
+  private nowMs(): number {
+    return this.clock();
+  }
+
+  private nowIso(): string {
+    return new Date(this.nowMs()).toISOString();
+  }
+
+  private today(): string {
+    const date = new Date(this.nowMs());
+    const pad = (value: number) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
 
   /** 마지막 searchDetailed 의 그림자 비교값 — legacy·bm25f 상위 5건 slug 일치율(0~1). 그림자를 끄거나 후보가 없으면 undefined */
   shadowTop5: number | undefined = undefined;
@@ -443,7 +452,7 @@ export class MemoryStore {
     contradictions: { record: MemoryRecord; reasons: string[] }[];
     dangling: string[];
   } {
-    const now = nowIso();
+    const now = this.nowIso();
     // 슬러그를 제목과 분리한다. 종전에는 제목에서만 파생돼, 위키링크 대상을 안정적으로
     // 유지하려면 **제목 자체를 영문 케밥으로 강제**해야 했다(실사용에서 이관 시 한국어
     // 제목을 통째로 포기했다). 파일명 규칙과 사람이 읽는 이름은 별개의 요구다.
@@ -473,7 +482,7 @@ export class MemoryStore {
       })(),
       reviewAfter: input.reviewAfter || undefined,
       links: [],
-      history: [`${today()}: created${input.source ? ` (source: ${input.source})` : ""}`],
+      history: [`${this.today()}: created${input.source ? ` (source: ${input.source})` : ""}`],
       body: input.content.trim(),
     };
 
@@ -488,7 +497,7 @@ export class MemoryStore {
     const superseded = found && !found.archived ? found.record : null;
     if (superseded) {
       record.supersedes = superseded.slug;
-      pushHistory(record, `${today()}: supersedes [[${superseded.slug}]]`);
+      pushHistory(record, `${this.today()}: supersedes [[${superseded.slug}]]`);
     }
 
     // 모순 가능성 — 유사 기억 중 숫자·버전·부정어가 갈리는 것만 신호로 돌려준다(병합·삭제 없음, P6)
@@ -508,7 +517,7 @@ export class MemoryStore {
       superseded.status = "superseded";
       superseded.supersededBy = finalSlug;
       superseded.updated = now;
-      pushHistory(superseded, `${today()}: superseded by [[${finalSlug}]]`);
+      pushHistory(superseded, `${this.today()}: superseded by [[${finalSlug}]]`);
       this.vault.write(superseded);
     }
 
@@ -585,7 +594,7 @@ export class MemoryStore {
     if (q.tokens.length === 0) return { results: [], totalMatched: 0 };
     const limit = opts?.limit ?? 5;
     this.retriever.sync(this.vault);
-    const now = Date.now();
+    const now = this.nowMs();
     const filter = { type: opts?.type, project: opts?.project };
 
     // 1) 질의별 Retriever 후보 — 토큰이 없거나 앞 질의와 토큰이 같은 변형은 뺀다
@@ -723,17 +732,17 @@ export class MemoryStore {
     // 여러 번 다듬는 것은 정상 경로이고, P3(간격 둔 강화만 인정)와 정면으로 어긋났다.
     // 또한 태그만 바꾸는 순수 메타데이터 편집은 "재확인" 이 아니므로 강화하지 않는다.
     const substantive = contentChanged || input.confidence !== undefined;
-    const spacingOk = Date.now() - Date.parse(m.lastReinforced) >= requiredSpacing(m, Date.now());
+    const spacingOk = this.nowMs() - Date.parse(m.lastReinforced) >= requiredSpacing(m, this.nowMs());
     if (substantive && spacingOk) {
       m.storageStrength += 1;
-      m.lastReinforced = nowIso();
+      m.lastReinforced = this.nowIso();
     }
-    m.lastAccessed = nowIso();
-    m.updated = nowIso();
-    if (typeChanged) pushHistory(m, `${today()}: reclassified ${oldType} → ${m.type}`);
+    m.lastAccessed = this.nowIso();
+    m.updated = this.nowIso();
+    if (typeChanged) pushHistory(m, `${this.today()}: reclassified ${oldType} → ${m.type}`);
     pushHistory(
       m,
-      `${today()}: ${contentChanged ? "revised" : "reconfirmed"} — ${input.reason}${input.source ? ` (source: ${input.source})` : ""}`,
+      `${this.today()}: ${contentChanged ? "revised" : "reconfirmed"} — ${input.reason}${input.source ? ` (source: ${input.source})` : ""}`,
     );
     this.vault.write(m, found.archived);
     this.retriever.upsert(m, found.archived);
@@ -748,8 +757,8 @@ export class MemoryStore {
     const m = found.record;
     m.status = "archived";
     m.archiveReason = reason;
-    m.updated = nowIso();
-    pushHistory(m, `${today()}: forgotten — ${reason}`);
+    m.updated = this.nowIso();
+    pushHistory(m, `${this.today()}: forgotten — ${reason}`);
     if (!found.archived) {
       this.vault.write(m); // 이력 반영 후 이동
       this.vault.moveToArchive(m.slug);
@@ -794,7 +803,7 @@ export class MemoryStore {
       byType[m.type] = (byType[m.type] ?? 0) + 1;
       byStatus[m.status] = (byStatus[m.status] ?? 0) + 1;
     }
-    const now = Date.now();
+    const now = this.nowMs();
     const active = all.filter((m) => m.status === "active");
 
     // 기저활성이 임계 τ 미만 = 오래 안 쓰여 약해진(회상 곤란) 기억.
@@ -886,7 +895,7 @@ export class MemoryStore {
       .filter((m) => (opts?.type ? m.type === opts.type : true))
       .filter((m) => (opts?.status ? m.status === opts.status : m.status === "active"))
       .filter((m) => inScope(m, opts?.project))
-      .sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated));
+      .sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated) || a.slug.localeCompare(b.slug));
   }
 
   /** MEMORY.md 인덱스 재생성 (Obsidian에서 허브 노트로 사용 가능) */
@@ -913,7 +922,7 @@ export class MemoryStore {
     // 확인하지 않고 인용하는 프라이밍 사고가 실제로 관측됐다. 네이티브 메모리가
     // 파일을 읽을 때 "N일 전 기억 — 현재 코드와 대조하라" 를 자동으로 붙이는 것과
     // 같은 역할을 여기서 한다.
-    const now = Date.now();
+    const now = this.nowMs();
     for (const type of Object.keys(groups) as MemoryType[]) {
       const items = groups[type];
       if (items.length === 0) continue;
@@ -949,58 +958,60 @@ export class MemoryStore {
    * 부수효과(강화) 실패 때문에 통째로 실패하면 안 된다.
    */
   private reinforce(m: MemoryRecord, opts: { active: boolean; preActivation: number }): void {
-    const now = Date.now();
-    const sinceReinforce = now - Date.parse(m.lastReinforced);
-    const gateOpen = sinceReinforce >= requiredSpacing(m, now);
-    let delta = 0;
-    if (gateOpen) {
-      delta = opts.active ? 1 : 0.5; // 검사효과: 능동 인출 > 수동 열람
-      if (opts.active && opts.preActivation < HARD_RETRIEVAL_ACTIVATION) {
-        delta += 0.5; // 바람직한 어려움: 어렵게 찾아낸 회상은 더 큰 강화
-      }
-    }
+    const now = this.nowMs();
+    const accessedAt = this.nowIso();
+    const reinforcementDelta = (target: MemoryRecord): number => {
+      if (now - Date.parse(target.lastReinforced) < requiredSpacing(target, now)) return 0;
+      let delta = opts.active ? 1 : 0.5;
+      if (opts.active && opts.preActivation < HARD_RETRIEVAL_ACTIVATION) delta += 0.5;
+      return delta;
+    };
+    const initialDelta = reinforcementDelta(m);
 
-    // 호출자가 들고 있는 인메모리 레코드(검색 결과로 반환됨)도 일관되게 갱신
     m.accessCount += 1;
-    m.lastAccessed = nowIso();
-    if (delta > 0) {
-      m.storageStrength += delta;
-      m.lastReinforced = nowIso();
+    m.lastAccessed = accessedAt;
+    if (initialDelta > 0) {
+      m.storageStrength += initialDelta;
+      m.lastReinforced = accessedAt;
     }
-
-    // 간격 게이트가 닫혀 있으면 저장강도가 안 오르므로, 디스크에 반영할 실질 변화가
-    // accessCount/lastAccessed 뿐이다. 이 둘은 활성 계산에 쓰이지 않는 표시용 필드인데
-    // 매 조회마다 파일을 통째로 재직렬화하면 git/Obsidian/백업이 조회만으로 변경을
-    // 감지하고, 비원자 구간을 불필요하게 자주 연다(감사 B). 그래서 쓰기를 생략한다.
-    //
-    // **생략한 조회는 나중에도 반영되지 않는다.** 아래 875행은 게이트가 열릴 때
-    // accessCount 를 +1 할 뿐 그동안 건너뛴 횟수를 누적하지 않는다. 즉 디스크의
-    // accessCount 는 "조회 횟수" 가 아니라 "게이트가 열린 채 조회된 횟수" 다.
-    // 의도된 성능 절충이지만, 그래서 **회상 빈도를 재는 지표로는 못 쓴다** —
-    // 계측이 필요하면 BIGBRAIN_FLUSH_EVERY_ACCESS=1 로 켜야 한다.
-    if (delta === 0 && !FLUSH_EVERY_ACCESS) return;
+    if (initialDelta === 0 && !FLUSH_EVERY_ACCESS) return;
 
     try {
-      // 현재 디스크 상태를 다시 읽는다 — 위치(memories/archive)도 여기서 재확인된다.
-      const fresh = this.vault.find(m.slug);
-      if (!fresh) return; // 그 사이 삭제됨 → 되살리지 않는다
-      const target = fresh.record;
-      target.accessCount += 1;
-      target.lastAccessed = m.lastAccessed;
-      if (delta > 0) {
-        target.storageStrength += delta;
-        target.lastReinforced = m.lastReinforced;
+      const apply = (target: MemoryRecord) => {
+        const delta = reinforcementDelta(target);
+        target.accessCount += 1;
+        target.lastAccessed = accessedAt;
+        if (delta > 0) {
+          target.storageStrength += delta;
+          target.lastReinforced = accessedAt;
+        }
+        return target;
+      };
+      if (typeof this.vault.updateRecord === "function") {
+        const updated = this.vault.updateRecord(m.slug, apply);
+        if (!updated) throw new Error("강화 대상 레코드 없음");
+        Object.assign(m, updated);
+      } else {
+        const fresh = this.vault.find(m.slug);
+        if (fresh) Object.assign(m, apply(fresh.record));
+        if (fresh) this.vault.write(m, fresh.archived);
       }
-      this.vault.write(target, fresh.archived); // forget 으로 이동했으면 archive 쪽에 기록
     } catch (err) {
-      logWarn(`강화 기록 실패(무시): ${m.slug} — ${err instanceof Error ? err.message : String(err)}`);
+      const message = err instanceof Error ? err.message : String(err);
+      const reason = /SQLITE_BUSY|database is locked/i.test(message) ? "busy_exhausted" : "exception_swallowed";
+      logWarn(`강화 미반영: ${m.slug} — ${reason}: ${message}`);
+      try {
+        this.vault.appendUsageEvent({ tool: "reinforcement_unapplied", ok: false, reason, slug: m.slug, message });
+      } catch (usageError) {
+        logWarn(`강화 미반영 이벤트 기록 실패: ${usageError instanceof Error ? usageError.message : String(usageError)}`);
+      }
     }
   }
 
   private addLink(m: MemoryRecord, targetSlug: string, relation: string | undefined, archived: boolean): void {
     if (!m.links.includes(targetSlug)) m.links.push(targetSlug);
     this.appendBodyLink(m, targetSlug, relation);
-    m.updated = nowIso();
+    m.updated = this.nowIso();
     this.vault.write(m, archived);
   }
 
@@ -1050,3 +1061,5 @@ export class MemoryStore {
     }
   }
 }
+
+export { MemoryService as MemoryStore };

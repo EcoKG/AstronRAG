@@ -96,7 +96,7 @@ function tempDir(tag) {
 const home = tempDir("home");
 
 /** 자식 훅 환경 — HOME 을 임시 디렉터리로 돌려 실사용 설정을 읽지 않게 한다 */
-const hookEnv = (extra = {}) => ({ ...process.env, USERPROFILE: home, HOME: home, ...extra });
+const hookEnv = (extra = {}) => ({ ...process.env, USERPROFILE: home, HOME: home, BBM_STORE: "file", ...extra });
 
 /** session-guard 를 띄워 { stdout, status, ms } 를 돌려준다 */
 function runGuard(args, { cwd, input = "", env = {}, script = guard }) {
@@ -692,7 +692,21 @@ try {
 			const outside = loaded.filter((p) => !p.startsWith("dist/") && p !== "scripts/session-guard.mjs");
 			check("node_modules·외부 모듈을 불러오지 않는다(gray-matter·zod·MCP SDK)", outside.length === 0, JSON.stringify(outside));
 			const dist = loaded.filter((p) => p.startsWith("dist/")).sort();
-			check("dist 는 store·log·ranker·retriever·vault 만", JSON.stringify(dist) === JSON.stringify(["dist/log.js", "dist/ranker.js", "dist/retriever.js", "dist/store.js", "dist/vault.js"]), JSON.stringify(dist));
+			check(
+				"dist 는 저장소 등록표와 검색 경로만",
+				JSON.stringify(dist) === JSON.stringify([
+					"dist/log.js",
+					"dist/ranker.js",
+					"dist/retriever.js",
+					"dist/store.js",
+					"dist/stores/file-store.js",
+					"dist/stores/index.js",
+					"dist/stores/memory-store.js",
+					"dist/stores/sqlite-store.js",
+					"dist/vault.js",
+				]),
+				JSON.stringify(dist),
+			);
 		}
 	}
 
