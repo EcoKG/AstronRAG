@@ -153,12 +153,9 @@ source: 코드 리뷰 대화
 
 **켜는 법**
 
-```bash
-# AstronRAG 설치 디렉터리에서 — 선택 의존성이라 기본 설치(npm ci·npm install)에는 들어가지 않습니다
-npm i --no-save @huggingface/transformers@^4.3.0
-```
+`npm ci`가 선택 의존성인 `@huggingface/transformers`를 함께 설치합니다. 설치에 실패해도 어휘 검색으로 동작합니다.
 
-그다음 MCP 서버 환경에 `ASTRONRAG_VECTOR=1`을 넣고 서버를 다시 시작합니다. `--no-save`로 설치했으므로 나중에 `npm ci`나 `npm install`을 다시 하면 이 패키지가 지워집니다. 그러면 다시 설치하세요. 패키지가 없으면 recall 응답에 `vector: "unavailable"`과 설치 안내(`vector_note`)가 붙고, 어휘 검색으로 그대로 동작합니다.
+MCP 서버 환경에 `ASTRONRAG_VECTOR=1`을 넣고 서버를 다시 시작합니다. 패키지가 없으면 recall 응답에 `vector: "unavailable"`과 설치 안내(`vector_note`)가 붙고, 어휘 검색으로 그대로 동작합니다.
 
 **동작**
 - **지연 로드** — 서버는 모델을 기다리지 않고 바로 뜹니다. 모델 로드와 첫 임베딩이 끝나기 전의 recall은 어휘 결과만 내고 응답에 `vector: "warming"`을 붙입니다. 준비되면 `vector: "ready"`입니다.

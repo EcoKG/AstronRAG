@@ -457,7 +457,7 @@ export class Vault {
     const marker = path.join(this.root, ".bigbrain-vault");
     try {
       if (!fs.existsSync(marker)) {
-        fs.writeFileSync(marker, `BigBrainMemory vault\ncreated: ${new Date().toISOString()}\n`, "utf-8");
+        fs.writeFileSync(marker, `AstronRAG vault\ncreated: ${new Date().toISOString()}\n`, "utf-8");
       }
     } catch {
       /* 마커는 진단용 편의 기능 — 실패해도 무시 */

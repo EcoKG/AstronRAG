@@ -64,9 +64,9 @@ function changedPaths(before, after) {
 	return [...new Set([...left.keys(), ...right.keys()])].filter((key) => left.get(key) !== right.get(key)).sort();
 }
 
-function isWithin(parent, child) {
-	const relative = path.relative(parent, child);
-	return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+export function isWithin(parent, child, pathApi = path) {
+	const relative = pathApi.relative(parent, child);
+	return relative === "" || (!relative.startsWith(`..${pathApi.sep}`) && relative !== ".." && !pathApi.isAbsolute(relative));
 }
 
 function nearestRealPath(value) {

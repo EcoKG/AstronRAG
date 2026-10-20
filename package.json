@@ -68,13 +68,8 @@
     "gray-matter": "^4.0.3",
     "zod": "^3.23.8"
   },
-  "peerDependencies": {
+  "optionalDependencies": {
     "@huggingface/transformers": "^4.3.0"
-  },
-  "peerDependenciesMeta": {
-    "@huggingface/transformers": {
-      "optional": true
-    }
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
