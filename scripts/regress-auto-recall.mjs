@@ -676,7 +676,7 @@ try {
 	{
 		const src = fs.readFileSync(guard, "utf-8");
 		const staticImports = [...src.matchAll(/^import\s[^;]*?from\s+"([^"]+)"/gm)].map((m) => m[1]).sort();
-		check("session-guard 정적 import 는 node:fs·os·path 뿐", JSON.stringify(staticImports) === JSON.stringify(["node:fs", "node:os", "node:path"]), JSON.stringify(staticImports));
+		check("session-guard 정적 import 는 환경 도우미·node 내장 모듈뿐", JSON.stringify(staticImports) === JSON.stringify(["./lib/env.mjs", "node:fs", "node:os", "node:path", "node:url"]), JSON.stringify(staticImports));
 		const mod = await import("node:module");
 		if (typeof mod.registerHooks !== "function") console.log("  - 건너뜀: module.registerHooks 가 없는 Node");
 		else {
@@ -691,12 +691,13 @@ try {
 			const out = prompt(v, "S14", EXACT, { NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` });
 			check("추적 중에도 주입", recallOf(out.stdout).slugs.includes(EXACT_SLUG), out.stdout.slice(0, 200));
 			const loaded = JSON.parse(fs.readFileSync(log, "utf-8")).filter((u) => u.startsWith("file:")).map((u) => path.relative(root, fileURLToPath(u)).replace(/\\/g, "/"));
-			const outside = loaded.filter((p) => !p.startsWith("dist/") && p !== "scripts/session-guard.mjs");
+			const outside = loaded.filter((p) => !p.startsWith("dist/") && p !== "scripts/session-guard.mjs" && p !== "scripts/lib/env.mjs");
 			check("node_modules·외부 모듈을 불러오지 않는다(gray-matter·zod·MCP SDK)", outside.length === 0, JSON.stringify(outside));
 			const dist = loaded.filter((p) => p.startsWith("dist/")).sort();
 			check(
 				"dist 는 저장소 등록표와 검색 경로만",
 				JSON.stringify(dist) === JSON.stringify([
+					"dist/env.js",
 					"dist/log.js",
 					"dist/ranker.js",
 					"dist/retriever.js",

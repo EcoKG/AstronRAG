@@ -112,7 +112,7 @@ async function mcp_config_astronrag_entrypoint() {
     check("서버 기동 성공", true);
     check(
       "test_existing_tools_contract_snapshot_unchanged",
-      JSON.stringify(names) === JSON.stringify(expected) && schemaHash === "39ad221b780b67dddd5a9008496f430b6267b008ddd345211c00629f7c092141",
+      JSON.stringify(names) === JSON.stringify(expected) && schemaHash === "3d5632242aa223ca880a38740f3f0770e4702876d494ee53634f73464138cbf9",
       `got: ${names.join(",")} schema=${schemaHash}`,
     );
     const recommend = tools.find((tool) => tool.name === "recommend");

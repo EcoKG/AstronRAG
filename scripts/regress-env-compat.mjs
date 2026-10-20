@@ -30,18 +30,19 @@ function cleanEnv(extra = {}) {
 /** 자식 프로세스의 종료 상태와 출력을 반환한다.
  * @returns {Promise<{status: number | null, stdout: string, stderr: string}>}
  */
-function child(args, { env = {}, cwd = root, input = "" } = {}) {
-	return new Promise((resolve, reject) => {
-		const proc = spawn(process.execPath, args, { cwd, env: cleanEnv(env), stdio: ["pipe", "pipe", "pipe"] });
-		let stdout = "";
-		let stderr = "";
+async function child(args, { env = {}, cwd = root, input = "" } = {}) {
+	const proc = spawn(process.execPath, args, { cwd, env: cleanEnv(env), stdio: ["pipe", "pipe", "pipe"] });
+	let stdout = "";
+	let stderr = "";
+	await new Promise((resolve, reject) => {
 		const timer = setTimeout(() => { proc.kill(); reject(new Error("child timeout")); }, 30000);
 		proc.stdout.on("data", (data) => { stdout += data; });
 		proc.stderr.on("data", (data) => { stderr += data; });
 		proc.on("error", (error) => { clearTimeout(timer); reject(error); });
-		proc.on("close", (status) => { clearTimeout(timer); resolve({ status, stdout, stderr }); });
+		proc.on("close", () => { clearTimeout(timer); resolve(null); });
 		proc.stdin.end(input);
 	});
+	return { status: proc.exitCode, stdout, stderr };
 }
 
 async function probe(body, env = {}) {
@@ -147,12 +148,12 @@ async function env_helpers_match() {
 /** MCP 초기화 응답과 stderr 출력을 반환한다.
  * @returns {Promise<{result: {serverInfo: {name: string}, instructions: string}, stderr: string}>}
  */
-function initialize(env) {
-	return new Promise((resolve, reject) => {
-		const proc = spawn(process.execPath, [path.join(root, "dist/index.js")], { cwd: root, env: cleanEnv(env), stdio: ["pipe", "pipe", "pipe"] });
-		let stdout = "";
-		let stderr = "";
-		let complete = false;
+async function initialize(env) {
+	const proc = spawn(process.execPath, [path.join(root, "dist/index.js")], { cwd: root, env: cleanEnv(env), stdio: ["pipe", "pipe", "pipe"] });
+	let stdout = "";
+	let stderr = "";
+	let complete = false;
+	await new Promise((resolve, reject) => {
 		const timer = setTimeout(() => { proc.kill(); reject(new Error("MCP initialize timeout")); }, 15000);
 		proc.stderr.on("data", (data) => { stderr += data; });
 		proc.stdout.on("data", (data) => {
@@ -162,17 +163,16 @@ function initialize(env) {
 		proc.on("error", (error) => { clearTimeout(timer); reject(error); });
 		proc.on("close", () => {
 			clearTimeout(timer);
-			try {
-				assert.ok(complete, stderr);
-				const messages = stdout.trim().split("\n").map((line) => JSON.parse(line));
-				const response = messages.find((message) => message.id === 1);
-				assert.equal(response?.jsonrpc, "2.0");
-				assert.ok(response.result?.serverInfo, stdout);
-				resolve({ result: response.result, stderr });
-			} catch (error) { reject(error); }
+			resolve(null);
 		});
 		proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "env-compat", version: "1" } } }) + "\n");
 	});
+	assert.ok(complete, stderr);
+	const messages = stdout.trim().split("\n").map((line) => JSON.parse(line));
+	const response = messages.find((message) => message.id === 1);
+	assert.equal(response?.jsonrpc, "2.0");
+	assert.ok(response.result?.serverInfo, stdout);
+	return { result: response.result, stderr };
 }
 
 async function mcp_legacy_warning_stderr_only() {
@@ -191,7 +191,7 @@ async function mcp_astronrag_identity() {
 }
 
 async function seed(dir, title, project = "legacy-project") {
-	await probe(`const {Vault}=await import(${JSON.stringify(moduleUrl("dist/vault.js"))}); const {MemoryStore}=await import(${JSON.stringify(moduleUrl("dist/store.js"))}); const store=new MemoryStore(new Vault(${JSON.stringify(dir)})); store.remember({title:${JSON.stringify(title)},description:'compat fixture',type:'semantic',content:'unchanged body',project:${JSON.stringify(project)},tags:[]}); store.regenerateIndex();`);
+	await probe(`const {Vault}=await import(${JSON.stringify(moduleUrl("dist/vault.js"))}); const {MemoryStore}=await import(${JSON.stringify(moduleUrl("dist/store.js"))}); const store=new MemoryStore(new Vault(${JSON.stringify(dir)})); store.remember({title:${JSON.stringify(title)},description:'compat fixture',type:'semantic',content:'unchanged body',project:${JSON.stringify(project)},tags:[]}); store.retriever.sync(store.vault); store.regenerateIndex();`);
 }
 
 async function hook(cwd, env, mode = "start") {
@@ -268,7 +268,7 @@ async function hook_actual_repo_path() {
 			const parts = [...command.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
 			assert.equal(path.resolve(parts[0]), path.resolve(process.execPath));
 			assert.equal(path.resolve(parts[1]), path.join(repo, "scripts/session-guard.mjs"));
-			assert.deepEqual(parts.slice(2), [flag, explicit ? "--vault-force" : "--vault", target.replaceAll("\\", "/")]);
+			assert.deepEqual(parts.slice(2), [flag, explicit ? "--vault-force" : "--vault", target.replace(/\\/g, "/")]);
 			const run = await child(parts.slice(1), { cwd: repo, env: { ASTRONRAG_STORE: "file" }, input: JSON.stringify({ session_id: "actual-path", source: "startup" }) });
 			assert.equal(run.status, 0, run.stderr);
 			if (event === "SessionStart") assert.match(run.stdout, new RegExp(`actual-hook-${explicit}`));
@@ -300,6 +300,7 @@ async function package_astronrag_metadata() {
 	assert.equal(pkg.name, "astronrag");
 	assert.match(pkg.description, /^AstronRAG — /);
 	assert.deepEqual(pkg.bin, { astronrag: "dist/index.js" });
+	assert.ok(pkg.scripts.test.split(" && ").includes("node scripts/regress-env-compat.mjs"), "npm test must run the environment compatibility suite");
 	assert.equal(lock.name, "astronrag");
 	assert.equal(lock.packages[""].name, "astronrag");
 	assert.deepEqual(lock.packages[""].bin, pkg.bin);
