@@ -98,5 +98,377 @@
 			],
 			"ruleConfidence": 0.2
 		}
+	},
+	{
+		"name": "Codex research normal",
+		"platform": "codex",
+		"description": "ordinary task",
+		"role": "research",
+		"output": {
+			"model": "gpt-6.1-sol",
+			"effort": "medium",
+			"role": "research",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "normal",
+				"risk": "normal"
+			},
+			"reasons": [
+				"Codex research, shipping, and coordination use the current medium-effort placement."
+			],
+			"appliedConstraints": [],
+			"evidence": [
+				"ontology/evidence/codex-catalog-2026-10-20.md",
+				"ontology/evidence/measurements-2026-10-19.md"
+			],
+			"candidates": [
+				{
+					"model": "gpt-6.1-sol",
+					"effort": "medium"
+				}
+			],
+			"ruleConfidence": 0.1
+		}
+	},
+	{
+		"name": "Codex research high risk",
+		"platform": "codex",
+		"description": "Review concurrent cache security",
+		"role": "research",
+		"output": {
+			"model": "gpt-6.1-sol",
+			"effort": "high",
+			"role": "research",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "high",
+				"risk": "high"
+			},
+			"reasons": [
+				"Codex security, concurrency, and timing risks use high effort."
+			],
+			"appliedConstraints": [],
+			"evidence": [
+				"ontology/evidence/codex-catalog-2026-10-20.md",
+				"ontology/evidence/measurements-2026-10-19.md"
+			],
+			"candidates": [
+				{
+					"model": "gpt-6.1-sol",
+					"effort": "high"
+				}
+			],
+			"ruleConfidence": 0.1
+		}
+	},
+	{
+		"name": "Codex plan normal",
+		"platform": "codex",
+		"description": "ordinary task",
+		"role": "plan",
+		"output": {
+			"model": "gpt-6.1-sol",
+			"effort": "high",
+			"role": "plan",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "high",
+				"risk": "normal"
+			},
+			"reasons": [
+				"Codex planning, implementation, and review use the current high-effort placement."
+			],
+			"appliedConstraints": [],
+			"evidence": [
+				"ontology/evidence/codex-catalog-2026-10-20.md",
+				"ontology/evidence/measurements-2026-10-19.md"
+			],
+			"candidates": [
+				{
+					"model": "gpt-6.1-sol",
+					"effort": "high"
+				}
+			],
+			"ruleConfidence": 0.1
+		}
+	},
+	{
+		"name": "Codex plan high risk",
+		"platform": "codex",
+		"description": "Review concurrent cache security",
+		"role": "plan",
+		"output": {
+			"model": "gpt-6.1-sol",
+			"effort": "high",
+			"role": "plan",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "high",
+				"risk": "high"
+			},
+			"reasons": [
+				"Codex security, concurrency, and timing risks use high effort."
+			],
+			"appliedConstraints": [],
+			"evidence": [
+				"ontology/evidence/codex-catalog-2026-10-20.md",
+				"ontology/evidence/measurements-2026-10-19.md"
+			],
+			"candidates": [
+				{
+					"model": "gpt-6.1-sol",
+					"effort": "high"
+				}
+			],
+			"ruleConfidence": 0.1
+		}
+	},
+	{
+		"name": "Codex impl normal",
+		"platform": "codex",
+		"description": "ordinary task",
+		"role": "impl",
+		"output": {
+			"model": "gpt-6.1-sol",
+			"effort": "high",
+			"role": "impl",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "normal",
+				"risk": "normal"
+			},
+			"reasons": [
+				"Codex planning, implementation, and review use the current high-effort placement."
+			],
+			"appliedConstraints": [],
+			"evidence": [
+				"ontology/evidence/codex-catalog-2026-10-20.md",
+				"ontology/evidence/measurements-2026-10-19.md"
+			],
+			"candidates": [
+				{
+					"model": "gpt-6.1-sol",
+					"effort": "high"
+				}
+			],
+			"ruleConfidence": 0.1
+		}
+	},
+	{
+		"name": "Codex impl high risk",
+		"platform": "codex",
+		"description": "Review concurrent cache security",
+		"role": "impl",
+		"output": {
+			"model": "gpt-6.1-sol",
+			"effort": "high",
+			"role": "impl",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "high",
+				"risk": "high"
+			},
+			"reasons": [
+				"Codex security, concurrency, and timing risks use high effort."
+			],
+			"appliedConstraints": [],
+			"evidence": [
+				"ontology/evidence/codex-catalog-2026-10-20.md",
+				"ontology/evidence/measurements-2026-10-19.md"
+			],
+			"candidates": [
+				{
+					"model": "gpt-6.1-sol",
+					"effort": "high"
+				}
+			],
+			"ruleConfidence": 0.1
+		}
+	},
+	{
+		"name": "Codex review normal",
+		"platform": "codex",
+		"description": "ordinary task",
+		"role": "review",
+		"output": {
+			"model": "gpt-6.1-sol",
+			"effort": "high",
+			"role": "review",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "high",
+				"risk": "normal"
+			},
+			"reasons": [
+				"Codex planning, implementation, and review use the current high-effort placement."
+			],
+			"appliedConstraints": [],
+			"evidence": [
+				"ontology/evidence/codex-catalog-2026-10-20.md",
+				"ontology/evidence/measurements-2026-10-19.md"
+			],
+			"candidates": [
+				{
+					"model": "gpt-6.1-sol",
+					"effort": "high"
+				}
+			],
+			"ruleConfidence": 0.1
+		}
+	},
+	{
+		"name": "Codex review high risk",
+		"platform": "codex",
+		"description": "Review concurrent cache security",
+		"role": "review",
+		"output": {
+			"model": "gpt-6.1-sol",
+			"effort": "high",
+			"role": "review",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "high",
+				"risk": "high"
+			},
+			"reasons": [
+				"Codex security, concurrency, and timing risks use high effort."
+			],
+			"appliedConstraints": [],
+			"evidence": [
+				"ontology/evidence/codex-catalog-2026-10-20.md",
+				"ontology/evidence/measurements-2026-10-19.md"
+			],
+			"candidates": [
+				{
+					"model": "gpt-6.1-sol",
+					"effort": "high"
+				}
+			],
+			"ruleConfidence": 0.1
+		}
+	},
+	{
+		"name": "Codex ship normal",
+		"platform": "codex",
+		"description": "ordinary task",
+		"role": "ship",
+		"output": {
+			"model": "gpt-6.1-sol",
+			"effort": "medium",
+			"role": "ship",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "normal",
+				"risk": "normal"
+			},
+			"reasons": [
+				"Codex research, shipping, and coordination use the current medium-effort placement."
+			],
+			"appliedConstraints": [],
+			"evidence": [
+				"ontology/evidence/codex-catalog-2026-10-20.md",
+				"ontology/evidence/measurements-2026-10-19.md"
+			],
+			"candidates": [
+				{
+					"model": "gpt-6.1-sol",
+					"effort": "medium"
+				}
+			],
+			"ruleConfidence": 0.1
+		}
+	},
+	{
+		"name": "Codex ship high risk",
+		"platform": "codex",
+		"description": "Review concurrent cache security",
+		"role": "ship",
+		"output": {
+			"model": "gpt-6.1-sol",
+			"effort": "high",
+			"role": "ship",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "high",
+				"risk": "high"
+			},
+			"reasons": [
+				"Codex security, concurrency, and timing risks use high effort."
+			],
+			"appliedConstraints": [],
+			"evidence": [
+				"ontology/evidence/codex-catalog-2026-10-20.md",
+				"ontology/evidence/measurements-2026-10-19.md"
+			],
+			"candidates": [
+				{
+					"model": "gpt-6.1-sol",
+					"effort": "high"
+				}
+			],
+			"ruleConfidence": 0.1
+		}
+	},
+	{
+		"name": "Codex coordinator normal",
+		"platform": "codex",
+		"description": "ordinary task",
+		"role": "coordinator",
+		"output": {
+			"model": "gpt-6.1-sol",
+			"effort": "medium",
+			"role": "coordinator",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "normal",
+				"risk": "normal"
+			},
+			"reasons": [
+				"Codex research, shipping, and coordination use the current medium-effort placement."
+			],
+			"appliedConstraints": [],
+			"evidence": [
+				"ontology/evidence/codex-catalog-2026-10-20.md",
+				"ontology/evidence/measurements-2026-10-19.md"
+			],
+			"candidates": [
+				{
+					"model": "gpt-6.1-sol",
+					"effort": "medium"
+				}
+			],
+			"ruleConfidence": 0.1
+		}
+	},
+	{
+		"name": "Codex coordinator high risk",
+		"platform": "codex",
+		"description": "Review concurrent cache security",
+		"role": "coordinator",
+		"output": {
+			"model": "gpt-6.1-sol",
+			"effort": "high",
+			"role": "coordinator",
+			"classification": {
+				"taskType": "knowledge",
+				"difficulty": "high",
+				"risk": "high"
+			},
+			"reasons": [
+				"Codex security, concurrency, and timing risks use high effort."
+			],
+			"appliedConstraints": [],
+			"evidence": [
+				"ontology/evidence/codex-catalog-2026-10-20.md",
+				"ontology/evidence/measurements-2026-10-19.md"
+			],
+			"candidates": [
+				{
+					"model": "gpt-6.1-sol",
+					"effort": "high"
+				}
+			],
+			"ruleConfidence": 0.1
+		}
 	}
 ]

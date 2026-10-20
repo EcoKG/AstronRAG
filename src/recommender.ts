@@ -36,12 +36,15 @@ export function classifyTask(description: string, role: Role): Classification {
 	return { taskType: text.includes("code") || text.includes("구현") ? "coding" : "knowledge", difficulty: difficult ? "high" : "normal", risk: risky ? "high" : "normal" };
 }
 
-export function recommendModel(ontology: Ontology, description: string, role: Role): Recommendation {
+export function recommendModel(ontology: Ontology, description: string, role: Role, platform: "claude" | "codex" = "claude"): Recommendation {
+	if (platform !== "claude" && platform !== "codex") throw new Error(`unsupported platform: ${platform}`);
 	const classification = classifyTask(description, role);
 	const context = { description, role, classification };
-	const conditionalMatches = ontology.rules.filter((rule) => rule.conditions.length > 0 && rule.conditions.every((condition) => conditionEvaluators[condition.type](condition.values, context)));
-	const defaultConstraint = ontology.constraints.find((item) => item.kind === "default");
-	const defaultRules = ontology.rules.filter((rule) => rule.conditions.length === 0 && defaultConstraint?.models.includes(rule.model));
+	const platformModels = new Set(ontology.models.filter((model) => model.platforms.includes("platform:codex") === (platform === "codex")).map((model) => model.id));
+	const platformRules = ontology.rules.filter((rule) => (rule.platform ?? "claude") === platform && platformModels.has(rule.model));
+	const conditionalMatches = platformRules.filter((rule) => rule.conditions.length > 0 && rule.conditions.every((condition) => conditionEvaluators[condition.type](condition.values, context)));
+	const defaultConstraint = ontology.constraints.filter((item) => item.kind === "default").find((item) => (item.platform ?? "claude") === platform);
+	const defaultRules = platformRules.filter((rule) => rule.conditions.length === 0 && (!defaultConstraint || defaultConstraint.models.includes(rule.model)));
 	const usedDefault = conditionalMatches.length === 0;
 	const initialRules = usedDefault ? defaultRules : conditionalMatches;
 	const excludeConstraints = ontology.constraints.filter((item) => item.kind === "exclude");
