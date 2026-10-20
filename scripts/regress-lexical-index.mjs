@@ -28,6 +28,11 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
+// 시험 기본값을 사용자 환경 설정과 격리한다.
+for (const key of Object.keys(process.env)) {
+	if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key) && !key.startsWith("ASTRONRAG_TEST_")) delete process.env[key];
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const { values: args } = parseArgs({ options: { "old-dist": { type: "string" } } });
@@ -38,6 +43,7 @@ if (oldDist && !fs.existsSync(path.join(oldDist, "store.js"))) {
 }
 
 // 사용자 동의어 사전은 모듈 로드 시 병합되므로 import 전에 지운다
+delete process.env.ASTRONRAG_SYNONYMS;
 delete process.env.BIGBRAIN_SYNONYMS;
 const distUrl = (f, dist = path.join(root, "dist")) => pathToFileURL(path.join(dist, f)).href;
 const { Vault } = await import(distUrl("vault.js"));
@@ -205,7 +211,7 @@ try {
 		const boot = freshDir();
 		new Vault(boot).write(record("b-one", { title: "boot fig" }));
 		const r = spawnSync(process.execPath, [path.join(root, "dist", "index.js")], {
-			env: { ...process.env, BIGBRAIN_VAULT: boot, BBM_STORE: "file", BIGBRAIN_HOOK_CHECK: "0" },
+			env: { ...process.env, ASTRONRAG_VAULT: boot, ASTRONRAG_STORE: "file", ASTRONRAG_HOOK_CHECK: "0" },
 			input: "",
 			encoding: "utf8",
 			timeout: 30_000,
@@ -441,18 +447,22 @@ try {
 		check("새 저장소: 저장 뒤 손편집도 반영", slugsOf(fresh, "tangerine").join(",") === "h-new" && slugsOf(fresh, "kumquat").length === 0);
 		check("새 저장소: 나머지 결과가 켜져 있던 저장소와 같음", ["grapefruit", "melon", "cherry", "orchard"].every((q) => slugsOf(fresh, q).join() === slugsOf(live, q).join()));
 		// 켜져 있는 저장소는 기억 파일이 그대로여도, 인덱스 파일이 지워지거나 다른 프로세스가 낡은 내용으로 덮어쓰면 다음 질의에서 되살린다
-		const older = fs.readFileSync(indexPath(dir));
-		fs.rmSync(path.join(dir, INDEX_DIR), { recursive: true });
-		slugsOf(live, "orchard");
-		check("켜진 저장소에서 인덱스를 지우면 다음 질의가 다시 만든다", fs.existsSync(indexPath(dir)) && indexMatchesFiles(dir));
-		fs.writeFileSync(fpNew, fs.readFileSync(fpNew, "utf8").replace("tangerine", "mandarin"));
-		slugsOf(live, "mandarin");
-		fs.writeFileSync(indexPath(dir), older);
-		slugsOf(live, "orchard");
-		check(
-			"다른 프로세스가 낡은 인덱스로 덮어써도 켜진 저장소의 다음 질의가 다시 쓴다",
-			indexMatchesFiles(dir) && searchPersistedIndex(dir, "mandarin").results.map((x) => x.record.slug).join(",") === "h-new",
-		);
+		function env_new_names_preserve_cache_recovery() {
+			console.log("env_new_names_preserve_cache_recovery");
+			const older = fs.readFileSync(indexPath(dir));
+			fs.rmSync(path.join(dir, INDEX_DIR), { recursive: true });
+			slugsOf(live, "orchard");
+			check("켜진 저장소에서 인덱스를 지우면 다음 질의가 다시 만든다", fs.existsSync(indexPath(dir)) && indexMatchesFiles(dir));
+			fs.writeFileSync(fpNew, fs.readFileSync(fpNew, "utf8").replace("tangerine", "mandarin"));
+			slugsOf(live, "mandarin");
+			fs.writeFileSync(indexPath(dir), older);
+			slugsOf(live, "orchard");
+			check(
+				"다른 프로세스가 낡은 인덱스로 덮어써도 켜진 저장소의 다음 질의가 다시 쓴다",
+				indexMatchesFiles(dir) && searchPersistedIndex(dir, "mandarin").results.map((x) => x.record.slug).join(",") === "h-new",
+			);
+		}
+		env_new_names_preserve_cache_recovery();
 	}
 
 	// ── 5. 다른 프로세스의 쓰기

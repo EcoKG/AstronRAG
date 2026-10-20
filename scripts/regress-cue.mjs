@@ -20,6 +20,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// 시험 기본값을 사용자 환경 설정과 격리한다.
+for (const key of Object.keys(process.env)) {
+  if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key) && !key.startsWith("ASTRONRAG_TEST_")) delete process.env[key];
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const guard = path.join(here, "session-guard.mjs");
@@ -49,7 +54,7 @@ const run = (args, cwd, input, env = {}) => {
       encoding: "utf-8",
       timeout: 15000,
       input,
-      env: { ...process.env, BBM_STORE: "file", ...env },
+      env: { ...process.env, ASTRONRAG_STORE: "file", ...env },
     });
   } catch (err) {
     return err.stdout ?? "";
@@ -65,7 +70,7 @@ console.log("1) 정정 어휘 감지");
   const v = freshVault("lex");
   run(["--start", "--vault-force", v], v, startEv({ session_id: "C1", source: "startup" }));
   const out = run(["--prompt", "--vault-force", v], v, promptEv({ session_id: "C1", prompt: "아니야 그게 아니라 8080 포트를 쓰라고" }));
-  check("정정 발화에 큐 발생", /<bigbrainmemory-cue/.test(out), out.slice(0, 300));
+  check("정정 발화에 큐 발생", /<astronrag-cue/.test(out), out.slice(0, 300));
   check("기계 휴리스틱임을 명시", /regex guess, not an observation/.test(out), out.slice(0, 400));
   check("지금 저장하라고 지시", /now/.test(out) && /remember/.test(out), out.slice(0, 400));
   check("원문이 살아있을 때 저장하라고", /verbatim/.test(out), out.slice(0, 500));
@@ -101,7 +106,7 @@ console.log("3) prompt 부재 시 턴 기반 폴백");
   const outs = /** @type {string[]} */ (Array());
   for (let i = 0; i < 3; i++) {
     // prompt 없이 온다 — 문서로 확정되지 않은 필드이므로 이 경로가 실제 환경일 수 있다
-    outs.push(run(["--prompt", "--vault-force", v], v, promptEv({ session_id: "C4" }), { BIGBRAIN_CUE_TURNS: "3" }).trim());
+    outs.push(run(["--prompt", "--vault-force", v], v, promptEv({ session_id: "C4" }), { ASTRONRAG_CUE_TURNS: "3" }).trim());
   }
   check("임계 전에는 침묵", outs[0] === "" && outs[1] === "", outs.map((o) => o.length).join(","));
   check("임계 턴에 큐 발생", outs[2] !== "", outs[2].slice(0, 200));
@@ -130,7 +135,7 @@ console.log("4) 저장은 큐를 영구히 끄지 않는다");
   // ★ 패치 전 실패: 여기서부터 영원히 침묵했다. 이제는 시계가 다시 흐른다.
   const outs = /** @type {string[]} */ (Array());
   for (let i = 0; i < 6; i++) {
-    outs.push(run(["--prompt", "--vault-force", v], v, promptEv({ session_id: "C5" }), { BIGBRAIN_CUE_TURNS: "4" }).trim());
+    outs.push(run(["--prompt", "--vault-force", v], v, promptEv({ session_id: "C5" }), { ASTRONRAG_CUE_TURNS: "4" }).trim());
   }
   check("저장 이후에도 시간이 지나면 다시 큐", outs.some((o) => o !== ""), `발화 ${outs.filter((o) => o).length}회`);
   const cue = outs.find((o) => o !== "");
@@ -139,7 +144,7 @@ console.log("4) 저장은 큐를 영구히 끄지 않는다");
 
   // 다시 저장하면 또 리셋된다
   fs.writeFileSync(path.join(v, "memories", "두번째.md"), "x", "utf-8");
-  const afterSecond = run(["--prompt", "--vault-force", v], v, promptEv({ session_id: "C5" }), { BIGBRAIN_CUE_TURNS: "4" });
+  const afterSecond = run(["--prompt", "--vault-force", v], v, promptEv({ session_id: "C5" }), { ASTRONRAG_CUE_TURNS: "4" });
   check("두 번째 저장도 시계를 리셋", afterSecond.trim() === "", afterSecond.slice(0, 200));
 }
 
@@ -152,7 +157,7 @@ console.log("4-b) 쿨다운");
   for (let i = 0; i < 12; i++) {
     outs.push(
       run(["--prompt", "--vault-force", v], v, promptEv({ session_id: "C5b", prompt: "아니야 틀렸어" }), {
-        BIGBRAIN_CUE_COOLDOWN: "5",
+        ASTRONRAG_CUE_COOLDOWN: "5",
       }).trim(),
     );
   }
@@ -190,7 +195,7 @@ console.log("6) 무해성");
   // stdin 이 아예 없어도 죽지 않는다
   let code = 0;
   try {
-    execFileSync(process.execPath, [guard, "--prompt", "--vault-force", v], { cwd: root, encoding: "utf-8", timeout: 15000, input: "", env: { ...process.env, BBM_STORE: "file" } });
+    execFileSync(process.execPath, [guard, "--prompt", "--vault-force", v], { cwd: root, encoding: "utf-8", timeout: 15000, input: "", env: { ...process.env, ASTRONRAG_STORE: "file" } });
   } catch (err) {
     code = err.status ?? -1;
   }
@@ -199,7 +204,7 @@ console.log("6) 무해성");
   // 깨진 stdin 도 마찬가지
   let code2 = 0;
   try {
-    execFileSync(process.execPath, [guard, "--prompt", "--vault-force", v], { cwd: root, encoding: "utf-8", timeout: 15000, input: "JSON 아님{{{", env: { ...process.env, BBM_STORE: "file" } });
+    execFileSync(process.execPath, [guard, "--prompt", "--vault-force", v], { cwd: root, encoding: "utf-8", timeout: 15000, input: "JSON 아님{{{", env: { ...process.env, ASTRONRAG_STORE: "file" } });
   } catch (err) {
     code2 = err.status ?? -1;
   }

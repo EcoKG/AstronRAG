@@ -8,8 +8,8 @@
 //   node scripts/regress-auto-recall.mjs --sweep          golden 의 none·exact 전체와 fresh 로 하한 T=0~20(0.5 간격)의 none 오탐률·exact R@1 을 시험 프로세스에서 훑는다
 //   node scripts/regress-auto-recall.mjs --bench [--count 950] [--rounds 30] [--seed 42]
 //                                                         bench-rif 생성기로 만든 합성 볼트에서 훅 끝단(spawn~종료)·단계별 시간과 SessionStart 인덱스와의 중복 노출을 잰다
-//   --eval·--sweep·--bench 공통: [--scorer legacy|bm25f] [--min-score <T>] — 시험 프로세스와 자식 훅에 BIGBRAIN_SCORER·BIGBRAIN_AUTO_MIN_SCORE 로 넘긴다
-//   자식 훅에는 BIGBRAIN_AUTO_RECALL=1 을 넘긴다(기본 끔).
+//   --eval·--sweep·--bench 공통: [--scorer legacy|bm25f] [--min-score <T>] — 시험 프로세스와 자식 훅에 ASTRONRAG_SCORER·ASTRONRAG_AUTO_MIN_SCORE 로 넘긴다
+//   자식 훅에는 ASTRONRAG_AUTO_RECALL=1 을 넘긴다(기본 끔).
 //
 // 볼트·HOME·설정 파일은 전부 %TEMP% 에 만들고 끝나면 지운다. 실사용 볼트와 ~/.claude 는 건드리지 않는다.
 
@@ -33,8 +33,8 @@ const MAX = 3;
 /** 지연 기준 — 훅 끝단(spawn~종료) p95 상한(ms) */
 const LATENCY_LIMIT_MS = 200;
 
-// 시험 프로세스와 자식 훅이 사용자 환경의 BIGBRAIN_* 설정을 물려받지 않게 한다
-for (const k of Object.keys(process.env)) if (k.startsWith("BIGBRAIN_")) delete process.env[k];
+// 시험 프로세스와 자식 훅이 사용자 환경의 ASTRONRAG_* 설정을 물려받지 않게 한다
+for (const k of Object.keys(process.env)) if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(k)) delete process.env[k];
 
 let values;
 try {
@@ -67,7 +67,7 @@ if (values.scorer !== undefined) {
 		console.error(`regress-auto-recall: 지원하지 않는 scorer: ${values.scorer}`);
 		process.exit(2);
 	}
-	process.env.BIGBRAIN_SCORER = values.scorer;
+	process.env.ASTRONRAG_SCORER = values.scorer;
 }
 /** 이번 실행의 자동 회상 하한 — --min-score 가 없으면 훅 기본값 */
 const minScore = values["min-score"] === undefined ? MIN_SCORE : Number(values["min-score"]);
@@ -75,7 +75,7 @@ if (!(Number.isFinite(minScore) && minScore >= 0)) {
 	console.error("regress-auto-recall: --min-score 는 0 이상 수여야 한다");
 	process.exit(2);
 }
-if (values["min-score"] !== undefined) process.env.BIGBRAIN_AUTO_MIN_SCORE = String(minScore);
+if (values["min-score"] !== undefined) process.env.ASTRONRAG_AUTO_MIN_SCORE = String(minScore);
 
 const distUrl = (f) => pathToFileURL(path.join(root, "dist", f)).href;
 if (!fs.existsSync(path.join(root, "dist", "store.js"))) {
@@ -96,7 +96,7 @@ function tempDir(tag) {
 const home = tempDir("home");
 
 /** 자식 훅 환경 — HOME 을 임시 디렉터리로 돌려 실사용 설정을 읽지 않게 한다 */
-const hookEnv = (extra = {}) => ({ ...process.env, USERPROFILE: home, HOME: home, BBM_STORE: "file", ...extra });
+const hookEnv = (extra = {}) => ({ ...process.env, USERPROFILE: home, HOME: home, ASTRONRAG_STORE: "file", ...extra });
 
 /** session-guard 를 띄워 { stdout, status, ms } 를 돌려준다 */
 function runGuard(args, { cwd, input = "", env = {}, script = guard }) {
@@ -117,7 +117,7 @@ const promptInput = (sessionId, text) =>
 
 /** 자동 회상을 켠 프롬프트 훅 한 번 (cwd 를 주지 않으면 볼트에서 띄운다) */
 const prompt = (vault, sessionId, text, env = {}, cwd = vault) =>
-	runGuard(["--prompt", "--vault-force", vault], { cwd, input: promptInput(sessionId, text), env: { BIGBRAIN_AUTO_RECALL: "1", ...env } });
+	runGuard(["--prompt", "--vault-force", vault], { cwd, input: promptInput(sessionId, text), env: { ASTRONRAG_AUTO_RECALL: "1", ...env } });
 
 /** 세션 시작 훅 한 번 */
 const start = (vault, sessionId, source = "startup") =>
@@ -136,7 +136,7 @@ function parseOut(stdout) {
 	}
 }
 
-const BLOCK = /<bigbrainmemory-auto-recall matched="(\d+)" note="자동 검색 결과\. 관련 없으면 무시\. 전문은 read_memory">\n([\s\S]*?)\n<\/bigbrainmemory-auto-recall>/;
+const BLOCK = /<astronrag-auto-recall matched="(\d+)" note="자동 검색 결과\. 관련 없으면 무시\. 전문은 read_memory">\n([\s\S]*?)\n<\/astronrag-auto-recall>/;
 const LINE = /^- \[([^\]]+)\] .+ \((episodic|semantic|procedural|preference), conf [0-9.]+, \d+일 전(, 대조 필요)?\)$/;
 
 /** 훅 출력에서 additionalContext 와 자동 회상 블록·slug 를 뽑는다 */
@@ -394,6 +394,7 @@ const CORRECTION = `아니야 그게 아니라 ${EXACT}`;
 
 try {
 	const v = fixtureVault("main");
+	env_new_names_preserve_recall_limits_and_order();
 
 	console.log("0) 전제");
 	{
@@ -402,7 +403,7 @@ try {
 
 	console.log("1) 짧은 프롬프트·슬래시 명령·prompt 부재는 건너뛴다");
 	{
-		const low = { BIGBRAIN_AUTO_MIN_SCORE: "0" };
+		const low = { ASTRONRAG_AUTO_MIN_SCORE: "0" };
 		check("7자 프롬프트는 무출력", prompt(v, "S1", "nvmrc!!", low).stdout === "");
 		check("앞뒤 공백을 빼고 7자면 무출력", prompt(v, "S1", "   nvmrc!!   ", low).stdout === "");
 		check("8자 프롬프트는 검색한다", recallOf(prompt(v, "S1", "nvmrc!!!", low).stdout).slugs.includes(EXACT_SLUG));
@@ -453,8 +454,8 @@ try {
 			return JSON.stringify(got) === JSON.stringify(want) ? [] : [`${q}: ${JSON.stringify(got)} ≠ ${JSON.stringify(want)}`];
 		});
 		check("훅 결과가 같은 규칙의 시험 프로세스 계산과 같다", diffs.length === 0, diffs.join("\n    "));
-		check("BIGBRAIN_AUTO_MIN_SCORE 로 임계를 바꾼다", prompt(v, "S4", EXACT, { BIGBRAIN_AUTO_MIN_SCORE: "1e9" }).stdout === "");
-		const low = recallOf(prompt(v, "S4", EXACT, { BIGBRAIN_AUTO_MIN_SCORE: "0" }).stdout).slugs;
+		check("ASTRONRAG_AUTO_MIN_SCORE 로 임계를 바꾼다", prompt(v, "S4", EXACT, { ASTRONRAG_AUTO_MIN_SCORE: "1e9" }).stdout === "");
+		const low = recallOf(prompt(v, "S4", EXACT, { ASTRONRAG_AUTO_MIN_SCORE: "0" }).stdout).slugs;
 		check("임계 0 에서도 1위 대비 50% 규칙과 최대 3건을 지킨다", JSON.stringify(low) === JSON.stringify(expectedSlugs(v, EXACT, 0)) && low.length <= MAX, JSON.stringify(low));
 	}
 
@@ -474,39 +475,50 @@ try {
 		check("압축 뒤에는 다시 주입", recallOf(prompt(v, "D1", EXACT).stdout).slugs.includes(EXACT_SLUG));
 	}
 
-	console.log("5-1) 필터 뒤에 자른다 — 이미 주입한 상위·superseded 가 새 후보를 가리지 않는다");
-	{
-		const topics = ["alpha replica failover", "billing webhook retries", "cache warmup schedule", "docker layer pruning", "email bounce handling"];
-		const kw = ["quibbit", "gateway", "quota", "burst", "window", "region", "tenant", "throttle"];
-		const lv = fixtureVault("limit", {
-			extra: [
-				...topics.map((t, i) => ({ slug: `zorblax-${i + 1}`, title: `Zorblax ${t}`, description: `zorblax ${t} notes`, tags: ["zorblax"], body: `zorblax runbook for ${t}.` })),
-				{ slug: "quibbit-old", title: `Quibbit ${kw.slice(1).join(" ")}`, description: kw.join(" "), tags: kw, body: `${kw.join(" ")}.`, status: "superseded" },
-				{ slug: "quibbit-frontend", title: "Quibbit gateway", description: "browser checkout calls it", tags: ["quibbit"], body: "frontend." },
-				{ slug: "quibbit-mobile", title: "Quibbit quota", description: "ios android clients share one", tags: ["quibbit"], body: "mobile." },
-				{ slug: "quibbit-partner", title: "Quibbit burst", description: "resellers negotiate higher ceilings", tags: ["quibbit"], body: "partner." },
-			],
-		});
-		const Z = "zorblax runbook notes please";
-		const zAll = expectedSlugs(lv, Z, MIN_SCORE, undefined, []);
-		check("전제: 임계를 넘는 zorblax 후보가 3건을 넘는다", searchPersistedIndex(lv, Z, { limit: 1000 }).results.filter((r) => r.score >= MIN_SCORE).length > MAX, JSON.stringify(zAll));
-		start(lv, "L1");
-		const z1 = recallOf(prompt(lv, "L1", Z).stdout).slugs;
-		const z2 = recallOf(prompt(lv, "L1", Z).stdout).slugs;
-		check("첫 턴에 3건 주입", z1.length === MAX, JSON.stringify(z1));
-		check("둘째 턴에 상위 3건 뒤의 새 후보를 주입", z2.length > 0 && z2.every((s) => !z1.includes(s)), `${JSON.stringify(z1)} → ${JSON.stringify(z2)}`);
-		check("둘째 턴이 이미 주입한 것을 뺀 같은 규칙의 계산과 같다", JSON.stringify(z2) === JSON.stringify(expectedSlugs(lv, Z, MIN_SCORE, undefined, z1)), JSON.stringify(z2));
+	function env_new_names_preserve_recall_limits_and_order() {
+		console.log("env_new_names_preserve_recall_limits_and_order");
+		console.log("5-1) 필터 뒤에 자른다 — 이미 주입한 상위·superseded 가 새 후보를 가리지 않는다");
+		{
+			const topics = ["alpha replica failover", "billing webhook retries", "cache warmup schedule", "docker layer pruning", "email bounce handling"];
+			const kw = ["quibbit", "gateway", "quota", "burst", "window", "region", "tenant", "throttle"];
+			const lv = fixtureVault("limit", {
+				extra: [
+					...topics.map((t, i) => ({ slug: `zorblax-${i + 1}`, title: `Zorblax ${t}`, description: `zorblax ${t} notes`, tags: ["zorblax"], body: `zorblax runbook for ${t}.` })),
+					{ slug: "quibbit-old", title: `Quibbit ${kw.slice(1).join(" ")}`, description: kw.join(" "), tags: kw, body: `${kw.join(" ")}.`, status: "superseded" },
+					{ slug: "quibbit-frontend", title: "Quibbit gateway", description: "browser checkout calls it", tags: ["quibbit"], body: "frontend." },
+					{ slug: "quibbit-mobile", title: "Quibbit quota", description: "ios android clients share one", tags: ["quibbit"], body: "mobile." },
+					{ slug: "quibbit-partner", title: "Quibbit burst", description: "resellers negotiate higher ceilings", tags: ["quibbit"], body: "partner." },
+				],
+			});
+			const Z = "zorblax runbook notes please";
+			const zAll = expectedSlugs(lv, Z, MIN_SCORE, undefined, []);
+			check("전제: 임계를 넘는 zorblax 후보가 3건을 넘는다", searchPersistedIndex(lv, Z, { limit: 1000 }).results.filter((r) => r.score >= MIN_SCORE).length > MAX, JSON.stringify(zAll));
+			start(lv, "L1");
+			const z1 = recallOf(prompt(lv, "L1", Z).stdout).slugs;
+			const z2 = recallOf(prompt(lv, "L1", Z).stdout).slugs;
+			check("첫 턴에 3건 주입", z1.length === MAX, JSON.stringify(z1));
+			check("둘째 턴에 상위 3건 뒤의 새 후보를 주입", z2.length > 0 && z2.every((s) => !z1.includes(s)), `${JSON.stringify(z1)} → ${JSON.stringify(z2)}`);
+			check("둘째 턴이 이미 주입한 것을 뺀 같은 규칙의 계산과 같다", JSON.stringify(z2) === JSON.stringify(expectedSlugs(lv, Z, MIN_SCORE, undefined, z1)), JSON.stringify(z2));
 
-		const Q = kw.join(" ");
-		const top3 = searchPersistedIndex(lv, Q, { limit: MAX }).results.map((r) => r.record.status);
-		check("전제: superseded 기억이 상위 3건에 낀다", top3.includes("superseded"), JSON.stringify(top3));
-		const q1 = recallOf(prompt(lv, "L2", Q).stdout).slugs;
-		const want = ["quibbit-frontend", "quibbit-mobile", "quibbit-partner"];
-		check("superseded 가 낀 자리를 활성 후보로 채워 3건 주입", q1.length === MAX && want.every((s) => q1.includes(s)), JSON.stringify(q1));
-		check("superseded 는 주입하지 않는다", !q1.includes("quibbit-old"), JSON.stringify(q1));
-		check("superseded 질의가 같은 규칙의 계산과 같다", JSON.stringify(q1) === JSON.stringify(expectedSlugs(lv, Q)), JSON.stringify(q1));
+			const Q = kw.join(" ");
+			const top3 = searchPersistedIndex(lv, Q, { limit: MAX }).results.map((r) => r.record.status);
+			check("전제: superseded 기억이 상위 3건에 낀다", top3.includes("superseded"), JSON.stringify(top3));
+			const q1 = recallOf(prompt(lv, "L2", Q).stdout).slugs;
+			const want = ["quibbit-frontend", "quibbit-mobile", "quibbit-partner"];
+			check("superseded 가 낀 자리를 활성 후보로 채워 3건 주입", q1.length === MAX && want.every((s) => q1.includes(s)), JSON.stringify(q1));
+			check("superseded 는 주입하지 않는다", !q1.includes("quibbit-old"), JSON.stringify(q1));
+			check("superseded 질의가 같은 규칙의 계산과 같다", JSON.stringify(q1) === JSON.stringify(expectedSlugs(lv, Q)), JSON.stringify(q1));
+		}
+		console.log("7) 예산 — ASTRONRAG_AUTO_BUDGET");
+		{
+			const full = recallOf(prompt(v, "S7", EXACT).stdout);
+			check("기본 예산 1500자 이하", full.block.length > 0 && full.context.length <= 1500, `${full.context.length}`);
+			const small = recallOf(prompt(v, "S7", EXACT, { ASTRONRAG_AUTO_BUDGET: "200" }).stdout);
+			check("예산 200 이면 블록이 200자 이하", small.block !== "" && small.context.length <= 200, `${small.context.length}`);
+			check("줄이 안 들어가면 설명을 잘라 첫 줄만 넣는다", small.matched === 1 && small.lines[0].includes("…") && small.slugs[0] === full.slugs[0], small.context);
+			check("태그만으로 예산을 넘으면 무출력", prompt(v, "S7", EXACT, { ASTRONRAG_AUTO_BUDGET: "40" }).stdout === "");
+		}
 	}
-
 	console.log("6) 마커 호환 — 구버전 훅·구형 마커");
 	{
 		const markerPath = path.join(v, ".bbm-session-start");
@@ -548,16 +560,6 @@ try {
 		check("Stop 훅이 autoSlugs 를 보존", stop.status === 0 && JSON.parse(fs.readFileSync(markerPath, "utf-8")).autoSlugs?.includes(EXACT_SLUG), fs.readFileSync(markerPath, "utf-8"));
 	}
 
-	console.log("7) 예산 — BIGBRAIN_AUTO_BUDGET");
-	{
-		const full = recallOf(prompt(v, "S7", EXACT).stdout);
-		check("기본 예산 1500자 이하", full.block.length > 0 && full.context.length <= 1500, `${full.context.length}`);
-		const small = recallOf(prompt(v, "S7", EXACT, { BIGBRAIN_AUTO_BUDGET: "200" }).stdout);
-		check("예산 200 이면 블록이 200자 이하", small.block !== "" && small.context.length <= 200, `${small.context.length}`);
-		check("줄이 안 들어가면 설명을 잘라 첫 줄만 넣는다", small.matched === 1 && small.lines[0].includes("…") && small.slugs[0] === full.slugs[0], small.context);
-		check("태그만으로 예산을 넘으면 무출력", prompt(v, "S7", EXACT, { BIGBRAIN_AUTO_BUDGET: "40" }).stdout === "");
-	}
-
 	console.log("8) 대조 필요(T49 세 번째 채널)·프로젝트 범위");
 	{
 		const d = tempDir("stale");
@@ -583,12 +585,12 @@ try {
 		check("새 기억에는 대조 필요 없음", lineOf("fresh-one") !== "" && !lineOf("fresh-one").includes("대조 필요"), r.context);
 		check("나이는 0일 전", / 0일 전/.test(lineOf("fresh-one")), lineOf("fresh-one"));
 		check("범위 미지정이면 다른 프로젝트 기억도 후보", r.slugs.includes("other-project"), JSON.stringify(r.slugs));
-		const scoped = recallOf(prompt(d, "S8", Q8, { BIGBRAIN_PROJECT: "mine" }).stdout);
-		check("BIGBRAIN_PROJECT 로 다른 프로젝트 기억을 뺀다", !scoped.slugs.includes("other-project") && scoped.slugs.length > 0, JSON.stringify(scoped.slugs));
+		const scoped = recallOf(prompt(d, "S8", Q8, { ASTRONRAG_PROJECT: "mine" }).stdout);
+		check("ASTRONRAG_PROJECT 로 다른 프로젝트 기억을 뺀다", !scoped.slugs.includes("other-project") && scoped.slugs.length > 0, JSON.stringify(scoped.slugs));
 		const cwd = tempDir("proj");
-		fs.writeFileSync(path.join(cwd, ".mcp.json"), JSON.stringify({ mcpServers: { bigbrainmemory: { command: "node", env: { BIGBRAIN_PROJECT: "mine" } } } }), "utf-8");
+		fs.writeFileSync(path.join(cwd, ".mcp.json"), JSON.stringify({ mcpServers: { astronrag: { command: "node", env: { ASTRONRAG_PROJECT: "mine" } } } }), "utf-8");
 		const viaCfg = recallOf(prompt(d, "S8", Q8, {}, cwd).stdout);
-		check("프로젝트 .mcp.json 의 BIGBRAIN_PROJECT 를 따른다", !viaCfg.slugs.includes("other-project") && viaCfg.slugs.length > 0, JSON.stringify(viaCfg.slugs));
+		check("프로젝트 .mcp.json 의 ASTRONRAG_PROJECT 를 따른다", !viaCfg.slugs.includes("other-project") && viaCfg.slugs.length > 0, JSON.stringify(viaCfg.slugs));
 	}
 
 	console.log("9) 인덱스가 없거나 깨졌으면 조용히 끝낸다");
@@ -640,17 +642,17 @@ try {
 		check("주입 0건도 기록한다", miss.tool === "auto_recall" && miss.injected === 0, JSON.stringify(miss));
 	}
 
-	console.log("12) 기본 끔 — BIGBRAIN_AUTO_RECALL=1 일 때만 주입");
+	console.log("12) 기본 끔 — ASTRONRAG_AUTO_RECALL=1 일 때만 주입");
 	{
 		const unset = runGuard(["--prompt", "--vault-force", v], { cwd: v, input: promptInput("S12", EXACT) });
 		check("변수 미설정이면 무출력·종료코드 0", unset.stdout === "" && unset.status === 0, `${unset.status} ${unset.stdout.slice(0, 100)}`);
-		check("0 이면 무출력", prompt(v, "S12", EXACT, { BIGBRAIN_AUTO_RECALL: "0" }).stdout === "");
-		check("true 처럼 1 이 아닌 값이면 무출력", prompt(v, "S12", EXACT, { BIGBRAIN_AUTO_RECALL: "true" }).stdout === "");
-		check("1 이면 주입", recallOf(prompt(v, "S12", EXACT, { BIGBRAIN_AUTO_RECALL: "1" }).stdout).slugs.includes(EXACT_SLUG));
+		check("0 이면 무출력", prompt(v, "S12", EXACT, { ASTRONRAG_AUTO_RECALL: "0" }).stdout === "");
+		check("true 처럼 1 이 아닌 값이면 무출력", prompt(v, "S12", EXACT, { ASTRONRAG_AUTO_RECALL: "true" }).stdout === "");
+		check("1 이면 주입", recallOf(prompt(v, "S12", EXACT, { ASTRONRAG_AUTO_RECALL: "1" }).stdout).slugs.includes(EXACT_SLUG));
 		const w = fixtureVault("off-cue");
 		start(w, "S12C");
 		const cue = runGuard(["--prompt", "--vault-force", w], { cwd: w, input: promptInput("S12C", CORRECTION) });
-		check("꺼져 있어도 부호화 큐는 그대로", /<bigbrainmemory-cue/.test(cue.stdout) && !cue.stdout.includes("<bigbrainmemory-auto-recall"), cue.stdout.slice(0, 200));
+		check("꺼져 있어도 부호화 큐는 그대로", /<astronrag-cue/.test(cue.stdout) && !cue.stdout.includes("<astronrag-auto-recall"), cue.stdout.slice(0, 200));
 	}
 
 	console.log("13) 부호화 큐와 한 JSON 으로 합친다");
@@ -660,14 +662,14 @@ try {
 		const out = prompt(w, "M1", CORRECTION);
 		const r = recallOf(out.stdout);
 		check("stdout 이 JSON 한 줄", r.json && out.stdout.trim().split("\n").length === 1, out.stdout.slice(0, 200));
-		const ri = r.context.indexOf("<bigbrainmemory-auto-recall");
-		const ci = r.context.indexOf("<bigbrainmemory-cue");
+		const ri = r.context.indexOf("<astronrag-auto-recall");
+		const ci = r.context.indexOf("<astronrag-cue");
 		check("회상 블록과 큐 블록이 모두 있다", ri >= 0 && ci >= 0, r.context.slice(0, 300));
 		check("회상 블록이 큐 블록보다 앞", ri >= 0 && ri < ci);
 		check("큐 문구는 그대로", /regex guess, not an observation/.test(r.context) && /mcp__[\w-]+__remember/.test(r.context));
-		const cueOnly = prompt(w, "M1", "아니야 틀렸어", { BIGBRAIN_CUE_COOLDOWN: "1" });
+		const cueOnly = prompt(w, "M1", "아니야 틀렸어", { ASTRONRAG_CUE_COOLDOWN: "1" });
 		const c = recallOf(cueOnly.stdout);
-		check("큐만 있어도 같은 JSON 형식", c.json?.hookSpecificOutput?.hookEventName === "UserPromptSubmit" && c.context.startsWith("<bigbrainmemory-cue"), cueOnly.stdout.slice(0, 200));
+		check("큐만 있어도 같은 JSON 형식", c.json?.hookSpecificOutput?.hookEventName === "UserPromptSubmit" && c.context.startsWith("<astronrag-cue"), cueOnly.stdout.slice(0, 200));
 	}
 
 	console.log("14) 훅 경로 import 목록 고정");

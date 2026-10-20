@@ -17,6 +17,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// 시험 기본값을 사용자 환경 설정과 격리한다.
+for (const key of Object.keys(process.env)) {
+  if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key) && !key.startsWith("ASTRONRAG_TEST_")) delete process.env[key];
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const entry = path.join(root, "dist", "index.js");
@@ -37,7 +42,7 @@ const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entry],
   cwd: root,
-  env: { ...process.env, BIGBRAIN_VAULT: vaultDir },
+  env: { ...process.env, ASTRONRAG_VAULT: vaultDir },
   stderr: "pipe",
 });
 const client = new Client({ name: "regress-hygiene", version: "0.0.1" });
@@ -60,13 +65,13 @@ console.log("1) 버전 단일 출처 (package.json)");
 
 console.log("2) stderr 로그 위계");
 {
-  const lines = stderr.split("\n").filter((l) => l.includes("[BigBrainMemory]"));
+  const lines = stderr.split("\n").filter((l) => l.includes("[AstronRAG]"));
   check("기동 로그가 있음", lines.length > 0, stderr.slice(0, 200));
   // ★ 패치 전: ready. 가 수준 표기 없이 stderr 로 나가 오류로 집계됐다
   const ready = lines.find((l) => l.includes("ready."));
-  check("ready. 는 [info] 수준", ready !== undefined && ready.includes("[BigBrainMemory][info]"), ready);
+  check("ready. 는 [info] 수준", ready !== undefined && ready.includes("[AstronRAG][info]"), ready);
   check("경고는 [warn] 수준", lines.filter((l) => l.includes("WARNING") || l.includes("훅이 설치돼")).every((l) => l.includes("[warn]")), lines.join(" | ").slice(0, 300));
-  check("모든 자체 로그에 수준 표기", lines.every((l) => /\[BigBrainMemory\]\[(info|warn|error)\]/.test(l)), lines.find((l) => !/\[(info|warn|error)\]/.test(l)));
+  check("모든 자체 로그에 수준 표기", lines.every((l) => /\[AstronRAG\]\[(info|warn|error)\]/.test(l)), lines.find((l) => !/\[(info|warn|error)\]/.test(l)));
 }
 
 console.log("3) 빌드 스탬프");
