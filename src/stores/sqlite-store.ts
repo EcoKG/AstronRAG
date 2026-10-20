@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import crypto from "node:crypto";
 import type { MemoryRecord, MemoryStatus, MemoryType } from "../types.js";
 import { Vault } from "../vault.js";
-import { assertSafeSlug, type MemoryStore, type StoreInspection, type StoreUsageEvent, type StoredEmbedding } from "./memory-store.js";
+import { assertSafeSlug, type MemoryIdentity, type MemoryStore, type StoreInspection, type StoreUsageEvent, type StoredEmbedding } from "./memory-store.js";
 
 const SCHEMA_VERSION = "1";
 const BUSY_TIMEOUT_MS = 5000;
@@ -84,6 +84,7 @@ export class SqliteStore implements MemoryStore {
 		this.vaultResources = new Vault(this.root, { readOnly: options.readOnly });
 		this.nativeMemoryFiles = this.vaultResources.nativeMemoryFiles;
 		this.db = new DatabaseSync(this.databasePath, options.readOnly ? { readOnly: true } : {});
+		this.db.function("memory_identity_hash", { deterministic: true }, (value) => crypto.createHash("sha256").update(String(value)).digest("hex"));
 		this.db.exec("PRAGMA foreign_keys = ON");
 		this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
 		if (options.readOnly) return;
@@ -384,6 +385,24 @@ export class SqliteStore implements MemoryStore {
 
 	filePath(_slug: string, _archived = false): string {
 		return this.databasePath;
+	}
+
+	/** 기억 내용의 해시와 강화 정보 신원을 한 읽기 스냅샷에서 조회한다. */
+	getIdentity(slug: string, archived = false): MemoryIdentity | null {
+		assertSafeSlug(slug);
+		const status = archived ? "AND status = 'archived'" : "AND status <> 'archived'";
+		const row = this.db.prepare(`
+			SELECT memory_identity_hash(json_array(
+				id, slug, title, description, type, confidence, status, created, updated,
+				source, project, review_after, supersedes, superseded_by, archive_reason, body,
+				(SELECT json_group_array(value) FROM (SELECT value FROM memory_tags WHERE slug = m.slug ORDER BY position)),
+				(SELECT json_group_array(value) FROM (SELECT value FROM memory_links WHERE slug = m.slug ORDER BY position)),
+				(SELECT json_group_array(value) FROM (SELECT value FROM memory_history WHERE slug = m.slug ORDER BY position)),
+				(SELECT json_group_array(value) FROM (SELECT value FROM memory_derived_from WHERE slug = m.slug ORDER BY position))
+			)) AS content, json_array(storage_strength, last_accessed, last_reinforced, access_count) AS ranking
+			FROM memories AS m WHERE slug = ? ${status}
+		`).get(slug) as { content: string; ranking: string } | undefined;
+		return row ? ["content", row.content, row.ranking] : null;
 	}
 
 	exists(slug: string): boolean {

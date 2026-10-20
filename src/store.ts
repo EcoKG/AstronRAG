@@ -281,14 +281,14 @@ function mergeQueries(queries: ParsedQuery[]): ParsedQuery {
 /**
  * 훅용 읽기 전용 회상 — 볼트의 영속 역색인(.bbm-index/)만 읽어 검색한다.
  * 인덱스를 만들거나 고치지 않고, 기억 파일을 읽지 않으며, 강화·연상 확산도 하지 않는다. 인덱스가 없거나 손상·버전 불일치면 빈 결과다.
- * 반환할 결과와 그 억제자만 stat 해, 서버가 마지막으로 sync 한 뒤 바뀌거나 사라진 기억은 후보에서 빼고 다시 순위화한다.
+ * 반환할 결과와 그 억제자의 기억 신원을 대조해 바뀌거나 사라진 기억을 제외하고 다시 순위화한다.
  * 세 바퀴 뒤에도 낡은 결과가 나오면 남은 후보를 모두 stat 해 한 번 더 순위화한다. 볼트 복사·일괄 편집으로 대부분이 낡아도 순위화는 네 번 이하다.
  * 그래서 limit 은 지금 파일과 맞는 후보로 채워지고, totalMatched 에서는 대조로 드러난 낡은 후보만 빠진다. 그 뒤 새로 생긴 기억은 보이지 않는다.
  */
 export function searchPersistedIndex(
   vaultRoot: string,
   query: string,
-  opts?: { type?: MemoryType; limit?: number; project?: string; currentFilePath?: string },
+  opts?: { type?: MemoryType; limit?: number; project?: string; currentStore?: Pick<Storage, "getIdentity" | "filePath"> },
 ): SearchOutcome {
   const q = parseQuery(query);
   if (q.tokens.length === 0) return { results: [], totalMatched: 0 };
@@ -299,7 +299,7 @@ export function searchPersistedIndex(
   const current = new Map<string, boolean>();
   const isCurrent = (slug: string): boolean => {
     let ok = current.get(slug);
-    if (ok === undefined) current.set(slug, (ok = retriever.isCurrent(slug, opts?.currentFilePath)));
+    if (ok === undefined) current.set(slug, (ok = retriever.isCurrent(slug, opts?.currentStore)));
     return ok;
   };
   const partialRounds = 3;

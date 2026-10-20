@@ -84,7 +84,8 @@ if (!fs.existsSync(path.join(root, "dist", "store.js"))) {
 }
 const { Vault } = await import(distUrl("vault.js"));
 const { MemoryStore, searchPersistedIndex, SCORER } = await import(distUrl("store.js"));
-const { INDEX_DIR, INDEX_FILE } = await import(distUrl("retriever.js"));
+const { INDEX_DIR, INDEX_FILE, LexicalRetriever } = await import(distUrl("retriever.js"));
+const { SqliteStore, createMemoryStore } = await import(distUrl("stores/index.js"));
 
 const temps = new Array();
 /** %TEMP% 아래 새 디렉터리 (끝나면 지운다) */
@@ -393,6 +394,61 @@ const EXACT_SLUG = "node-version-pin";
 const CORRECTION = `아니야 그게 아니라 ${EXACT}`;
 
 try {
+	console.log("SQLite 기억 신원 대조");
+	{
+		const d = tempDir("sqlite space #");
+		const databasePath = path.join(d, "custom # 기억.sqlite");
+		const db = new SqliteStore(d, databasePath);
+		try {
+			const now = new Date().toISOString();
+			const record = (slug) => ({
+				id: `mem-${slug}`, slug, title: "Zorblax recall", description: "zorblax recall guide",
+				type: "semantic", tags: ["zorblax"], confidence: 0.9, storageStrength: 1, status: "active",
+				created: now, updated: now, lastAccessed: now, lastReinforced: now, accessCount: 0,
+				links: [], history: [], body: "zorblax recall instructions",
+			});
+			for (const slug of ["unchanged", "changed", "reinforced", "tagged", "archived", "deleted"]) db.write(record(slug));
+			const retriever = new LexicalRetriever();
+			retriever.sync(db);
+			const query = "zorblax recall instructions please";
+			const env = { ASTRONRAG_STORE: "sqlite", ASTRONRAG_SQLITE_PATH: databasePath, ASTRONRAG_AUTO_MIN_SCORE: "0", ASTRONRAG_USAGE_LOG: "0" };
+			const indexFile = path.join(d, INDEX_DIR, INDEX_FILE);
+			db.updateRecord("changed", (r) => ({ ...r, body: "different body with unchanged updated timestamp" }));
+			db.updateRecord("reinforced", (r) => ({ ...r, storageStrength: 3, accessCount: 7, lastAccessed: "2030-01-01", lastReinforced: "2030-01-01" }));
+			db.updateRecord("tagged", (r) => ({ ...r, tags: ["other"] }));
+			db.moveToArchive("archived");
+			const { DatabaseSync } = await import("node:sqlite");
+			const raw = new DatabaseSync(databasePath);
+			raw.exec("PRAGMA foreign_keys = ON");
+			raw.prepare("DELETE FROM memories WHERE slug = ?").run("deleted");
+			raw.close();
+			const beforeDb = fs.readFileSync(databasePath);
+			const beforeIndex = fs.readFileSync(indexFile);
+			const out = prompt(d, "SQLITE", query, env);
+			const recalled = recallOf(out.stdout).slugs;
+			check("색인 저장 뒤 '다른' 기억 하나를 수정해도, 바뀌지 않은 기억은 자동 회상에 주입된다.", recalled.includes("unchanged"), out.stdout);
+			check("바뀐 기억 자체는 낡음으로 빠진다.", !recalled.includes("changed") && !recalled.includes("tagged") && recalled.length > 0, JSON.stringify(recalled));
+			check("강화 기록만 바뀌면 자동 회상에 주입된다", recalled.includes("reinforced"), JSON.stringify(recalled));
+			check("삭제·보관한 기억은 자동 회상에 주입되지 않는다", !recalled.includes("deleted") && !recalled.includes("archived"));
+			check("SQLite 훅은 DB와 색인에 쓰지 않는다", beforeDb.equals(fs.readFileSync(databasePath)) && beforeIndex.equals(fs.readFileSync(indexFile)));
+			const reads = new Array();
+			const read = db.read.bind(db);
+			db.read = (slug, archived) => { reads.push(slug); return read(slug, archived); };
+			retriever.sync(db);
+			check("SQLite sync는 다른 기억 변경 시 그대로인 기억을 다시 읽지 않는다", !reads.includes("unchanged") && reads.includes("changed"), JSON.stringify(reads));
+			const indexed = JSON.parse(fs.readFileSync(indexFile, "utf8"));
+			check("강화 변경은 서버 sync의 순위 정보에 반영된다", indexed.docs.find((r) => r.record.slug === "reinforced")?.record.accessCount === 7);
+			const readonly = createMemoryStore(d, env, { readOnly: true });
+			try {
+				let denied = false;
+				try { readonly.write(record("forbidden")); } catch { denied = true; }
+				check("읽기 전용 SQLite는 쓰기를 거부한다", denied);
+			} finally { readonly.close(); }
+		} finally { db.close(); }
+		const missing = path.join(d, "missing", "store.sqlite");
+		const out = prompt(d, "MISSING", "zorblax recall instructions please", { ASTRONRAG_STORE: "sqlite", ASTRONRAG_SQLITE_PATH: missing });
+		check("읽기 전용 훅은 없는 DB를 만들지 않고 조용히 끝낸다", out.status === 0 && out.stdout === "" && !fs.existsSync(path.dirname(missing)));
+	}
 	const v = fixtureVault("main");
 	env_new_names_preserve_recall_limits_and_order();
 

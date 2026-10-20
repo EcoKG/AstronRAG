@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { MemoryRecord } from "../types.js";
 import { Vault } from "../vault.js";
-import { assertSafeSlug, type MemoryStore, type StoreUsageEvent, type StoredEmbedding, type StoreInspection } from "./memory-store.js";
+import { assertSafeSlug, type MemoryIdentity, type MemoryStore, type StoreUsageEvent, type StoredEmbedding, type StoreInspection } from "./memory-store.js";
 
 const USAGE_FILE = ".bbm-usage.jsonl";
 const META_FILE = "store-meta.json";
@@ -28,8 +28,8 @@ export class FileStore implements MemoryStore {
 	readonly root: string;
 	readonly nativeMemoryFiles: string[];
 
-	constructor(root: string) {
-		this.vault = new Vault(root);
+	constructor(root: string, options: { readOnly?: boolean } = {}) {
+		this.vault = new Vault(root, options);
 		this.root = this.vault.root;
 		this.nativeMemoryFiles = this.vault.nativeMemoryFiles;
 	}
@@ -40,6 +40,17 @@ export class FileStore implements MemoryStore {
 
 	filePath(slug: string, archived = false): string {
 		return this.vault.filePath(slug, archived);
+	}
+
+	/** 기억 파일의 inode·수정 시각·크기를 조회한다. */
+	getIdentity(slug: string, archived = false): MemoryIdentity | null {
+		assertSafeSlug(slug);
+		try {
+			const st = fs.statSync(this.filePath(slug, archived), { bigint: true, throwIfNoEntry: false });
+			return st ? [String(st.ino), String(st.mtimeNs), String(st.size)] : null;
+		} catch {
+			return null;
+		}
 	}
 
 	exists(slug: string): boolean {

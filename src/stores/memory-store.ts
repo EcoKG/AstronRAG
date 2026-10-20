@@ -1,5 +1,8 @@
 import type { MemoryRecord } from "../types.js";
 
+/** 파일의 inode·수정 시각·크기 또는 [content, 내용 해시, 순위 신원]을 나타낸다. */
+export type MemoryIdentity = [string, string, string];
+
 export interface StoreUsageEvent {
 	ts: string;
 	pid?: string;
@@ -27,6 +30,7 @@ export interface MemoryStore {
 	readonly nativeMemoryFiles: string[];
 	listSlugs(includeArchived?: boolean): { slug: string; archived: boolean }[];
 	filePath(slug: string, archived?: boolean): string;
+	getIdentity?(slug: string, archived?: boolean): MemoryIdentity | null;
 	exists(slug: string): boolean;
 	read(slug: string, archived?: boolean): MemoryRecord | null;
 	find(slug: string): { record: MemoryRecord; archived: boolean } | null;

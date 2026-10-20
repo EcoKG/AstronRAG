@@ -1,4 +1,4 @@
-// T42 회귀 테스트 — 영속 역색인(.bbm-index/lexical.v1.json)이 검색 결과를 바꾸지 않고 디스크 변화를 따라가는지 고정한다.
+// 영속 역색인의 검색 결과와 기억 신원에 따른 동기화를 검증한다.
 //
 // 사용: node scripts/regress-lexical-index.mjs [--old-dist <구버전 dist 디렉터리>]
 //
@@ -10,7 +10,7 @@
 //   4 손편집(제자리 수정·같은 길이 수정·추가·삭제)이 켜져 있는 저장소와 새 저장소의 다음 질의에 반영되고 인덱스도 갱신된다.
 //     켜져 있는 저장소는 인덱스 파일이 지워지거나 낡은 내용으로 덮어써지면 다음 질의에서 다시 쓴다
 //   5 다른 프로세스의 remember·revise·forget 이 다음 질의에 반영되고, 동시 쓰기 뒤 새 sync 가 인덱스를 파일과 맞춘다
-//   6 손상(잘린 JSON·버전 불일치·형태 불량): 훅 경로는 빈 결과로 건너뛰고 파일을 건드리지 않으며, 서버 경로는 v1 로 재생성한다
+//   6 손상(잘린 JSON·버전 불일치·형태 불량): 훅 경로는 빈 결과로 건너뛰고 파일을 건드리지 않으며, 서버 경로는 현재 버전으로 재생성한다
 //   7 훅 읽기 전용 경로: 인덱스가 최신이면 searchDetailed 와 같고, 인덱스 파일만 읽고 반환 결과만 stat 하며, gray-matter 를 불러오지 않는다.
 //     바뀌거나 지워진 파일은 후보에서 빼고 다시 순위화해 limit 을 현재 후보로 채우며, 버린 기억은 남은 결과를 억제하지 않는다.
 //     대부분이 낡아도(볼트 사본·일괄 편집) 순위화 횟수는 상수로 묶이고, 사본 볼트에서는 빈 결과다.
@@ -189,7 +189,7 @@ try {
 		const s = quietStore(dir);
 		check("질의가 결과를 냄(전제 확인)", slugsOf(s, "apple").length === 3);
 		const idx = readIndex(dir);
-		check("인덱스 파일 lexical.v1.json 의 version 1", INDEX_FILE === "lexical.v1.json" && idx.version === 1);
+		check("기억 신원 색인 형식 버전 2", INDEX_FILE === "lexical.v2.json" && idx.version === 2);
 		check("문서·파일 신원이 볼트 파일(archive 포함)과 일치", indexMatchesFiles(dir), JSON.stringify(idx.docs.map((d) => d.key)));
 		check(
 			"문서별 필드 길이·토큰, posting, 어간 사전, 제목+설명 토큰 기록",
@@ -202,6 +202,10 @@ try {
 		const before = statOf(indexPath(dir));
 		s.search("banana");
 		check("볼트가 그대로면 질의가 인덱스를 다시 쓰지 않음", JSON.stringify(before) === JSON.stringify(statOf(indexPath(dir))));
+		fs.writeFileSync(indexPath(dir), JSON.stringify({ ...idx, version: 1 }));
+		check("구형 색인은 읽기 전용 검색에서 거부한다", LexicalRetriever.openReadOnly(dir) === null);
+		quietStore(dir).search("apple");
+		check("구형 색인은 서버가 버전 2로 재생성한다", readIndex(dir).version === 2 && indexMatchesFiles(dir));
 
 		const bare = freshDir();
 		new Vault(bare).write(record("g-one", { title: "grape" }));
@@ -539,7 +543,7 @@ for (let i = 0; i < ${N}; i++) {
 			);
 			const got = JSON.stringify(quietStore(dir).searchDetailed(q, { limit: 10, includeLinked: false }));
 			check(`${label}: 서버 경로 결과가 정상 인덱스와 같음`, got === want);
-			check(`${label}: 서버 경로가 인덱스를 v1 로 재생성`, indexMatchesFiles(dir));
+			check(`${label}: 서버 경로가 인덱스를 현재 버전으로 재생성`, indexMatchesFiles(dir));
 			check(`${label}: 격리(quarantine) 없음`, !fs.existsSync(path.join(dir, "quarantine")));
 		}
 	}
