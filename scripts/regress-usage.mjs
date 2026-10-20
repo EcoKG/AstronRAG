@@ -37,7 +37,7 @@ function check(name, cond, detail = "") {
 
 /** 시험이 끝나면 지울 임시 볼트 경로 목록 */
 const cleanups = new Array();
-const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+const testTmp = path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? os.tmpdir());
 fs.mkdirSync(testTmp, { recursive: true });
 const freshDir = (tag) => {
   const d = fs.mkdtempSync(path.join(testTmp, `bbm-use-${tag}-`));
@@ -45,7 +45,7 @@ const freshDir = (tag) => {
   return d;
 };
 const readLog = (v) => {
-  const store = createMemoryStore(v, fs.existsSync(path.join(v, ".bbm-usage.jsonl")) ? { BBM_STORE: "file" } : process.env);
+  const store = createMemoryStore(v, fs.existsSync(path.join(v, ".bbm-usage.jsonl")) ? { ASTRONRAG_STORE: "file" } : process.env);
   try {
     return store.readUsageEvents();
   } catch {
@@ -61,7 +61,7 @@ async function withServer(vaultDir, fn, extraEnv = {}) {
     command: process.execPath,
     args: [entry],
     cwd: root,
-    env: { ...process.env, BIGBRAIN_VAULT: vaultDir, ...extraEnv },
+    env: { ...process.env, ASTRONRAG_VAULT: vaultDir, ...extraEnv },
     stderr: "pipe",
   });
   const client = new Client({ name: "regress-usage", version: "0.0.1" });
@@ -75,7 +75,7 @@ const startEvent = (o = {}) => JSON.stringify({ hook_event_name: "SessionStart",
 const stopEvent = (o = {}) => JSON.stringify({ hook_event_name: "Stop", ...o });
 const runGuard = (args, cwd, input) => {
   try {
-    return execFileSync(process.execPath, [guard, ...args], { cwd, encoding: "utf-8", timeout: 15000, input, env: { ...process.env, BBM_STORE: "file" } });
+    return execFileSync(process.execPath, [guard, ...args], { cwd, encoding: "utf-8", timeout: 15000, input, env: { ...process.env, ASTRONRAG_STORE: "file" } });
   } catch (err) {
     return err.stdout ?? "";
   }
@@ -128,9 +128,9 @@ console.log("2) 내용 비기록");
 
   // 골든 질의셋을 만들 때는 명시적으로 켤 수 있어야 한다
   const v2 = freshDir("priv2");
-  await withServer(v2, async (call) => await call("recall", { query: SECRET_QUERY }), { BIGBRAIN_LOG_QUERIES: "1" });
+  await withServer(v2, async (call) => await call("recall", { query: SECRET_QUERY }), { ASTRONRAG_LOG_QUERIES: "1" });
   const rec2 = readLog(v2).find((e) => e.tool === "recall");
-  check("BIGBRAIN_LOG_QUERIES=1 이면 질의문 기록", rec2?.query === SECRET_QUERY, JSON.stringify(rec2));
+  check("ASTRONRAG_LOG_QUERIES=1 이면 질의문 기록", rec2?.query === SECRET_QUERY, JSON.stringify(rec2));
 }
 
 // ── 2-1. 그림자 로그 — legacy·bm25f 상위 5건 일치율 수치만 남긴다 (G5)
@@ -139,7 +139,7 @@ console.log("2-1) 그림자 로그");
   const v = freshDir("shadow");
   const SECRET_TITLE = "그림자로그에없어야할제목";
   const SECRET_QUERY = "그림자로그에없어야할질의";
-  const shadowEnv = { BIGBRAIN_SHADOW: "", BIGBRAIN_SCORER: "", BIGBRAIN_LOG_QUERIES: "" };
+  const shadowEnv = { ASTRONRAG_SHADOW: "", ASTRONRAG_SCORER: "", ASTRONRAG_LOG_QUERIES: "" };
   await withServer(v, async (call) => {
     await call("remember", { title: `${SECRET_TITLE} 배포`, description: "설명", content: "본문", type: "semantic" });
     await call("recall", { query: `${SECRET_QUERY} 배포` });
@@ -154,9 +154,9 @@ console.log("2-1) 그림자 로그");
   await withServer(v2, async (call) => {
     await call("remember", { title: "배포 절차", description: "설명", content: "본문", type: "procedural" });
     await call("recall", { query: "배포" });
-  }, { ...shadowEnv, BIGBRAIN_SHADOW: "0" });
+  }, { ...shadowEnv, ASTRONRAG_SHADOW: "0" });
   const off = readLog(v2).find((e) => e.tool === "recall");
-  check("BIGBRAIN_SHADOW=0 이면 shadowTop5 없음", off !== undefined && !("shadowTop5" in off), JSON.stringify(off));
+  check("ASTRONRAG_SHADOW=0 이면 shadowTop5 없음", off !== undefined && !("shadowTop5" in off), JSON.stringify(off));
 }
 
 // ── 3. 끌 수 있고, 꺼도 도구는 정상이다
@@ -166,7 +166,7 @@ console.log("3) 비활성화");
   await withServer(v, async (call) => {
     const r = await call("remember", { title: "끈-상태-저장", description: "설명", content: "본문", type: "semantic" });
     check("계측을 꺼도 저장은 정상", !r.isError, JSON.stringify(r).slice(0, 200));
-  }, { BIGBRAIN_USAGE_LOG: "0" });
+  }, { ASTRONRAG_USAGE_LOG: "0" });
   check("로그 이벤트가 생기지 않음", readLog(v).length === 0);
   const stored = createMemoryStore(v);
   check("기억은 실제로 저장됨", stored.listSlugs().length === 1);
@@ -223,7 +223,7 @@ console.log("4) 세션 결과 1회 기록");
     cwd: root,
     encoding: "utf-8",
     timeout: 15000,
-    env: { ...process.env, BBM_STORE: "file" },
+    env: { ...process.env, ASTRONRAG_STORE: "file" },
   });
   const lateRep = JSON.parse(lateOut);
   check("리포트는 최종 결과(저장)를 취함", lateRep.sessions.storedAtLeastOne === 1, lateOut.slice(0, 400));
@@ -262,7 +262,7 @@ console.log("5) 리포트 집계");
     cwd: root,
     encoding: "utf-8",
     timeout: 15000,
-    env: { ...process.env, BBM_STORE: "file" },
+    env: { ...process.env, ASTRONRAG_STORE: "file" },
   });
   const rep = JSON.parse(out);
   check("작업 세션 2개로 집계", rep.sessions.workSessions === 2, out.slice(0, 400));
@@ -275,7 +275,7 @@ console.log("5) 리포트 집계");
     cwd: root,
     encoding: "utf-8",
     timeout: 15000,
-    env: { ...process.env, BBM_STORE: "file" },
+    env: { ...process.env, ASTRONRAG_STORE: "file" },
   });
   check("손상 줄을 보고", JSON.parse(out2).window.malformedLines === 1, out2.slice(0, 300));
 }

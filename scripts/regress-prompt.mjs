@@ -32,7 +32,7 @@ const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entry],
   cwd: root,
-  env: { ...process.env, BIGBRAIN_VAULT: dir },
+  env: { ...process.env, ASTRONRAG_VAULT: dir },
 });
 const client = new Client({ name: "regress-prompt", version: "0.0.1" });
 await client.connect(transport);

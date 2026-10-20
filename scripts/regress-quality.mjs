@@ -12,8 +12,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // 사용자 환경의 임계 설정이 기본값 시험을 오염시키지 않게 비운다 (store 모듈 로드 전에)
-delete process.env.BIGBRAIN_STALE_DAYS;
-delete process.env.BIGBRAIN_PROJECT;
+delete process.env.ASTRONRAG_STALE_DAYS;
+delete process.env.ASTRONRAG_PROJECT;
+for (const key of Object.keys(process.env)) {
+  if (/^(BIGBRAIN_|BBM_)/.test(key)) delete process.env[key];
+}
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -50,7 +53,7 @@ async function withClient(dir, fn, env = {}) {
     command: process.execPath,
     args: [entry],
     cwd: root,
-    env: { ...process.env, BIGBRAIN_VAULT: dir, BBM_STORE: "file", ...env },
+    env: { ...process.env, ASTRONRAG_VAULT: dir, ASTRONRAG_STORE: "file", ...env },
   });
   const client = new Client({ name: "regress-quality", version: "0.0.1" });
   await client.connect(transport);
@@ -397,21 +400,21 @@ console.log("T49) review_after · 타입별 낡음 임계");
     dir,
     async (c) => {
       const ep = await call(c, "read_memory", { id: ep20 });
-      check("BIGBRAIN_STALE_DAYS=365 → episodic 20일 stale_hint 없음", ep.json?.stale_hint === undefined, ep.json?.stale_hint);
+      check("ASTRONRAG_STALE_DAYS=365 → episodic 20일 stale_hint 없음", ep.json?.stale_hint === undefined, ep.json?.stale_hint);
       const pf = await call(c, "read_memory", { id: slugs[7] });
-      check("BIGBRAIN_STALE_DAYS=365 → preference 180일 stale_hint 없음", pf.json?.stale_hint === undefined);
+      check("ASTRONRAG_STALE_DAYS=365 → preference 180일 stale_hint 없음", pf.json?.stale_hint === undefined);
       const h = await call(c, "read_memory", { id: hand });
-      check("BIGBRAIN_STALE_DAYS=365 여도 review_after 지남은 stale_hint", typeof h.json?.stale_hint === "string");
+      check("ASTRONRAG_STALE_DAYS=365 여도 review_after 지남은 stale_hint", typeof h.json?.stale_hint === "string");
     },
-    { BIGBRAIN_STALE_DAYS: "365" },
+    { ASTRONRAG_STALE_DAYS: "365" },
   );
   await withClient(
     dir,
     async (c) => {
       const se = await call(c, "read_memory", { id: se20 });
-      check("BIGBRAIN_STALE_DAYS=10 → semantic 20일 stale_hint", typeof se.json?.stale_hint === "string");
+      check("ASTRONRAG_STALE_DAYS=10 → semantic 20일 stale_hint", typeof se.json?.stale_hint === "string");
     },
-    { BIGBRAIN_STALE_DAYS: "10" },
+    { ASTRONRAG_STALE_DAYS: "10" },
   );
 
   // SessionStart 인덱스 채널
@@ -431,12 +434,12 @@ console.log("T49) review_after · 타입별 낡음 임계");
     cwd: root,
     encoding: "utf-8",
     timeout: 15000,
-    env: { ...process.env, BIGBRAIN_STALE_DAYS: "365" },
+    env: { ...process.env, ASTRONRAG_STALE_DAYS: "365" },
   });
   const md365 = fs.readFileSync(path.join(dir, "MEMORY.md"), "utf-8");
   const line365 = (slug) => md365.split("\n").find((l) => l.includes(`memories/${slug}|`)) ?? "";
-  check("인덱스: BIGBRAIN_STALE_DAYS=365 → episodic 20일 대조 필요 없음", !/대조 필요/.test(line365(ep20)), line365(ep20));
-  check("인덱스: BIGBRAIN_STALE_DAYS=365 여도 review_after 지남은 대조 필요", /대조 필요/.test(line365(hand)), line365(hand));
+  check("인덱스: ASTRONRAG_STALE_DAYS=365 → episodic 20일 대조 필요 없음", !/대조 필요/.test(line365(ep20)), line365(ep20));
+  check("인덱스: ASTRONRAG_STALE_DAYS=365 여도 review_after 지남은 대조 필요", /대조 필요/.test(line365(hand)), line365(hand));
 }
 
 // ── T50 긴 본문 경고

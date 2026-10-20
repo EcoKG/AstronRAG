@@ -31,7 +31,7 @@ function check(name, cond, detail = "") {
 }
 
 const cleanups = /** @type {string[]} */ (Array());
-const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+const testTmp = path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? os.tmpdir());
 fs.mkdirSync(testTmp, { recursive: true });
 function seeded() {
   const dir = fs.mkdtempSync(path.join(testTmp, "bbm-quiet-"));
@@ -95,10 +95,10 @@ console.log("2) 게이트 통과 시에는 기록됨");
 }
 
 // ── 3. 환경변수로 종전 동작(매 접근 기록)을 되살릴 수 있다
-console.log("3) BIGBRAIN_FLUSH_EVERY_ACCESS 로 종전 동작 복원");
+console.log("3) ASTRONRAG_FLUSH_EVERY_ACCESS 로 종전 동작 복원");
 {
-  const prev = process.env.BIGBRAIN_FLUSH_EVERY_ACCESS;
-  process.env.BIGBRAIN_FLUSH_EVERY_ACCESS = "1";
+  const prev = process.env.ASTRONRAG_FLUSH_EVERY_ACCESS;
+  process.env.ASTRONRAG_FLUSH_EVERY_ACCESS = "1";
   try {
     // 모듈 상수는 로드 시점에 고정되므로 캐시를 우회해 새로 import 한다
     const { MemoryStore: Fresh } = await import(`${distUrl("store.js")}?flush=1`);
@@ -109,8 +109,8 @@ console.log("3) BIGBRAIN_FLUSH_EVERY_ACCESS 로 종전 동작 복원");
     const diff = changed(before, snap(dir));
     check("플래그를 켜면 조회가 파일을 기록함", diff.length > 0, `changed=${diff.length}`);
   } finally {
-    if (prev === undefined) delete process.env.BIGBRAIN_FLUSH_EVERY_ACCESS;
-    else process.env.BIGBRAIN_FLUSH_EVERY_ACCESS = prev;
+    if (prev === undefined) delete process.env.ASTRONRAG_FLUSH_EVERY_ACCESS;
+    else process.env.ASTRONRAG_FLUSH_EVERY_ACCESS = prev;
   }
 }
 

@@ -11,11 +11,11 @@ import { runMigration } from "./migrate-vault-to-store.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixture = path.join(root, "eval", "fixture-vault");
 const goldenPath = path.join(root, "eval", "golden.jsonl");
-const tempRoot = fs.mkdtempSync(path.join(process.env.BBM_TEST_TMPDIR || os.tmpdir(), "bbm-equivalence-"));
+const tempRoot = fs.mkdtempSync(path.join(process.env.ASTRONRAG_TEST_TMPDIR || os.tmpdir(), "bbm-equivalence-"));
 const frozenNow = Date.parse("2026-07-01T00:00:00.000Z");
 export const NORMALIZED_FIELDS = [];
 
-process.env.BIGBRAIN_FLUSH_EVERY_ACCESS = "1";
+process.env.ASTRONRAG_FLUSH_EVERY_ACCESS = "1";
 const distUrl = (relative) => pathToFileURL(path.join(root, "dist", relative)).href;
 const { FileStore } = await import(distUrl("stores/file-store.js"));
 const { SqliteStore } = await import(distUrl("stores/sqlite-store.js"));
@@ -59,7 +59,7 @@ function pair(name, input = fixture) {
 	const source = copyFixture(`${name}-source`, input);
 	const sqliteSource = copyFixture(`${name}-sqlite`, source);
 	const db = migrate(name, sqliteSource);
-	if (name.startsWith("operational") && process.env.BBM_TEST_EQUIVALENCE_CORRUPT_SQLITE === "1") {
+	if (name.startsWith("operational") && process.env.ASTRONRAG_TEST_EQUIVALENCE_CORRUPT_SQLITE === "1") {
 		const corrupt = new DatabaseSync(db);
 		corrupt.exec("DELETE FROM memories WHERE slug = (SELECT slug FROM memories ORDER BY slug LIMIT 1)");
 		corrupt.close();
@@ -138,7 +138,7 @@ test("test_sqlite_eval_retrieval_keeps_exact_recall_at_least_0_933", () => {
 	const result = spawnSync(process.execPath, [path.join(root, "scripts", "eval-retrieval.mjs"), "--min-exact-r1", "0.933"], {
 		cwd: root,
 		encoding: "utf8",
-		env: { ...process.env, BBM_STORE: "sqlite" },
+		env: { ...process.env, ASTRONRAG_STORE: "sqlite" },
 	});
 	assert.equal(result.status, 0, result.stderr);
 	assert.match(fs.readFileSync(path.join(root, "scripts", "eval-retrieval.mjs"), "utf8"), /SqliteStore/);
@@ -176,11 +176,11 @@ test("test_store_equivalence_operational_copy_does_not_modify_source", () => {
 });
 
 test("test_store_equivalence_operational_copy_detects_recall_mismatch", () => {
-	if (process.env.BBM_TEST_EQ_CHILD === "1") return;
+	if (process.env.ASTRONRAG_TEST_EQ_CHILD === "1") return;
 	const result = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--vault", fixture], {
 		cwd: root,
 		encoding: "utf8",
-		env: { ...process.env, BBM_TEST_EQ_CHILD: "1", BBM_TEST_EQUIVALENCE_CORRUPT_SQLITE: "1" },
+		env: { ...process.env, ASTRONRAG_TEST_EQ_CHILD: "1", ASTRONRAG_TEST_EQUIVALENCE_CORRUPT_SQLITE: "1" },
 	});
 	assert.equal(result.status, 1, result.stdout + result.stderr);
 });

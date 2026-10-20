@@ -3,7 +3,7 @@
 // 고정하는 버그:
 //   E1 볼트 내용이 어떤 경로로도 자동 노출되지 않아, 모델이 "무엇이 저장돼 있는지"
 //      모른 채 recall 키워드를 추측해야 했다 (네이티브는 MEMORY.md 가 매 세션 주입됨)
-//   E3 잘못된 BIGBRAIN_VAULT 는 조용히 빈 볼트를 새로 만들고 경고가 없어,
+//   E3 잘못된 ASTRONRAG_VAULT 는 조용히 빈 볼트를 새로 만들고 경고가 없어,
 //      "기억 전무" 가 정상처럼 보이고 볼트가 분열됐다
 //   E4 recall 결과에 시간 정보가 0개라 120일 방치 기억이 아무 표시 없이 등장했다
 //
@@ -46,7 +46,7 @@ async function boot(vaultDir, extraEnv = {}) {
     command: process.execPath,
     args: [entry],
     cwd: root,
-    env: { ...process.env, BBM_STORE: "file", BIGBRAIN_VAULT: vaultDir, ...extraEnv },
+    env: { ...process.env, ASTRONRAG_STORE: "file", ASTRONRAG_VAULT: vaultDir, ...extraEnv },
     stderr: "pipe",
   });
   const client = new Client({ name: "regress-trigger", version: "0.0.1" });
@@ -100,8 +100,8 @@ console.log("0) SessionStart 훅 미설치 감지 (E5)");
   check("경고가 빠진 만큼 예산이 돌아옴", on.instructions.length < off.instructions.length);
 
   // 끄고 싶은 사용자를 위한 탈출구
-  const opted = await boot(dir, { HOME: emptyHome, USERPROFILE: emptyHome, BIGBRAIN_HOOK_CHECK: "0" });
-  check("BIGBRAIN_HOOK_CHECK=0 이면 검사 자체를 끔", !/SessionStart hook is NOT installed/.test(opted.instructions));
+  const opted = await boot(dir, { HOME: emptyHome, USERPROFILE: emptyHome, ASTRONRAG_HOOK_CHECK: "0" });
+  check("ASTRONRAG_HOOK_CHECK=0 이면 검사 자체를 끔", !/SessionStart hook is NOT installed/.test(opted.instructions));
 }
 
 // ── 0-b. 예산이 빠듯해도 볼트 상태가 통째로 사라지지 않는다 (E6)
@@ -120,10 +120,10 @@ console.log("0-b) 예산 압박 시 볼트 상태 단계적 축약 (E6)");
   const worst = await boot(deep, {
     HOME: emptyHome,
     USERPROFILE: emptyHome,
-    BIGBRAIN_PROJECT: "aVeryLongProjectNameToSqueezeTheBudget",
+    ASTRONRAG_PROJECT: "aVeryLongProjectNameToSqueezeTheBudget",
   });
   check(`최악 구성 ${worst.instructions.length}자 ≤ 2048`, worst.instructions.length <= 2048);
-  check("경고 2개가 모두 살아 있음", /WARNING: BIGBRAIN_VAULT/.test(worst.instructions) && /hook is NOT installed/.test(worst.instructions));
+  check("경고 2개가 모두 살아 있음", /WARNING: ASTRONRAG_VAULT/.test(worst.instructions) && /hook is NOT installed/.test(worst.instructions));
   // ★ 이 단언이 패치 전 실패한다 — 축약형이 없으면 COLD START 가 통째로 빠졌다
   check("COLD START 는 축약해서라도 남는다", /COLD START/.test(worst.instructions), worst.instructions.slice(-400));
   check("행동수칙은 어떤 경우에도 온전", /1\. RECALL FIRST/.test(worst.instructions) && /5\. REFLECT/.test(worst.instructions));
@@ -132,7 +132,7 @@ console.log("0-b) 예산 압박 시 볼트 상태 단계적 축약 (E6)");
 
   // 여유가 있으면 축약하지 않는다 — 축약이 상시 동작이 되면 안 된다
   const roomy = freshDir();
-  const ok = await boot(roomy, { BIGBRAIN_PROJECT: "p" });
+  const ok = await boot(roomy, { ASTRONRAG_PROJECT: "p" });
   check("여유 있으면 전문 그대로", /vault is EMPTY \(0 memories\)/.test(ok.instructions) && /recall returns this project's memories/.test(ok.instructions));
   check("여유 있으면 축약 보고 없음", !/볼트 상태를 줄였습니다/.test(ok.stderr));
 }
@@ -193,7 +193,7 @@ console.log("2) 빈 볼트(콜드 스타트) 표기");
 console.log("2-b) 빈 볼트 + 프로젝트 스코프");
 {
   const dir = freshDir();
-  const { instructions } = await boot(dir, { BIGBRAIN_PROJECT: "acme" });
+  const { instructions } = await boot(dir, { ASTRONRAG_PROJECT: "acme" });
   check("EMPTY 사실 노출", /vault is EMPTY/i.test(instructions));
   check(
     "스코프 안내가 빈 볼트에서도 실린다",
@@ -285,7 +285,7 @@ console.log("3) 인덱스 상한 처리");
   for (let i = 0; i < 7; i++) {
     s.remember({ title: `기억 번호 ${i}`, description: `설명 ${i}`, content: `본문 ${i}`, type: "semantic" });
   }
-  const { instructions } = await boot(dir, { BIGBRAIN_INDEX_LIMIT: "3" });
+  const { instructions } = await boot(dir, { ASTRONRAG_INDEX_LIMIT: "3" });
   check("총건수 7 표기", /Vault index \(7 stored/.test(instructions), instructions.slice(-400));
   check("표시건수 3 표기", /3 most recently updated shown/.test(instructions));
   const listed = (instructions.match(/^- \[semantic\] 기억 번호 /gm) ?? []).length;
@@ -298,7 +298,7 @@ console.log("4) 볼트 경로 오타 가시화 (E3)");
 {
   const wrong = path.join(freshDir(), "오타난", "경로");
   const { instructions, stderr } = await boot(wrong);
-  check("stderr 에 경고 출력", /WARNING: BIGBRAIN_VAULT points at/.test(stderr), stderr.slice(0, 300));
+  check("stderr 에 경고 출력", /WARNING: ASTRONRAG_VAULT points at/.test(stderr), stderr.slice(0, 300));
   check("instructions 첫머리에 경고 부착", instructions.startsWith("WARNING:"), instructions.slice(0, 120));
   check("중복 저장 금지 안내 포함", /do NOT start storing duplicates/.test(instructions));
   check("기동 로그에 기억 수 표기", /memories=0/.test(stderr), stderr.slice(0, 300));
@@ -314,7 +314,7 @@ console.log("5) 정상 볼트 — 오경보 없음");
   const { instructions, stderr } = await boot(dir);
   check("경고 없음", !/WARNING/.test(instructions), instructions.slice(0, 200));
   check("기동 로그에 memories=1", /memories=1/.test(stderr), stderr.slice(0, 300));
-  check("정상 안내로 시작", instructions.startsWith("BigBrainMemory is a persistent"));
+  check("정상 안내로 시작", instructions.startsWith("AstronRAG is a persistent"));
 }
 
 // ── 6. 마커가 있으면 빈 볼트여도 경고하지 않는다 (의도적으로 비운 경우)

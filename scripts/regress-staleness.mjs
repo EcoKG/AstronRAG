@@ -51,7 +51,7 @@ async function withClient(fn) {
     command: process.execPath,
     args: [entry],
     cwd: root,
-    env: { ...process.env, BIGBRAIN_VAULT: dir, BBM_STORE: "file" },
+    env: { ...process.env, ASTRONRAG_VAULT: dir, ASTRONRAG_STORE: "file" },
   });
   const client = new Client({ name: "regress-staleness", version: "0.0.1" });
   await client.connect(transport);
@@ -104,14 +104,14 @@ console.log("2) read_memory·list_memories 반영");
 }
 
 // ── 3. 임계값 환경변수
-console.log("3) BIGBRAIN_STALE_DAYS 임계 조정");
+console.log("3) ASTRONRAG_STALE_DAYS 임계 조정");
 {
   async function hintAt(days) {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [entry],
       cwd: root,
-      env: { ...process.env, BIGBRAIN_VAULT: dir, BBM_STORE: "file", BIGBRAIN_STALE_DAYS: String(days) },
+      env: { ...process.env, ASTRONRAG_VAULT: dir, ASTRONRAG_STORE: "file", ASTRONRAG_STALE_DAYS: String(days) },
     });
     const client = new Client({ name: "regress-staleness", version: "0.0.1" });
     await client.connect(transport);
