@@ -190,6 +190,16 @@ npm test          # 스모크 1종 + 회귀 14종 (총 363개 단언)
 ```
 
 런타임은 `ontology/ontology.json`을 읽으며, 개발 의존성 `js-yaml`을 사용하는 빌드가 YAML에서 JSON을 다시 생성하므로 생성 JSON도 추적합니다.
+
+SQLite에서 파일 저장소로 복귀할 때는 DB를 읽기 전용으로 열어 새 Markdown vault로 내보냅니다.
+
+```bash
+node scripts/export-store-to-vault.mjs --store-path ./data/store.sqlite --dry-run
+node scripts/export-store-to-vault.mjs --store-path ./data/store.sqlite --out ./vault-export
+```
+
+`--out`을 생략하면 현재 작업 폴더 아래 고유한 새 폴더를 사용합니다. 출력은 작업 폴더 안의 빈 폴더만 허용하며 운영 vault, 원본 DB 디렉터리와 겹치는 경로 및 링크는 거부합니다. `--dry-run`은 전체 검증과 예상 건수만 출력하고 파일을 만들지 않습니다. 기억·보관 기억·수정 이력·사용 이벤트·벡터를 보존하며 손상 행이나 기존 vault 형식으로 손실 없이 표현할 수 없는 값은 쓰기 전에 실패합니다. 벡터는 단일 모델·동일 차원만 지원합니다. 내보낸 폴더를 확인한 뒤 파일 저장소 경로로 사용하십시오.
+
 owner-exception의 `approvedBy: p1`에서 `p1`은 주인님을 가리키는 고정 식별자이며 이메일 등 개인정보가 아닙니다.
 
 `npm test`는 실제 stdio MCP 서버를 띄우고 임시 볼트에 파일을 쓰므로 수십 초 걸립니다. 개별 실행:

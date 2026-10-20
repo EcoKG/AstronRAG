@@ -548,6 +548,39 @@ export class SqliteStore implements MemoryStore {
 		return row.integrity_check;
 	}
 
+	/** 하나의 읽기 트랜잭션에서 vault 내보내기용 원본과 순서를 보존한다. */
+	exportVaultSnapshot(): VaultImportSnapshot {
+		this.db.exec("BEGIN");
+		try {
+			if (this.db.prepare("PRAGMA foreign_key_check").all().length > 0) throw new Error("손상된 기억 연결");
+			const records = (this.db.prepare("SELECT * FROM memories ORDER BY slug").all() as MemoryRow[])
+				.map((row) => ({ record: this.rowToRecord(row), archived: row.status === "archived", hasExplicitId: true }));
+			const revisions = (this.db.prepare("SELECT slug, created, record_json FROM memory_revisions ORDER BY sequence").all() as { slug: string; created: string; record_json: string }[])
+				.map((row) => ({ slug: row.slug, created: row.created, record: JSON.parse(row.record_json) as MemoryRecord }));
+			const usageEvents = (this.db.prepare("SELECT ts, payload FROM usage_events ORDER BY sequence").all() as UsageRow[]).map((row) => {
+				const event: unknown = JSON.parse(row.payload);
+				if (!event || typeof event !== "object" || Array.isArray(event) || ("ts" in event && event.ts !== row.ts)) throw new Error("손상된 usage event JSON");
+				return { ...event, ts: row.ts } as StoreUsageEvent;
+			});
+			const groups = new Map<string, StoredEmbedding[]>();
+			const rows = this.db.prepare("SELECT model, key, hash, dim, vector FROM embeddings ORDER BY model, position").all() as (EmbeddingRow & { model: string })[];
+			for (const row of rows) {
+				if (!Number.isSafeInteger(row.dim) || row.dim <= 0 || !(row.vector instanceof Uint8Array) || row.vector.byteLength !== row.dim * 4) throw new Error("손상된 vector 길이·차원");
+				const vector = new Float32Array(row.vector.buffer.slice(row.vector.byteOffset, row.vector.byteOffset + row.vector.byteLength));
+				if (!vector.every(Number.isFinite)) throw new Error("손상된 vector 수치");
+				const group = groups.get(row.model) ?? [];
+				group.push({ key: row.key, hash: row.hash, vector });
+				groups.set(row.model, group);
+			}
+			const embeddings = [...groups].map(([model, rows]) => ({ model, rows }));
+			this.db.exec("COMMIT");
+			return { records, revisions, usageEvents, embeddings };
+		} catch (error) {
+			this.db.exec("ROLLBACK");
+			throw error;
+		}
+	}
+
 	close(): void {
 		if (this.closed) return;
 		this.closed = true;
