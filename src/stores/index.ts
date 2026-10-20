@@ -1,10 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
+import { readEnv } from "../env.js";
 import { FileStore } from "./file-store.js";
 import type { MemoryStore } from "./memory-store.js";
 import { SqliteStore } from "./sqlite-store.js";
 
 export type StoreEnvironment = {
+	ASTRONRAG_STORE?: string;
+	ASTRONRAG_SQLITE_PATH?: string;
 	BBM_STORE?: string;
 	BBM_SQLITE_PATH?: string;
 };
@@ -15,14 +18,14 @@ export const VAULT_IMPORT_COMPLETED_META_KEY = "vault_import_completed_at";
 
 /** 저장소 종류를 생성 함수에 연결해 새 구현을 등록 한 줄로 확장한다. */
 export const STORE_FACTORIES: Readonly<Record<string, StoreFactory>> = Object.freeze({
-	sqlite: (root, env) => new SqliteStore(root, env.BBM_SQLITE_PATH || path.join(root, ".bbm", "store.sqlite")),
+	sqlite: (root, env) => new SqliteStore(root, readEnv("ASTRONRAG_SQLITE_PATH", "BBM_SQLITE_PATH", env) || path.join(root, ".bbm", "store.sqlite")),
 	file: (root) => new FileStore(root),
 });
 
 export function createMemoryStore(root: string, env: StoreEnvironment = process.env): MemoryStore {
-	const kind = env.BBM_STORE || "sqlite";
+	const kind = readEnv("ASTRONRAG_STORE", "BBM_STORE", env) || "sqlite";
 	const factory = STORE_FACTORIES[kind];
-	if (!factory) throw new Error(`지원하지 않는 BBM_STORE 값: ${kind}`);
+	if (!factory) throw new Error(`지원하지 않는 ASTRONRAG_STORE 값: ${kind}`);
 	return factory(path.resolve(root), env);
 }
 

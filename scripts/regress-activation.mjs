@@ -14,6 +14,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// 시험 기본값을 사용자 환경 설정과 격리한다.
+for (const key of Object.keys(process.env)) {
+  if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key) && !key.startsWith("ASTRONRAG_TEST_")) delete process.env[key];
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const distUrl = (f) => `file://${path.join(root, "dist", f).replace(/\\/g, "/")}`;
@@ -30,7 +35,7 @@ function check(name, cond, detail = "") {
 }
 const near = (a, b, tol = 0.02) => Math.abs(a - b) <= tol;
 
-const cleanups = [];
+const cleanups = /** @type {string[]} */ (Array());
 function freshDir() {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-act-"));
   cleanups.push(d);
@@ -120,9 +125,13 @@ console.log("4) 어려움 보너스 오발동 해소 (C4)");
     const s = new MemoryStore(new Vault(dir));
     s.remember({ title: "호텔 보너스 대상", content: "호텔 인디아 본문.", type: "semantic" });
     shape(dir, "호텔-보너스-대상", shapeOpts);
-    const before = Number(/storage_strength: ([\d.]+)/.exec(fs.readFileSync(memPath(dir, "호텔-보너스-대상"), "utf-8"))[1]);
+    const beforeMatch = /storage_strength: ([\d.]+)/.exec(fs.readFileSync(memPath(dir, "호텔-보너스-대상"), "utf-8"));
+    if (beforeMatch === null) throw new Error("검색 전 storage_strength 필드 없음");
+    const before = Number(beforeMatch[1]);
     new MemoryStore(new Vault(dir)).search("호텔");
-    const after = Number(/storage_strength: ([\d.]+)/.exec(fs.readFileSync(memPath(dir, "호텔-보너스-대상"), "utf-8"))[1]);
+    const afterMatch = /storage_strength: ([\d.]+)/.exec(fs.readFileSync(memPath(dir, "호텔-보너스-대상"), "utf-8"));
+    if (afterMatch === null) throw new Error("검색 후 storage_strength 필드 없음");
+    const after = Number(afterMatch[1]);
     return after - before;
   }
   // 핵심: 마지막 강화가 최근이면 활성이 높아 "어렵게 찾은 회상" 이 아니다.
@@ -204,19 +213,19 @@ console.log("9) 임계 환경변수 조정");
   for (let i = 0; i < 5; i++) s.remember({ title: `노벰버 ${i}`, content: `노벰버 ${i} 본문.`, type: "semantic" });
   for (let i = 0; i < 5; i++) shape(dir, `노벰버-${i}`, { agoHours: 20, strength: 1, reinforcedAgoHours: 20 });
 
-  const prevG = process.env.BIGBRAIN_WEAKENED_GRACE_H;
-  const prevR = process.env.BIGBRAIN_WEAKENED_RATIO;
+  const prevG = process.env.ASTRONRAG_WEAKENED_GRACE_H;
+  const prevR = process.env.ASTRONRAG_WEAKENED_RATIO;
   try {
-    process.env.BIGBRAIN_WEAKENED_GRACE_H = "0";
-    process.env.BIGBRAIN_WEAKENED_RATIO = "1";
+    process.env.ASTRONRAG_WEAKENED_GRACE_H = "0";
+    process.env.ASTRONRAG_WEAKENED_RATIO = "1";
     const { MemoryStore: Fresh } = await import(`${distUrl("store.js")}?t13=1`);
     const rep = new Fresh(new Vault(dir)).reflect();
     check("유예 0 + 분위 1 이면 종전처럼 전원 등재", rep.weakened.length === 5, `len=${rep.weakened.length}`);
   } finally {
-    if (prevG === undefined) delete process.env.BIGBRAIN_WEAKENED_GRACE_H;
-    else process.env.BIGBRAIN_WEAKENED_GRACE_H = prevG;
-    if (prevR === undefined) delete process.env.BIGBRAIN_WEAKENED_RATIO;
-    else process.env.BIGBRAIN_WEAKENED_RATIO = prevR;
+    if (prevG === undefined) delete process.env.ASTRONRAG_WEAKENED_GRACE_H;
+    else process.env.ASTRONRAG_WEAKENED_GRACE_H = prevG;
+    if (prevR === undefined) delete process.env.ASTRONRAG_WEAKENED_RATIO;
+    else process.env.ASTRONRAG_WEAKENED_RATIO = prevR;
   }
 }
 

@@ -1,11 +1,11 @@
 {
-  "name": "bigbrainmemory",
+  "name": "astronrag",
   "version": "0.1.0",
-  "description": "BigBrainMemory — human-like persistent memory MCP server (inspired by Claude Code memory + Obsidian)",
+  "description": "AstronRAG — human-like persistent memory MCP server (inspired by Claude Code memory + Obsidian)",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "bigbrainmemory": "dist/index.js"
+    "astronrag": "dist/index.js"
   },
   "files": [
     "dist",
@@ -19,7 +19,7 @@
   "scripts": {
     "build": "tsc && node scripts/build-ontology.mjs",
     "start": "node dist/index.js",
-    "test": "node scripts/regress-store-contract.mjs && node scripts/regress-store-export.mjs && node scripts/regress-collect-model-docs.mjs && node scripts/regress-vault-migration.mjs && node scripts/regress-store-equivalence.mjs && node scripts/smoke-test.mjs && node scripts/regress-hook.mjs && node scripts/regress-mcp-config.mjs && node scripts/regress-corruption.mjs && node scripts/regress-concurrency.mjs && node scripts/regress-obsidian-edit.mjs && node scripts/regress-trigger.mjs && node scripts/regress-scoping.mjs && node scripts/regress-staleness.mjs && node scripts/regress-quiet-read.mjs && node scripts/regress-activation.mjs && node scripts/regress-spacing.mjs && node scripts/regress-search.mjs && node scripts/regress-prompt.mjs && node scripts/regress-import.mjs && node scripts/regress-links.mjs && node scripts/regress-native-guard.mjs && node scripts/regress-usage.mjs && node scripts/regress-consolidation.mjs && node scripts/regress-cue.mjs && node scripts/regress-perf.mjs && node scripts/regress-cache.mjs && node scripts/regress-hygiene.mjs && node scripts/regress-viewer.mjs && node scripts/regress-quality.mjs && node scripts/regress-retriever.mjs && node scripts/regress-lexical-index.mjs && node scripts/regress-auto-recall.mjs && node scripts/regress-vector.mjs && node scripts/regress-ontology.mjs && node scripts/regress-recommend.mjs && node scripts/eval-retrieval.mjs --min-exact-r1 0.933",
+    "test": "node scripts/regress-env-compat.mjs && node scripts/regress-store-contract.mjs && node scripts/regress-store-export.mjs && node scripts/regress-collect-model-docs.mjs && node scripts/regress-vault-migration.mjs && node scripts/regress-store-equivalence.mjs && node scripts/smoke-test.mjs && node scripts/regress-hook.mjs && node scripts/regress-mcp-config.mjs && node scripts/regress-corruption.mjs && node scripts/regress-concurrency.mjs && node scripts/regress-obsidian-edit.mjs && node scripts/regress-trigger.mjs && node scripts/regress-scoping.mjs && node scripts/regress-staleness.mjs && node scripts/regress-quiet-read.mjs && node scripts/regress-activation.mjs && node scripts/regress-spacing.mjs && node scripts/regress-search.mjs && node scripts/regress-prompt.mjs && node scripts/regress-import.mjs && node scripts/regress-links.mjs && node scripts/regress-native-guard.mjs && node scripts/regress-usage.mjs && node scripts/regress-consolidation.mjs && node scripts/regress-cue.mjs && node scripts/regress-perf.mjs && node scripts/regress-cache.mjs && node scripts/regress-hygiene.mjs && node scripts/regress-viewer.mjs && node scripts/regress-quality.mjs && node scripts/regress-retriever.mjs && node scripts/regress-lexical-index.mjs && node scripts/regress-auto-recall.mjs && node scripts/regress-vector.mjs && node scripts/regress-ontology.mjs && node scripts/regress-recommend.mjs && node scripts/eval-retrieval.mjs --min-exact-r1 0.933",
 	"migrate:vault": "node scripts/migrate-vault-to-store.mjs",
 	"test:migration": "node scripts/regress-vault-migration.mjs",
 	"test:equivalence": "node scripts/regress-store-equivalence.mjs",

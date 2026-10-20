@@ -27,10 +27,10 @@ const PKG = "@huggingface/transformers";
 /** 가짜 임베더 차원 */
 const DIM = 64;
 
-// 시험 프로세스와 자식이 사용자 환경의 BIGBRAIN_* 설정을 물려받지 않게 한다. 강화 관측을 위해 간격 게이트를 연다
-for (const k of Object.keys(process.env)) if (k.startsWith("BIGBRAIN_")) delete process.env[k];
-process.env.BIGBRAIN_SPACING_MS = "0";
-process.env.BIGBRAIN_SPACING_ALPHA = "0";
+// 시험 프로세스와 자식이 사용자 환경의 ASTRONRAG_* 설정을 물려받지 않게 한다. 강화 관측을 위해 간격 게이트를 연다
+for (const k of Object.keys(process.env)) if (k.startsWith("ASTRONRAG_")) delete process.env[k];
+process.env.ASTRONRAG_SPACING_MS = "0";
+process.env.ASTRONRAG_SPACING_ALPHA = "0";
 
 let values;
 try {
@@ -86,7 +86,7 @@ function check(name, cond, detail = "") {
 }
 
 const temps = new Array();
-const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+const testTmp = path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? os.tmpdir());
 fs.mkdirSync(testTmp, { recursive: true });
 /** %TEMP% 아래 새 디렉터리 (끝나면 지운다) */
 function tempDir(tag) {
@@ -156,7 +156,7 @@ async function serverRecall({ entryFile = entry, vault = "", env = {}, preload =
 		command: process.execPath,
 		args: [...(preload ? ["--import", preload] : []), entryFile],
 		cwd: path.dirname(path.dirname(entryFile)),
-		env: { ...process.env, BIGBRAIN_VAULT: vault, BBM_STORE: "file", ...env },
+		env: { ...process.env, ASTRONRAG_VAULT: vault, ASTRONRAG_STORE: "file", ...env },
 		stderr: "pipe",
 	});
 	const client = new Client({ name: "regress-vector", version: "0.0.1" });
@@ -330,7 +330,7 @@ async function defaultChecks() {
 		const a = fixtureCopy("warm-a");
 		const b = fixtureCopy("warm-b");
 		const args = { query: "Postgres connection pool", include_linked: false };
-		const warm = await serverRecall({ vault: a, env: { BIGBRAIN_VECTOR: "1" }, preload: hookFile("hang"), args });
+		const warm = await serverRecall({ vault: a, env: { ASTRONRAG_VECTOR: "1" }, preload: hookFile("hang"), args });
 		const off = await serverRecall({ vault: b, args });
 		check("vector 가 warming", warm.vector === "warming", JSON.stringify(warm).slice(0, 200));
 		const pick = (j) => JSON.stringify({ r: j.results.map((r) => [r.slug, r.score, r.via]), t: j.total_matched });
@@ -344,7 +344,7 @@ async function defaultChecks() {
 		const v = fixtureCopy("unavail");
 		const json = await serverRecall({
 			vault: v,
-			env: { BIGBRAIN_VECTOR: "1" },
+			env: { ASTRONRAG_VECTOR: "1" },
 			preload: hookFile("block"),
 			args: { query: "Postgres connection pool" },
 			until: (j) => j.vector !== "warming",
@@ -355,25 +355,26 @@ async function defaultChecks() {
 		check("어휘 결과는 그대로", Array.isArray(json.results) && json.results.length > 0);
 		const zero = await serverRecall({
 			vault: v,
-			env: { BIGBRAIN_VECTOR: "1" },
+			env: { ASTRONRAG_VECTOR: "1" },
 			preload: hookFile("block"),
 			args: { query: "zzqxv nonexistent" },
 			until: (j) => j.vector !== "warming",
 			tries: 50,
 		});
 		check("0건 응답에도 vector 상태", zero.results.length === 0 && zero.vector === "unavailable", JSON.stringify(zero).slice(0, 200));
-		const other = await serverRecall({ vault: v, env: { BIGBRAIN_VECTOR: "true" }, preload: hookFile("block"), args: { query: "Postgres connection pool" } });
-		check("BIGBRAIN_VECTOR 가 1 이 아니면 꺼짐", !("vector" in other));
+		const other = await serverRecall({ vault: v, env: { ASTRONRAG_VECTOR: "true" }, preload: hookFile("block"), args: { query: "Postgres connection pool" } });
+		check("ASTRONRAG_VECTOR 가 1 이 아니면 꺼짐", !("vector" in other));
 	}
 
 	console.log("6) 서버 — ready 면 벡터 전용 결과에 via:vector, recall 은 강화하지 않고 read_memory 는 강화한다");
 	{
 		const { dir, vault } = smallVault("ready");
 		const before = vault.read("coffee");
+		/** @type {Awaited<ReturnType<Client["callTool"]>> | undefined} */
 		let read;
 		const json = await serverRecall({
 			vault: dir,
-			env: { BIGBRAIN_VECTOR: "1" },
+			env: { ASTRONRAG_VECTOR: "1" },
 			preload: hookFile("fake"),
 			args: { query: "커피 취향" },
 			until: (j) => j.vector === "ready",
@@ -419,7 +420,7 @@ async function defaultChecks() {
 			input: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "V6", prompt: "Postgres connection pool 설정을 알려줘" }),
 			encoding: "utf-8",
 			timeout: 15000,
-			env: { ...process.env, USERPROFILE: home, HOME: home, BIGBRAIN_AUTO_RECALL: "1", BIGBRAIN_VECTOR: "1", BBM_STORE: "file" },
+			env: { ...process.env, USERPROFILE: home, HOME: home, ASTRONRAG_AUTO_RECALL: "1", ASTRONRAG_VECTOR: "1", ASTRONRAG_STORE: "file" },
 		});
 		const resolved = fs.existsSync(log) ? JSON.parse(fs.readFileSync(log, "utf-8")) : [];
 		check("훅이 dist/store.js 를 불러왔다(시험이 공허하지 않음)", resolved.some((x) => x.includes("dist/store.js")), `status=${r.status} ${JSON.stringify(resolved).slice(0, 300)}`);

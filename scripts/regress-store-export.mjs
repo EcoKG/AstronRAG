@@ -115,7 +115,7 @@ await test("test_store_export_rejects_protected_or_escaping_target", async () =>
 	}
 	const protectedVault = path.join(item.dir, "protected-vault");
 	fs.mkdirSync(protectedVault);
-	assert.throws(() => exportStoreToVault(options(item, { out: path.join(protectedVault, "child"), env: { BIGBRAIN_VAULT: protectedVault } })), /경로|보호/i);
+	assert.throws(() => exportStoreToVault(options(item, { out: path.join(protectedVault, "child"), env: { ASTRONRAG_VAULT: protectedVault } })), /경로|보호/i);
 	assert.throws(() => exportStoreToVault(options(item, { out: "D:\\BigBrainMemory\\vault\\export" })), /경로|보호/i);
 	const linked = path.join(item.dir, "link");
 	fs.symlinkSync(path.dirname(item.storePath), linked, process.platform === "win32" ? "junction" : "dir");
@@ -281,7 +281,7 @@ await test("test_store_export_rejects_invalid_cli_and_handles_empty_store", asyn
 	assert.deepEqual(result.counts, { memories: 0, archive: 0, revisions: 0, usageEvents: 0, embeddings: 0 });
 	assert.deepEqual(snapshot(item.out), { records: [], revisions: [], usageEvents: [], embeddings: [] });
 	const good = setup("cli", []);
-	const run = spawnSync(process.execPath, [cli, "--store-path", good.storePath, "--out", good.out], { cwd: good.dir, encoding: "utf8", env: { ...process.env, BIGBRAIN_VAULT: "" } });
+	const run = spawnSync(process.execPath, [cli, "--store-path", good.storePath, "--out", good.out], { cwd: good.dir, encoding: "utf8", env: { ...process.env, ASTRONRAG_VAULT: "" } });
 	assert.equal(run.status, 0, run.stderr);
 	assert.equal(JSON.parse(run.stdout).status, "exported");
 });

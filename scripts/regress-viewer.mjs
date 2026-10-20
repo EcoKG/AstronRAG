@@ -63,15 +63,15 @@ try {
 	].join("\n"));
 
 	const out = path.join(dir, "data.js");
-	const log = execFileSync(process.execPath, [path.join(here, "export-viewer-data.mjs"), out], { env: { ...process.env, BIGBRAIN_VAULT: dir }, encoding: "utf8" });
+	const log = execFileSync(process.execPath, [path.join(here, "export-viewer-data.mjs"), out], { env: { ...process.env, ASTRONRAG_VAULT: dir }, encoding: "utf8" });
 	check("export 는 건수만 출력한다", /memories 4, archive 1/.test(log) && !log.includes("기준 본문"), log.trim());
 
 	const ctx = vm.createContext({ window: {} });
 	vm.runInContext(fs.readFileSync(out, "utf8"), ctx);
 	vm.runInContext(fs.readFileSync(path.join(root, "viewer", "parse.js"), "utf8"), ctx);
-	const P = ctx.BigBrainParse;
-	const data = ctx.window.BIGBRAIN_DATA;
-	check("data.js 가 window.BIGBRAIN_DATA 를 만든다", data && Array.isArray(data.files) && data.files.length === 5);
+	const P = ctx.AstronRAGParse;
+	const data = ctx.window.ASTRONRAG_DATA;
+	check("data.js 가 window.ASTRONRAG_DATA 를 만든다", data && Array.isArray(data.files) && data.files.length === 5);
 
 	console.log("1) 모든 필드가 Vault.read() 와 같다");
 	const recs = new Map();

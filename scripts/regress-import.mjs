@@ -30,7 +30,7 @@ function check(name, cond, detail = "") {
   }
 }
 
-const cleanups = [];
+const cleanups = /** @type {string[]} */ (Array());
 function fixture() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-imp-"));
   cleanups.push(base);
@@ -57,7 +57,7 @@ function fixture() {
   fs.writeFileSync(path.join(base, ".claude.json"), JSON.stringify({ projects: { "G:\\Development\\MyApp": {} } }), "utf-8");
   return { projects, vault };
 }
-function run(projects, vault, apply, extra = []) {
+function run(projects, vault, apply, extra = /** @type {string[]} */ (Array())) {
   const args = [script, "--projects-dir", projects, "--vault", vault, ...extra];
   if (apply) args.push("--apply");
   // vault 는 <base>/vault 이므로 base 가 곧 가짜 홈이다
@@ -110,7 +110,7 @@ console.log("3) 메타데이터 보존");
   check("설명 보존", m?.description === "사용자는 간결한 설명을 선호", m?.description);
   check("본문 보존", m?.body.includes("장황한 설명을 싫어한다"));
   // 스코프는 뭉개진 슬러그가 아니라 역매핑으로 복원한 실제 디렉터리명이다.
-  // `BIGBRAIN_PROJECT` 에 사람이 손으로 쓸 수 있는 값이어야 하기 때문이다.
+  // `ASTRONRAG_PROJECT` 에 사람이 손으로 쓸 수 있는 값이어야 하기 때문이다.
   check("project 스코프 = 역매핑된 프로젝트명", m?.project === "MyApp", m?.project);
   check("source 에 원본 경로 기록", m?.source === "native:G--Development-MyApp/user-pref.md", m?.source);
   check("native-import 태그", m?.tags.includes("native-import"), m?.tags.join(","));

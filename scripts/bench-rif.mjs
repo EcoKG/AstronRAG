@@ -250,6 +250,7 @@ if (isMain) {
 	const opts = readArgs(process.argv.slice(2));
 
 	// 사용자 동의어 사전은 모듈 로드 시 병합되므로 import 전에 지운다
+	delete process.env.ASTRONRAG_SYNONYMS;
 	delete process.env.BIGBRAIN_SYNONYMS;
 	const distUrl = (f) => pathToFileURL(path.join(root, "dist", f)).href;
 	if (!fs.existsSync(path.join(root, "dist", "ranker.js"))) die("dist/ranker.js 가 없다 — 먼저 npm run build", 1);

@@ -36,7 +36,7 @@ function check(name, cond, detail = "") {
   }
 }
 
-const cleanups = [];
+const cleanups = /** @type {string[]} */ ([]);
 function freshDir() {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-search-"));
   cleanups.push(d);
@@ -82,11 +82,11 @@ console.log("3) 정확 일치 우선 순위 유지");
   check("정확 일치 쪽이 1위", r[0].record.slug === "deploy-정확-일치", slugs(r).join(","));
 }
 
-// ── 4. 사용자 사전 (BIGBRAIN_SYNONYMS)
+// ── 4. 사용자 사전 (ASTRONRAG_SYNONYMS)
 console.log("4) 사용자 동의어 사전");
 {
-  const prev = process.env.BIGBRAIN_SYNONYMS;
-  process.env.BIGBRAIN_SYNONYMS = "크로스넷=crossnet,사내망;웹메일=webmail";
+  const prev = process.env.ASTRONRAG_SYNONYMS;
+  process.env.ASTRONRAG_SYNONYMS = "크로스넷=crossnet,사내망;웹메일=webmail";
   try {
     const { MemoryStore: Fresh } = await import(`${distUrl("store.js")}?syn=1`);
     const dir = freshDir();
@@ -96,8 +96,8 @@ console.log("4) 사용자 동의어 사전");
     check("crossnet → 크로스넷 기억", slugs(q.search("crossnet")).includes("크로스넷-토폴로지"), slugs(q.search("crossnet")).join(","));
     check("사내망 → 크로스넷 기억", slugs(q.search("사내망")).includes("크로스넷-토폴로지"));
   } finally {
-    if (prev === undefined) delete process.env.BIGBRAIN_SYNONYMS;
-    else process.env.BIGBRAIN_SYNONYMS = prev;
+    if (prev === undefined) delete process.env.ASTRONRAG_SYNONYMS;
+    else process.env.ASTRONRAG_SYNONYMS = prev;
   }
 }
 

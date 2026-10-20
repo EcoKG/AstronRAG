@@ -1,7 +1,7 @@
 // N1/N2 회귀 테스트 — 네이티브 메모리 대체 전환 경로의 안전성.
 //
 // 고정하는 버그:
-//   N1 `BIGBRAIN_VAULT` 를 Claude Code 네이티브 memory 디렉터리로 지정하면
+//   N1 `ASTRONRAG_VAULT` 를 Claude Code 네이티브 memory 디렉터리로 지정하면
 //      ① 네이티브 MEMORY.md 가 BBM 형식으로 **덮어써진다** — 하필 그 파일이
 //         네이티브가 매 세션 자동 주입하는 인덱스 본체다
 //      ② 평면 구조라 기억은 0건으로 보인다
@@ -77,7 +77,7 @@ async function boot(vaultDir, extraEnv = {}) {
     command: process.execPath,
     args: [entry],
     cwd: root,
-    env: { ...process.env, BIGBRAIN_VAULT: vaultDir, ...extraEnv },
+    env: { ...process.env, ASTRONRAG_VAULT: vaultDir, ...extraEnv },
     stderr: "pipe",
   });
   const client = new Client({ name: "regress-native", version: "0.0.1" });
@@ -128,7 +128,7 @@ console.log("3) 정상 볼트 오탐 없음");
   s.remember({ title: "정상 기억", description: "설명", content: "본문", type: "semantic" });
   const r = await boot(dir);
   check("네이티브 경고 없음", !/NATIVE memory directory/.test(r.instructions), r.instructions.slice(0, 160));
-  check("인덱스는 정상 생성됨", /BigBrainMemory 인덱스/.test(fs.readFileSync(path.join(dir, "MEMORY.md"), "utf-8")));
+  check("인덱스는 정상 생성됨", /AstronRAG 인덱스/.test(fs.readFileSync(path.join(dir, "MEMORY.md"), "utf-8")));
   check("마커도 정상 생성됨", fs.existsSync(path.join(dir, ".bigbrain-vault")));
 
   // Obsidian 사용자가 볼트 루트에 둔 평범한 노트는 네이티브가 아니다
@@ -177,7 +177,7 @@ console.log("5) 훅 주입 블록의 검증 지시");
     encoding: "utf-8",
     timeout: 15000,
     input: JSON.stringify({ hook_event_name: "SessionStart", session_id: "N1", source: "startup" }),
-    env: { ...process.env, BBM_STORE: "file" },
+    env: { ...process.env, ASTRONRAG_STORE: "file" },
   });
   // ★ 패치 전 실패: 주입 블록에 검증 지시가 한 줄도 없었다
   check("시점 관측임을 명시", /point-in-time observations, not live state/.test(out), out.slice(-400));
@@ -187,7 +187,7 @@ console.log("5) 훅 주입 블록의 검증 지시");
   check("나이가 주입 본문에 실림", /일 전/.test(out), out.slice(0, 400));
   check("종전 볼트 불일치 안내도 유지", /trust the server's tools/.test(out));
 
-  // 임계는 BIGBRAIN_STALE_DAYS 를 따른다 — 상수가 모듈 로드 시점에 고정되므로
+  // 임계는 ASTRONRAG_STALE_DAYS 를 따른다 — 상수가 모듈 로드 시점에 고정되므로
   // 같은 프로세스에서 env 만 바꿔선 검증되지 않는다. 별도 프로세스로 확인한다.
   const dir2 = freshDir("thr");
   const script =
@@ -199,10 +199,10 @@ console.log("5) 훅 주입 블록의 검증 지시");
     cwd: root,
     encoding: "utf-8",
     timeout: 15000,
-    env: { ...process.env, BIGBRAIN_STALE_DAYS: "0" },
+    env: { ...process.env, ASTRONRAG_STALE_DAYS: "0" },
   });
   const md2 = fs.readFileSync(path.join(dir2, "MEMORY.md"), "utf-8");
-  check("BIGBRAIN_STALE_DAYS=0 이면 0일도 대조 필요", /0일 전, 대조 필요/.test(md2), md2);
+  check("ASTRONRAG_STALE_DAYS=0 이면 0일도 대조 필요", /0일 전, 대조 필요/.test(md2), md2);
 }
 
 for (const d of cleanups) fs.rmSync(d, { recursive: true, force: true });
