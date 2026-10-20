@@ -30,14 +30,19 @@ const modelNode = z.object({
 	id: z.string().min(1),
 	name: z.string().min(1),
 	contextTokens: z.number().int().positive(),
-	maxOutputTokens: z.number().int().positive(),
-	defaultEffort: z.enum(["low", "medium", "high", "xhigh", "max"]),
-	supportedEfforts: z.array(z.enum(["low", "medium", "high", "xhigh", "max"])).min(1),
+	maxOutputTokens: z.number().int().positive().optional(),
+	defaultEffort: z.enum(["low", "medium", "high", "xhigh", "max", "ultra"]),
+	supportedEfforts: z.array(z.enum(["low", "medium", "high", "xhigh", "max", "ultra"])).min(1),
 	features: z.array(z.string().min(1)).min(1),
 	platforms: z.array(id).min(1),
-	pricing: z.array(priceTier).min(1),
-	sources: z.array(sourceNode).min(1),
-}).strict();
+	pricing: z.array(priceTier).min(1).optional(),
+	sources: z.array(sourceNode).min(1).optional(),
+}).strict().superRefine((model, context) => {
+	const codexOnly = model.platforms.length === 1 && model.platforms[0] === "platform:codex";
+	if (!codexOnly) for (const field of ["pricing", "maxOutputTokens", "sources"] as const) {
+		if (model[field] === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} is required for non-Codex models` });
+	}
+});
 const excludeConstraintNode = z.object({
 	"@id": id,
 	kind: z.literal("exclude"),
@@ -47,6 +52,7 @@ const excludeConstraintNode = z.object({
 const defaultConstraintNode = z.object({
 	"@id": id,
 	kind: z.literal("default"),
+	platform: z.enum(["claude", "codex"]).optional(),
 	models: z.array(z.string().min(1)).min(1),
 	reason: z.string().min(1),
 }).strict();
@@ -61,17 +67,18 @@ const ownerExceptionConstraintNode = z.object({
 const constraintNode = z.discriminatedUnion("kind", [excludeConstraintNode, defaultConstraintNode, ownerExceptionConstraintNode]);
 const ruleNode = z.object({
 	"@id": id,
+	platform: z.enum(["claude", "codex"]).optional(),
 	priority: z.number().int(),
 	conditions: z.array(z.object({ type: z.enum(["role", "keyword", "difficulty", "risk"]), values: z.array(z.string().min(1)).min(1) }).strict()),
 	model: z.string().min(1),
-	effort: z.enum(["low", "medium", "high", "xhigh", "max"]),
+	effort: z.enum(["low", "medium", "high", "xhigh", "max", "ultra"]),
 	reason: z.string().min(1),
 	evidence: z.array(id).min(1),
 	confidence: z.number().min(0).max(1),
 }).strict();
 const graphNode = z.object({ "@id": id, name: z.string().min(1), nodes: z.array(id).min(1) }).strict();
 
-export const ontologySchema = z.object({
+const ontologyNodeSchema = z.object({
 	version: z.literal(1),
 	taskTypes: z.array(namedNode).min(1),
 	difficulties: z.array(namedNode).min(1),
@@ -85,16 +92,23 @@ export const ontologySchema = z.object({
 	evidence: z.array(evidenceNode).min(1),
 	constraints: z.array(constraintNode).min(1),
 	rules: z.array(ruleNode).min(1),
-}).strict().superRefine((ontology, context) => {
+}).strict();
+
+export const ontologySchema = ontologyNodeSchema.superRefine((ontology, context) => {
 	const ruleIds = new Set(ontology.rules.map((rule) => rule["@id"]));
 	ontology.constraints.forEach((constraint, index) => {
 		if (constraint.kind === "owner-exception" && !ruleIds.has(constraint.rule)) {
 			context.addIssue({ code: z.ZodIssueCode.custom, path: ["constraints", index, "rule"], message: `unregistered owner-exception rule: ${constraint.rule}` });
 		}
 	});
+	try {
+		validateReferences(ontology);
+	} catch (error) {
+		context.addIssue({ code: z.ZodIssueCode.custom, message: error instanceof Error ? error.message : String(error) });
+	}
 });
 
-export type Ontology = z.infer<typeof ontologySchema>;
+export type Ontology = z.infer<typeof ontologyNodeSchema>;
 
 function assertSafeYaml(source: string): void {
 	if (/(?:^\s*|[{,]\s*)<<\s*:/m.test(source)) throw new Error("YAML merge keys are not allowed");
@@ -120,12 +134,22 @@ function validateReferences(ontology: Ontology): Ontology {
 	if (JSON.stringify([...roleIds].sort()) !== JSON.stringify(requiredRoles)) throw new Error("node roles must match the registered role set");
 	const platformIds = new Set(ontology.platforms.map((platform) => platform["@id"]));
 	const evidenceIds = new Set(ontology.evidence.map((evidence) => evidence["@id"]));
+	const effortIds = new Set(ontology.efforts.map((effort) => effort["@id"]));
 	for (const model of ontology.models) {
 		if (model["@id"] !== `model:${model.id}`) throw new Error(`model @id does not match id: ${model.id}`);
 		for (const platform of model.platforms) if (!platformIds.has(platform)) throw new Error(`unregistered platform: ${platform}`);
+		if (!model.supportedEfforts.includes(model.defaultEffort)) throw new Error(`unsupported default effort for ${model.id}`);
+		for (const effort of model.supportedEfforts) if (!effortIds.has(`effort:${effort}`)) throw new Error(`unregistered effort: ${effort}`);
 	}
 	for (const constraint of ontology.constraints) {
-		if (constraint.kind === "default") for (const model of constraint.models) if (!modelIds.has(model)) throw new Error(`unregistered default model: ${model}`);
+		if (constraint.kind === "default") {
+			if (constraint.platform && !platformIds.has(`platform:${constraint.platform}`)) throw new Error(`unregistered constraint platform: ${constraint.platform}`);
+			for (const id of constraint.models) {
+				const model = modelIds.get(id);
+				if (!model) throw new Error(`unregistered default model: ${id}`);
+				if (model.platforms.includes("platform:codex") !== ((constraint.platform ?? "claude") === "codex")) throw new Error(`default model platform mismatch: ${id}`);
+			}
+		}
 	}
 	for (const graph of ontology.graphs) {
 		for (const ref of graph.nodes) if (!allIds.has(ref)) throw new Error(`unresolved graph reference: ${ref}`);
@@ -133,6 +157,8 @@ function validateReferences(ontology: Ontology): Ontology {
 	for (const rule of ontology.rules) {
 		const model = modelIds.get(rule.model);
 		if (!model) throw new Error(`unregistered model: ${rule.model}`);
+		if (rule.platform && !platformIds.has(`platform:${rule.platform}`)) throw new Error(`unregistered rule platform: ${rule.platform}`);
+		if (model.platforms.includes("platform:codex") !== ((rule.platform ?? "claude") === "codex")) throw new Error(`rule model platform mismatch: ${rule.model}`);
 		if (!model.supportedEfforts.includes(rule.effort)) throw new Error(`unsupported effort ${rule.effort} for ${rule.model}`);
 		for (const ref of rule.evidence) if (!evidenceIds.has(ref)) throw new Error(`unresolved evidence reference: ${ref}`);
 		for (const condition of rule.conditions) {
@@ -146,7 +172,7 @@ export function parseOntology(source: string): Ontology {
 	assertSafeYaml(source);
 	const yaml = require("js-yaml") as YamlModule;
 	const parsed = yaml.load(source, { schema: yaml.JSON_SCHEMA });
-	return validateReferences(ontologySchema.parse(parsed));
+	return ontologySchema.parse(parsed);
 }
 
 export function loadOntology(file: string): Ontology {

@@ -6,6 +6,7 @@
       "models": [
         "claude-opus-5-5"
       ],
+      "platform": "claude",
       "reason": "Owner constraint makes Claude Opus the default model."
     },
     {
@@ -46,11 +47,20 @@
       "name": "Medium"
     },
     {
+      "@id": "effort:ultra",
+      "name": "Ultra"
+    },
+    {
       "@id": "effort:xhigh",
       "name": "Extra high"
     }
   ],
   "evidence": [
+    {
+      "@id": "evidence:codex-catalog",
+      "label": "Codex CLI catalog observation",
+      "link": "ontology/evidence/codex-catalog-2026-10-20.md"
+    },
     {
       "@id": "evidence:official-effort",
       "label": "Official effort guidance",
@@ -381,6 +391,115 @@
         "medium",
         "xhigh"
       ]
+    },
+    {
+      "@id": "model:gpt-5.6-sol",
+      "contextTokens": 272000,
+      "defaultEffort": "low",
+      "features": [
+        "image",
+        "text"
+      ],
+      "id": "gpt-5.6-sol",
+      "name": "Older generation workhorse model.",
+      "platforms": [
+        "platform:codex"
+      ],
+      "supportedEfforts": [
+        "high",
+        "low",
+        "max",
+        "medium",
+        "ultra",
+        "xhigh"
+      ]
+    },
+    {
+      "@id": "model:gpt-6-astra",
+      "contextTokens": 272000,
+      "defaultEffort": "medium",
+      "features": [
+        "image",
+        "text"
+      ],
+      "id": "gpt-6-astra",
+      "name": "Frontier intelligence for the most demanding work.",
+      "platforms": [
+        "platform:codex"
+      ],
+      "supportedEfforts": [
+        "high",
+        "low",
+        "max",
+        "medium",
+        "ultra",
+        "xhigh"
+      ]
+    },
+    {
+      "@id": "model:gpt-6-luna",
+      "contextTokens": 272000,
+      "defaultEffort": "medium",
+      "features": [
+        "image",
+        "text"
+      ],
+      "id": "gpt-6-luna",
+      "name": "Fast and affordable model for easier tasks.",
+      "platforms": [
+        "platform:codex"
+      ],
+      "supportedEfforts": [
+        "high",
+        "low",
+        "max",
+        "medium",
+        "xhigh"
+      ]
+    },
+    {
+      "@id": "model:gpt-6-sol",
+      "contextTokens": 272000,
+      "defaultEffort": "medium",
+      "features": [
+        "image",
+        "text"
+      ],
+      "id": "gpt-6-sol",
+      "name": "Previous generation workhorse model.",
+      "platforms": [
+        "platform:codex"
+      ],
+      "supportedEfforts": [
+        "high",
+        "low",
+        "max",
+        "medium",
+        "ultra",
+        "xhigh"
+      ]
+    },
+    {
+      "@id": "model:gpt-6.1-sol",
+      "contextTokens": 500000,
+      "defaultEffort": "low",
+      "features": [
+        "image",
+        "text"
+      ],
+      "id": "gpt-6.1-sol",
+      "name": "Latest workhorse model for coding and everyday work.",
+      "platforms": [
+        "platform:codex"
+      ],
+      "supportedEfforts": [
+        "high",
+        "low",
+        "max",
+        "medium",
+        "ultra",
+        "xhigh"
+      ]
     }
   ],
   "nodeRoles": [
@@ -419,8 +538,16 @@
       "name": "Amazon Bedrock"
     },
     {
+      "@id": "platform:claude",
+      "name": "Claude"
+    },
+    {
       "@id": "platform:claude-api",
       "name": "Claude API"
+    },
+    {
+      "@id": "platform:codex",
+      "name": "Codex"
     },
     {
       "@id": "platform:foundry",
@@ -472,6 +599,99 @@
     }
   ],
   "rules": [
+    {
+      "@id": "rule:codex-fallback",
+      "conditions": [],
+      "confidence": 0.1,
+      "effort": "medium",
+      "evidence": [
+        "evidence:codex-catalog",
+        "evidence:role-stats"
+      ],
+      "model": "gpt-6.1-sol",
+      "platform": "codex",
+      "priority": 100,
+      "reason": "Codex work uses the provisional medium-effort fallback."
+    },
+    {
+      "@id": "rule:codex-high-risk",
+      "conditions": [
+        {
+          "type": "risk",
+          "values": [
+            "high"
+          ]
+        }
+      ],
+      "confidence": 0.1,
+      "effort": "high",
+      "evidence": [
+        "evidence:codex-catalog",
+        "evidence:role-stats"
+      ],
+      "model": "gpt-6.1-sol",
+      "platform": "codex",
+      "priority": 300,
+      "reason": "Codex security, concurrency, and timing risks use high effort."
+    },
+    {
+      "@id": "rule:codex-high-roles",
+      "conditions": [
+        {
+          "type": "role",
+          "values": [
+            "impl",
+            "plan",
+            "review"
+          ]
+        },
+        {
+          "type": "risk",
+          "values": [
+            "normal"
+          ]
+        }
+      ],
+      "confidence": 0.1,
+      "effort": "high",
+      "evidence": [
+        "evidence:codex-catalog",
+        "evidence:role-stats"
+      ],
+      "model": "gpt-6.1-sol",
+      "platform": "codex",
+      "priority": 200,
+      "reason": "Codex planning, implementation, and review use the current high-effort placement."
+    },
+    {
+      "@id": "rule:codex-medium-roles",
+      "conditions": [
+        {
+          "type": "role",
+          "values": [
+            "coordinator",
+            "research",
+            "ship"
+          ]
+        },
+        {
+          "type": "risk",
+          "values": [
+            "normal"
+          ]
+        }
+      ],
+      "confidence": 0.1,
+      "effort": "medium",
+      "evidence": [
+        "evidence:codex-catalog",
+        "evidence:role-stats"
+      ],
+      "model": "gpt-6.1-sol",
+      "platform": "codex",
+      "priority": 200,
+      "reason": "Codex research, shipping, and coordination use the current medium-effort placement."
+    },
     {
       "@id": "rule:default-opus",
       "conditions": [],

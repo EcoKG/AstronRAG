@@ -91,13 +91,56 @@ models:
       - { url: "https://platform.claude.com/docs/en/about-claude/models/overview", checkedAt: "2026-10-19", fields: [name, contextTokens, maxOutputTokens, defaultEffort, features, platforms] }
       - { url: "https://platform.claude.com/docs/en/build-with-claude/effort", checkedAt: "2026-10-19", fields: [supportedEfforts] }
       - { url: "https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing", checkedAt: "2026-10-19", fields: [pricing] }
+  - "@id": model:gpt-6.1-sol
+    id: gpt-6.1-sol
+    name: Latest workhorse model for coding and everyday work.
+    contextTokens: 500000
+    defaultEffort: low
+    supportedEfforts: [low, medium, high, xhigh, max, ultra]
+    features: [text, image]
+    platforms: [platform:codex]
+  - "@id": model:gpt-6-astra
+    id: gpt-6-astra
+    name: Frontier intelligence for the most demanding work.
+    contextTokens: 272000
+    defaultEffort: medium
+    supportedEfforts: [low, medium, high, xhigh, max, ultra]
+    features: [text, image]
+    platforms: [platform:codex]
+  - "@id": model:gpt-6-sol
+    id: gpt-6-sol
+    name: Previous generation workhorse model.
+    contextTokens: 272000
+    defaultEffort: medium
+    supportedEfforts: [low, medium, high, xhigh, max, ultra]
+    features: [text, image]
+    platforms: [platform:codex]
+  - "@id": model:gpt-6-luna
+    id: gpt-6-luna
+    name: Fast and affordable model for easier tasks.
+    contextTokens: 272000
+    defaultEffort: medium
+    supportedEfforts: [low, medium, high, xhigh, max]
+    features: [text, image]
+    platforms: [platform:codex]
+  - "@id": model:gpt-5.6-sol
+    id: gpt-5.6-sol
+    name: Older generation workhorse model.
+    contextTokens: 272000
+    defaultEffort: low
+    supportedEfforts: [low, medium, high, xhigh, max, ultra]
+    features: [text, image]
+    platforms: [platform:codex]
 efforts:
   - { "@id": effort:low, name: Low }
   - { "@id": effort:medium, name: Medium }
   - { "@id": effort:high, name: High }
   - { "@id": effort:xhigh, name: Extra high }
   - { "@id": effort:max, name: Maximum }
+  - { "@id": effort:ultra, name: Ultra }
 platforms:
+  - { "@id": platform:codex, name: Codex }
+  - { "@id": platform:claude, name: Claude }
   - { "@id": platform:claude-api, name: Claude API }
   - { "@id": platform:bedrock, name: Amazon Bedrock }
   - { "@id": platform:vertex, name: Google Vertex AI }
@@ -115,6 +158,9 @@ resultMetrics:
   - { "@id": metric:coordinator-interventions, name: Coordinator interventions }
   - { "@id": metric:coordinator-cost, name: Coordinator cost }
 evidence:
+  - "@id": evidence:codex-catalog
+    label: Codex CLI catalog observation
+    link: "ontology/evidence/codex-catalog-2026-10-20.md"
   - "@id": evidence:official-models
     label: Official model overview
     link: "https://platform.claude.com/docs/en/about-claude/models/overview"
@@ -134,9 +180,46 @@ constraints:
     reason: Owner constraint excludes gpt-6-astra and Fable from recommendations and candidates.
   - "@id": constraint:owner-claude-default
     kind: default
+    platform: claude
     models: [claude-opus-5-5]
     reason: Owner constraint makes Claude Opus the default model.
 rules:
+  - "@id": rule:codex-high-risk
+    platform: codex
+    priority: 300
+    conditions: [{ type: risk, values: [high] }]
+    model: gpt-6.1-sol
+    effort: high
+    reason: Codex security, concurrency, and timing risks use high effort.
+    evidence: [evidence:codex-catalog, evidence:role-stats]
+    confidence: 0.1
+  - "@id": rule:codex-high-roles
+    platform: codex
+    priority: 200
+    conditions: [{ type: role, values: [plan, impl, review] }, { type: risk, values: [normal] }]
+    model: gpt-6.1-sol
+    effort: high
+    reason: Codex planning, implementation, and review use the current high-effort placement.
+    evidence: [evidence:codex-catalog, evidence:role-stats]
+    confidence: 0.1
+  - "@id": rule:codex-medium-roles
+    platform: codex
+    priority: 200
+    conditions: [{ type: role, values: [research, ship, coordinator] }, { type: risk, values: [normal] }]
+    model: gpt-6.1-sol
+    effort: medium
+    reason: Codex research, shipping, and coordination use the current medium-effort placement.
+    evidence: [evidence:codex-catalog, evidence:role-stats]
+    confidence: 0.1
+  - "@id": rule:codex-fallback
+    platform: codex
+    priority: 100
+    conditions: []
+    model: gpt-6.1-sol
+    effort: medium
+    reason: Codex work uses the provisional medium-effort fallback.
+    evidence: [evidence:codex-catalog, evidence:role-stats]
+    confidence: 0.1
   - "@id": rule:high-risk-opus
     priority: 200
     conditions:

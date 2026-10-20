@@ -944,12 +944,13 @@ server.registerTool(
 		inputSchema: {
 			description: z.string().trim().min(1).max(4000),
 			role: z.enum(["research", "plan", "impl", "review", "ship", "ops", "coordinator"]),
+			platform: z.enum(["claude", "codex"]).optional(),
 		},
 	},
-	async ({ description, role }) => {
+	async ({ description, role, platform }) => {
 		try {
 			const ontology = ontologySchema.parse(JSON.parse(fs.readFileSync(ontologyPath, "utf8")));
-			return ok(recommendModel(ontology, description, role as Role));
+			return ok(recommendModel(ontology, description, role as Role, platform));
 		} catch (error) {
 			return fail(`Recommendation unavailable: ${error instanceof Error ? error.message : String(error)}`);
 		}
