@@ -5,6 +5,8 @@ import type { MemoryStore } from "./memory-store.js";
 import { SqliteStore } from "./sqlite-store.js";
 
 export type StoreEnvironment = {
+	ASTRONRAG_STORE?: string;
+	ASTRONRAG_SQLITE_PATH?: string;
 	BBM_STORE?: string;
 	BBM_SQLITE_PATH?: string;
 };
