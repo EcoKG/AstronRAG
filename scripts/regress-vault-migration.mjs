@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
-import { runMigration } from "./migrate-vault-to-store.mjs";
+import { isWithin, runMigration } from "./migrate-vault-to-store.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cli = path.join(root, "scripts", "migrate-vault-to-store.mjs");
@@ -52,6 +52,55 @@ function hash(fp) {
 function migrationOptions(source, storePath, backupPath, overrides = {}) {
 	return { vault: source, storePath, backupPath, dryRun: false, merge: false, verify: false, ...overrides };
 }
+
+test("test_migrate_different_windows_drives_are_not_within_each_other", () => {
+	const repo = path.win32.resolve("D:\\repo");
+	const backup = path.win32.resolve("C:\\tmp\\backup");
+	assert.equal(isWithin(repo, backup, path.win32), false);
+	assert.equal(isWithin(backup, repo, path.win32), false);
+});
+
+test("test_migrate_same_drive_path_boundaries_are_preserved", () => {
+	for (const pathApi of [path.win32, path.posix]) {
+		const parent = pathApi.resolve("repo");
+		const child = pathApi.join(parent, "vault");
+		assert.equal(isWithin(parent, child, pathApi), true);
+		assert.equal(isWithin(child, parent, pathApi), false);
+		assert.equal(isWithin(parent, parent, pathApi), true);
+		assert.equal(isWithin(parent, `${parent}-backup`, pathApi), false);
+		assert.equal(isWithin(parent, pathApi.join(parent, "..vault"), pathApi), true);
+	}
+});
+
+test("test_vector_package_is_a_persistent_optional_dependency", () => {
+	for (const manifest of [
+		JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")),
+		JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8")).packages[""],
+	]) {
+		assert.equal(manifest.optionalDependencies?.["@huggingface/transformers"], "^4.3.0");
+		assert.equal(manifest.peerDependencies?.["@huggingface/transformers"], undefined);
+		assert.equal(manifest.peerDependenciesMeta?.["@huggingface/transformers"], undefined);
+	}
+});
+
+test("test_new_vault_marker_uses_astronrag_name", () => {
+	const source = vault("new-marker");
+	const instance = new Vault(source);
+	instance.writeIndex("# Memory\n");
+	assert.match(fs.readFileSync(path.join(source, ".bigbrain-vault"), "utf8"), /^AstronRAG vault\ncreated: \d{4}-\d{2}-\d{2}T/);
+	assert.equal(instance.inspect().hasMarker, true);
+});
+
+test("test_existing_vault_marker_is_preserved", () => {
+	const source = vault("existing-marker");
+	const marker = path.join(source, ".bigbrain-vault");
+	const original = "BigBrainMemory vault\ncreated: 2026-01-01T00:00:00.000Z\n";
+	fs.writeFileSync(marker, original);
+	const instance = new Vault(source);
+	instance.writeIndex("# Memory\n");
+	assert.equal(fs.readFileSync(marker, "utf8"), original);
+	assert.equal(instance.inspect().hasMarker, true);
+});
 
 test("test_migrate_rejects_unknown_or_missing_option_values", () => {
 	assert.equal(run(["--unknown"]).status, 2);
