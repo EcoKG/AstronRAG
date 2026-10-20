@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // 볼트의 memories/·archive/ 마크다운 원문을 웹 뷰어가 읽는 viewer/data.js 로 내보낸다.
-// 사용: node scripts/export-viewer-data.mjs [출력 경로]  (볼트 경로는 BIGBRAIN_VAULT, 없으면 <저장소>/vault)
+// 사용: node scripts/export-viewer-data.mjs [출력 경로]  (볼트 경로는 ASTRONRAG_VAULT, 없으면 <저장소>/vault)
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readEnv } from "./lib/env.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const vaultDir = process.env.BIGBRAIN_VAULT
-	? path.resolve(process.env.BIGBRAIN_VAULT)
+const vaultEnv = readEnv("ASTRONRAG_VAULT", "BIGBRAIN_VAULT");
+const vaultDir = vaultEnv
+	? path.resolve(vaultEnv)
 	: path.resolve(here, "..", "vault");
 const outFile = path.resolve(process.argv[2] || path.join(here, "..", "viewer", "data.js"));
 
@@ -36,5 +38,5 @@ const data = {
 };
 
 fs.mkdirSync(path.dirname(outFile), { recursive: true });
-fs.writeFileSync(outFile, `window.BIGBRAIN_DATA = ${JSON.stringify(data)};\n`, "utf8");
+fs.writeFileSync(outFile, `window.ASTRONRAG_DATA = ${JSON.stringify(data)};\n`, "utf8");
 console.log(`viewer data: memories ${memories.length}, archive ${archive.length} → ${outFile}`);

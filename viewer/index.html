@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset="utf8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
-<title>BigBrain Neural</title>
+<title>AstronRAG Neural</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans+KR:wght@400;500;600&amp;family=Instrument+Serif&amp;display=swap">
@@ -138,7 +138,7 @@
 <div id="fail" hidden="">WebGL을 시작하지 못했습니다. 하드웨어 가속을 켠 브라우저에서 다시 열어 주십시오.</div>
 
 <section id="head" class="panel" aria-label="볼트와 회상">
-  <h1>BigBrain <em>Neural</em></h1>
+  <h1>AstronRAG <em>Neural</em></h1>
   <div class="stats" id="stats"></div>
   <form class="recall" id="recallForm" role="search">
     <label for="q" class="label" hidden="">recall 질의</label>
@@ -279,7 +279,7 @@ import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 
 window.__bbStarted = true;
-const app = window.BigBrain;
+const app = window.AstronRAG;
 const state = app.state;
 const $ = (id) => document.getElementById(id);
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;

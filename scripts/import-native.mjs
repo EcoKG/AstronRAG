@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Claude Code 네이티브 프로젝트 메모리를 BigBrainMemory 볼트로 이관한다 (감사 E5).
+// Claude Code 네이티브 프로젝트 메모리를 AstronRAG 볼트로 이관한다.
 //
 // 네이티브는 프로젝트별로 저장소가 갈리고(~/.claude/projects/<슬러그>/memory/*.md)
 // 분류 체계도 다르다(user/feedback/project/reference vs episodic/semantic/procedural/preference).
@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
+import { readEnv } from "./lib/env.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, "..");
@@ -29,7 +30,7 @@ function arg(name, fallback) {
 const APPLY = process.argv.includes("--apply");
 const HOME = process.env.USERPROFILE || process.env.HOME || "";
 const PROJECTS_DIR = arg("--projects-dir", path.join(HOME, ".claude", "projects"));
-const VAULT = arg("--vault", process.env.BIGBRAIN_VAULT || path.join(repo, "vault"));
+const VAULT = arg("--vault", readEnv("ASTRONRAG_VAULT", "BIGBRAIN_VAULT") || path.join(repo, "vault"));
 /** `--config <경로>` — 프로젝트명 역매핑에 쓸 ~/.claude.json (테스트 주입용) */
 const CONFIG = arg("--config", path.join(HOME, ".claude.json"));
 
@@ -48,7 +49,7 @@ const PROJECT_MAP = (() => {
  * 네이티브 프로젝트 슬러그 → 사람이 읽는 프로젝트명.
  *
  * 슬러그는 실제 경로에서 영숫자가 아닌 문자를 전부 `-` 로 바꾼 것이라
- * (`D:\BigBrainMemory` → `D--BigBrainMemory`) 문자열만으로는 되돌릴 수 없다.
+ * (`D:\AstronRAG` → `D--AstronRAG`) 문자열만으로는 되돌릴 수 없다.
  * 하이픈이 경로 구분자이자 이름 문자를 겸하기 때문이다 —
  * `E--Project-Go-reversproxy` 가 `Project-Go-reversproxy` 인지 `reversproxy` 인지
  * 알 방법이 없고, 한글 디렉터리는 통째로 `-------` 로 뭉개져 정보가 아예 없다.
@@ -61,7 +62,7 @@ const PROJECT_MAP = (() => {
  * basename 이 갈리면 모호하므로 포기하고 슬러그를 그대로 쓴다.
  */
 function buildProjectNameResolver(configPath) {
-  let keys = [];
+  let keys = Object.keys({});
   try {
     keys = Object.keys(JSON.parse(fs.readFileSync(configPath, "utf-8"))?.projects ?? {});
   } catch {
@@ -134,7 +135,7 @@ function mapType(nativeType, body, name) {
 
 /** ~/.claude/projects/<슬러그>/memory/*.md 를 수집 (인덱스 MEMORY.md 제외) */
 function collect(projectsDir) {
-  const out = [];
+  const out = /** @type {Array<{ project: string; file: string }>} */ (Array());
   if (!fs.existsSync(projectsDir)) return out;
   for (const proj of fs.readdirSync(projectsDir)) {
     const memDir = path.join(projectsDir, proj, "memory");

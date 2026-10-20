@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// BigBrainMemory — SessionStart 훅 설치 스크립트 (opt-in).
+// AstronRAG 세션 훅을 설치하거나 제거한다.
 //
 // 왜 이 스크립트가 필요한가:
 //   MCP 서버는 호스트(Claude Code)의 설정 파일을 건드릴 수 없다 — stdio 로 격리된
@@ -15,7 +15,7 @@
 //   1) OS 분기 — POSIX(sh) 와 Windows(PowerShell) 는 문법이 완전히 다르다.
 //   2) 셸 변수 회피 — 명령 문자열에 `$` 를 쓰면 호스트 셸이 먼저 치환해 명령이 깨진다.
 //      양쪽 명령 모두 변수를 쓰지 않는다.
-//   3) 볼트 경로 주입 — BIGBRAIN_VAULT 를 지정한 사용자는 훅도 그 경로를 봐야 한다.
+//   3) 볼트 경로 주입 — ASTRONRAG_VAULT 를 지정한 사용자는 훅도 그 경로를 봐야 한다.
 //      등록된 MCP 서버 설정에서 실제 경로를 읽어와 일치시킨다.
 //   4) 기존 설정 병합 — 다른 훅을 쓰고 있을 수 있으므로 덮어쓰지 않고 항목만 더한다.
 //
@@ -32,6 +32,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
+import { readEnv } from "./lib/env.mjs";
 
 /**
  * 우리 훅을 식별하는 표식 — 이 문자열로 기존 항목을 찾아 갱신/제거한다.
@@ -68,12 +69,7 @@ const fail = (msg) => {
   failed = true;
 };
 
-/**
- * 볼트 경로 결정 (함정 3).
- * 우선순위: --vault > 등록된 MCP 서버의 env > BIGBRAIN_VAULT > <저장소>/vault
- * 등록된 서버 설정을 보는 이유: 훅이 서버와 다른 볼트를 가리키면 조용히
- * 빈 인덱스를 주입하게 되고, 사용자는 원인을 알기 어렵다.
- */
+/** 명시 경로·등록 서버·환경·저장소 기본값 순서로 설치 볼트를 정한다. */
 function resolveVault() {
   const flag = valueOf("--vault");
   if (flag) return { dir: path.resolve(flag), source: "--vault 플래그" };
@@ -82,8 +78,10 @@ function resolveVault() {
     const cj = path.join(os.homedir(), ".claude.json");
     if (fs.existsSync(cj)) {
       const parsed = JSON.parse(fs.readFileSync(cj, "utf-8"));
-      const fromEnv = parsed?.mcpServers?.bigbrainmemory?.env?.BIGBRAIN_VAULT;
+      const env = parsed?.mcpServers?.astronrag?.env ?? {};
+      const fromEnv = readEnv("ASTRONRAG_VAULT", "BIGBRAIN_VAULT", env, false);
       if (typeof fromEnv === "string" && fromEnv.trim() !== "") {
+        readEnv("ASTRONRAG_VAULT", "BIGBRAIN_VAULT", env);
         return { dir: path.resolve(fromEnv), source: "등록된 MCP 서버 설정(~/.claude.json)" };
       }
     }
@@ -91,8 +89,9 @@ function resolveVault() {
     /* 등록 정보를 못 읽어도 다음 후보로 넘어간다 */
   }
 
-  if (process.env.BIGBRAIN_VAULT?.trim()) {
-    return { dir: path.resolve(process.env.BIGBRAIN_VAULT), source: "BIGBRAIN_VAULT 환경변수" };
+  const vault = readEnv("ASTRONRAG_VAULT", "BIGBRAIN_VAULT");
+  if (vault?.trim()) {
+    return { dir: path.resolve(vault), source: "ASTRONRAG_VAULT 환경변수" };
   }
   return { dir: path.join(repoRoot, "vault"), source: "기본값(<저장소>/vault)" };
 }
@@ -185,7 +184,7 @@ function backup() {
 }
 
 // ── 본체
-console.log(`BigBrainMemory — 세션 훅 ${REMOVE ? "제거" : "설치"}\n`);
+console.log(`AstronRAG — 세션 훅 ${REMOVE ? "제거" : "설치"}\n`);
 
 const vault = resolveVault();
 const explicitVault = vault.source === "--vault 플래그";
@@ -235,7 +234,7 @@ for (const [event, r] of Object.entries(results)) {
 if (Object.values(results).every((r) => r.unchanged)) {
   console.log(
     REMOVE
-      ? "\n설치된 BigBrainMemory 훅이 없습니다. 변경할 것이 없습니다."
+      ? "\n설치된 AstronRAG 훅이 없습니다. 변경할 것이 없습니다."
       : "\n이미 동일한 설정으로 설치돼 있습니다. 변경할 것이 없습니다." +
           "\n(볼트 경로를 바꿨다면 --vault 로 지정해 다시 실행하세요.)",
   );
@@ -300,7 +299,7 @@ console.log(`✔ ${REMOVE ? "제거" : "설치"} 완료: ${settingsPath}`);
 if (!REMOVE) {
   console.log("\n다음 단계: Claude 를 재시작하면");
   console.log("  · SessionStart — 매 세션 시작 시 MEMORY.md 를 주입합니다(회상).");
-  console.log("  · UserPromptSubmit — 부호화 큐를 내고, BIGBRAIN_AUTO_RECALL=1 이면 프롬프트와 관련된 기억을 자동 주입합니다(기본 끔).");
+  console.log("  · UserPromptSubmit — 부호화 큐를 내고, ASTRONRAG_AUTO_RECALL=1 이면 프롬프트와 관련된 기억을 자동 주입합니다(기본 끔).");
   console.log("  · Stop         — 세션에서 새로 저장된 기억이 0건이면 경고합니다(무저장 감지).");
   console.log("되돌리려면: npm run setup:hook -- --remove");
 } else {

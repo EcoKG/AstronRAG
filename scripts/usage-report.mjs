@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createMemoryStore } from "../dist/stores/index.js";
+import { readEnv } from "./lib/env.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, "..");
@@ -25,7 +26,7 @@ const arg = (name, fallback) => {
   const i = process.argv.indexOf(name);
   return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 };
-const VAULT = arg("--vault", process.env.BIGBRAIN_VAULT || path.join(repo, "vault"));
+const VAULT = arg("--vault", readEnv("ASTRONRAG_VAULT", "BIGBRAIN_VAULT") || path.join(repo, "vault"));
 const SINCE = arg("--since", null);
 const AS_JSON = process.argv.includes("--json");
 
@@ -34,7 +35,7 @@ let rawEvents = /** @type {any[]} */ (Array());
 let malformed = 0;
 try {
   store = createMemoryStore(VAULT);
-  if ((process.env.BBM_STORE || "sqlite") === "file") {
+  if ((readEnv("ASTRONRAG_STORE", "BBM_STORE") || "sqlite") === "file") {
     rawEvents = fs.readFileSync(path.join(VAULT, ".bbm-usage.jsonl"), "utf8")
       .split(/\r?\n/)
       .filter(Boolean)
@@ -51,7 +52,7 @@ try {
   }
 } catch {
   console.error(`사용 로그가 없습니다: ${VAULT}`);
-  console.error("아직 아무것도 기록되지 않았거나 BIGBRAIN_USAGE_LOG=0 으로 꺼져 있습니다.");
+  console.error("아직 아무것도 기록되지 않았거나 ASTRONRAG_USAGE_LOG=0 으로 꺼져 있습니다.");
   process.exit(1);
 }
 process.once("exit", () => store?.close());

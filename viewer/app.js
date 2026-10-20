@@ -3,7 +3,7 @@
 (function () {
 	"use strict";
 
-	const P = window.BigBrainParse;
+	const P = window.AstronRAGParse;
 	const { TYPES, STATUSES, esc } = P;
 	const $ = (id) => document.getElementById(id);
 	const TYPE_KO = { episodic: "일화", semantic: "의미", procedural: "절차", preference: "선호" };
@@ -300,7 +300,7 @@
 	$("btnFiles").onclick = () => $("fileFiles").click();
 	$("btnSample").onclick = () => {
 		state.source = "sample"; state.fileCount = 0; state.sourceLabel = "샘플 볼트";
-		$("loadNote").textContent = "샘플 볼트를 표시하고 있습니다. 슬러그와 필드는 BigBrainMemory 볼트 형식과 같습니다.";
+		$("loadNote").textContent = "샘플 볼트를 표시하고 있습니다. 슬러그와 필드는 AstronRAG 볼트 형식과 같습니다.";
 		build(window.buildSample(Date.now()).map((r) => P.normalize(r, r.slug, false)));
 	};
 	$("fileFolder").addEventListener("change", (e) => { loadFiles(e.target.files); e.target.value = ""; });
@@ -329,7 +329,7 @@
 	/** data.js 가 있으면 그 원문을, 없으면 빈 볼트로 시작한다. */
 	function boot() {
 		if (innerWidth <= 760 || innerHeight < 700) $("legend").open = false;
-		const data = window.BIGBRAIN_DATA;
+		const data = window.ASTRONRAG_DATA;
 		if (data && Array.isArray(data.files)) {
 			const recs = data.files.map((f) => P.parseMemory(f.name, f.text, !!f.archived)).filter(Boolean);
 			state.source = "data"; state.fileCount = recs.length;
@@ -343,6 +343,6 @@
 		build([]);
 	}
 
-	window.BigBrain = app;
+	window.AstronRAG = app;
 	boot();
 })();

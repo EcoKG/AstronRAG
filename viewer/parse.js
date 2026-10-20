@@ -302,5 +302,5 @@
 		return blocks(esc(String(body).replace(/\r\n?/g, "\n")).split("\n"), hasSlug);
 	}
 
-	globalThis.BigBrainParse = { TYPES, STATUSES, esc, parseYaml, parseMemory, normalize, bodyWikilinks, renderMarkdown };
+	globalThis.AstronRAGParse = { TYPES, STATUSES, esc, parseYaml, parseMemory, normalize, bodyWikilinks, renderMarkdown };
 })();

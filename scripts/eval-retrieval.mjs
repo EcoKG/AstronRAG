@@ -15,7 +15,7 @@
 // --grid 는 tune 분할만으로 rrf 1개와 add 격자(w × τ)를 재고 미리 정한 규칙으로 하나를 고른다. holdout 은 보지 않는다.
 // --auc 는 crosslang 질의·정답 쌍(양성)과 시드 고정 무작위 비정답 쌍(음성)의 코사인으로 AUC 를 낸다.
 //
-// --scorer 는 import 전에 BIGBRAIN_SCORER 로 넘긴다. --alt-weight 는 변형 질의 가중(BIGBRAIN_ALT_WEIGHT, 0 초과 1 이하)이다.
+// --scorer 는 import 전에 ASTRONRAG_SCORER 로 넘긴다. --alt-weight 는 변형 질의 가중(ASTRONRAG_ALT_WEIGHT, 0 초과 1 이하)이다.
 // --multi 는 eval/alt-queries.jsonl 의 고정 변형을 alt_queries 로 함께 넘겨 같은 지표를 잰다.
 // --alt-control 은 변형 묶음을 다른 질의의 것으로 순환 배정해 목록이 길어진 효과만 남기는 대조군이다.
 // --baseline 은 골든 전 질의의 searchDetailed 출력 JSON 을 기준 dist 와 바이트 비교해 불일치가 있으면 1 로 끝난다(legacy 만). --multi 를 주면 변형도 함께 넘긴다.
@@ -31,6 +31,7 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { runMigration } from "./migrate-vault-to-store.mjs";
+import { readEnv } from "./lib/env.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -483,7 +484,8 @@ async function prepareVector(store, vault, rows) {
 	if (vr.state !== "ready") throw new Error(`벡터 계층을 올리지 못했다: ${vr.reason}`);
 	const qv = new Map();
 	for (const row of rows) qv.set(row, await vr.embedQuery(row.query));
-	const altWeight = process.env.BIGBRAIN_ALT_WEIGHT ? Number(process.env.BIGBRAIN_ALT_WEIGHT) : 0.7;
+	const weight = readEnv("ASTRONRAG_ALT_WEIGHT", "BIGBRAIN_ALT_WEIGHT");
+	const altWeight = weight ? Number(weight) : 0.7;
 	const keys = store.retriever.entries().map((e) => e.key);
 	return { mod, vr, qv, keys, parseQuery, scorer: SCORER, altWeight, fuseWeightedMax, rank, embedMs: Math.round(performance.now() - t0) };
 }
@@ -614,10 +616,12 @@ if (opts.compare) {
 if (!SCORERS.includes(opts.scorer)) die(`지원하지 않는 scorer: ${opts.scorer} (가능: ${SCORERS.join(", ")})`, 2);
 
 // 사용자 동의어 사전은 모듈 로드 시 병합되므로 import 전에 지운다. 스코어러·변형 가중도 모듈 로드 시 읽으므로 import 전에 정한다
+delete process.env.ASTRONRAG_SYNONYMS;
 delete process.env.BIGBRAIN_SYNONYMS;
-process.env.BIGBRAIN_SCORER = opts.scorer;
-if (opts.altWeight === undefined) delete process.env.BIGBRAIN_ALT_WEIGHT;
-else process.env.BIGBRAIN_ALT_WEIGHT = String(opts.altWeight);
+process.env.ASTRONRAG_SCORER = opts.scorer;
+delete process.env.BIGBRAIN_ALT_WEIGHT;
+if (opts.altWeight === undefined) delete process.env.ASTRONRAG_ALT_WEIGHT;
+else process.env.ASTRONRAG_ALT_WEIGHT = String(opts.altWeight);
 const distUrl = (f) => pathToFileURL(path.join(root, "dist", f)).href;
 if (!fs.existsSync(path.join(root, "dist", "store.js"))) die("dist/store.js 가 없다 — 먼저 npm run build");
 const { Vault } = await import(distUrl("vault.js"));
@@ -626,7 +630,7 @@ const { FileStore } = await import(distUrl("stores/file-store.js"));
 const { SqliteStore } = await import(distUrl("stores/sqlite-store.js"));
 
 function openEvaluationBackend(dir, tag) {
-	if (process.env.BBM_STORE === "file") {
+	if (readEnv("ASTRONRAG_STORE", "BBM_STORE") === "file") {
 		return new FileStore(dir);
 	}
 	const databasePath = path.join(dir, ".bbm", `${tag}.sqlite`);
@@ -741,7 +745,7 @@ evaluation: try {
 
 	const result = {
 		scorer: opts.scorer,
-		shadow: opts.scorer === "legacy" && process.env.BIGBRAIN_SHADOW !== "0",
+		shadow: opts.scorer === "legacy" && readEnv("ASTRONRAG_SHADOW", "BIGBRAIN_SHADOW") !== "0",
 		frozenNow: new Date(FROZEN_NOW).toISOString(),
 		fixture: { count: records.length, types },
 		golden: {
