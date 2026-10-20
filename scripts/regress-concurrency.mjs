@@ -10,7 +10,7 @@
 //
 // 라이브 볼트는 건드리지 않는다 — 전부 os.tmpdir() 임시 볼트.
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -142,8 +142,10 @@ console.log("2) 동시 forget 유지 — 부활 없음 (A4)");
 console.log("3) 강화 실패는 best-effort — 회상은 계속된다");
 {
   const dir = freshDir();
-  const seed = new MemoryStore(new FileStore(dir));
-  seed.remember({ title: "베스트에포트", content: "오스카 파파 회상되어야 한다.", type: "semantic" });
+  const backend = new FileStore(dir);
+  const now = Date.parse("2026-01-02T00:00:00.000Z");
+  const seed = new MemoryStore(backend, undefined, () => now - 3600_000);
+  const { record } = seed.remember({ title: "베스트에포트", content: "오스카 파파 회상되어야 한다.", type: "semantic" });
 
   const origRename = fs.renameSync;
   const origError = console.error;
@@ -156,9 +158,9 @@ console.log("3) 강화 실패는 best-effort — 회상은 계속된다");
       throw new Error("주입된 쓰기 실패");
     };
     console.error = (...parts) => { warnings += `${parts.join(" ")}\n`; };
-    const s = new MemoryStore(new FileStore(dir));
+    const s = new MemoryStore(backend, undefined, () => now);
     results = s.search("오스카");
-    readOk = s.read("베스트에포트");
+    readOk = s.read(record.slug);
   } catch (err) {
     check("회상이 예외로 죽지 않음", false, String(err?.message ?? err));
   } finally {
@@ -168,6 +170,37 @@ console.log("3) 강화 실패는 best-effort — 회상은 계속된다");
   check("쓰기 실패에도 search 가 결과를 반환", Number(Object(results).length) === 1, `len=${Object(results).length}`);
   check("쓰기 실패에도 read_memory 가 동작", readOk !== null);
   check("test_concurrency_failure_uses_file_store_usage_contract", !warnings.includes("이벤트 기록 실패"));
+  const unapplied = new FileStore(dir).readUsageEvents().filter((event) => event.tool === "reinforcement_unapplied");
+  check("test_failed_reinforcement_persists_unapplied_event", unapplied.length === 2
+    && unapplied.every((event) => event.slug === record.slug && event.ok === false && event.reason === "exception_swallowed"), JSON.stringify(unapplied));
+}
+
+{
+  const dir = freshDir();
+  const vault = new Vault(dir);
+  const originalError = console.error;
+  let warnings = "";
+  console.error = (...parts) => { warnings += `${parts.join(" ")}\n`; };
+  const captureError = console.error;
+  try {
+    fs.writeFileSync(memPath(dir, "truncated"), "---\ntitle: truncated\n", "utf8");
+    const truncated = vault.read("truncated");
+    console.error = originalError;
+    check("test_vault_missing_closing_delimiter_reports_truncation", truncated === null
+      && warnings.includes("truncated — 닫는 frontmatter 구분자(---) 없음 — 쓰기 중 절단 의심 →")
+      && !fs.existsSync(memPath(dir, "truncated")), warnings);
+    for (const [slug, raw] of [["empty", ""], ["invalid", "---\ntitle: [\n---\nbody"]]) {
+      warnings = "";
+      fs.writeFileSync(memPath(dir, slug), raw, "utf8");
+      console.error = captureError;
+      const parsed = vault.read(slug);
+      console.error = originalError;
+      check("test_vault_other_parse_error_preserves_reason", parsed === null
+        && warnings.includes(`${slug} — frontmatter 파싱 실패:`) && !warnings.includes("절단 의심"), warnings);
+    }
+  } finally {
+    console.error = originalError;
+  }
 }
 
 // ── 4. 2프로세스 동시 강화 — 소실률 (A4)
@@ -185,20 +218,21 @@ console.log("4) 2프로세스 동시 recall — 강화 소실률 (A4)");
   const child = path.join(dir, "child.mjs");
   fs.writeFileSync(
     child,
-    kind === "sqlite"
-      ? `import { SqliteStore } from ${JSON.stringify(distUrl("stores/sqlite-store.js"))};
+    `import { ${kind === "sqlite" ? "SqliteStore" : "FileStore"} } from ${JSON.stringify(distUrl(`stores/${kind === "sqlite" ? "sqlite" : "file"}-store.js`))};
 import { MemoryStore } from ${JSON.stringify(distUrl("store.js"))};
-const backend = new SqliteStore(process.argv[2]);
+const backend = new ${kind === "sqlite" ? "SqliteStore" : "FileStore"}(process.argv[2]);
 const s = new MemoryStore(backend);
-let noResult = 0;
-for (let i = 0; i < ${N}; i++) if (s.search("퀘벡").length === 0) noResult++;
-backend.appendUsageEvent({ tool: "concurrency_reinforcement_summary", ok: noResult === 0, reason: noResult === 0 ? "applied" : "no_result", count: noResult });
-backend.close();
-`
-      : `import { Vault } from ${JSON.stringify(distUrl("vault.js"))};
-import { MemoryStore } from ${JSON.stringify(distUrl("store.js"))};
-const s = new MemoryStore(new Vault(process.argv[2]));
-for (let i = 0; i < ${N}; i++) s.search("퀘벡");
+process.once("message", () => {
+  try {
+    let noResult = 0;
+    for (let i = 0; i < ${N}; i++) if (s.search("퀘벡").length === 0) noResult++;
+    backend.appendUsageEvent({ tool: "concurrency_reinforcement_summary", ok: noResult === 0, reason: noResult === 0 ? "applied" : "no_result", count: noResult });
+  } finally {
+    backend.close?.();
+    process.disconnect();
+  }
+});
+process.send("ready");
 `,
     "utf-8",
   );
@@ -207,18 +241,28 @@ for (let i = 0; i < ${N}; i++) s.search("퀘벡");
   const childEnv = {
     ...process.env,
     BIGBRAIN_SPACING_MS: "0",
-    ...(kind === "sqlite" ? { BIGBRAIN_FLUSH_EVERY_ACCESS: "1" } : {}),
+    BIGBRAIN_SPACING_ALPHA: "0",
+    BIGBRAIN_FLUSH_EVERY_ACCESS: "1",
   };
-  const kids = kind === "sqlite"
-    ? await Promise.all([0, 1].map(() => new Promise((resolve) => {
-      const childProcess = spawn(process.execPath, [child, dir], { env: childEnv });
-      let stderr = "";
-      childProcess.stderr.on("data", (chunk) => { stderr += chunk; });
-      childProcess.on("close", (status) => resolve({ status, stderr }));
-    })))
-    : [0, 1].map(() => spawnSync(process.execPath, [child, dir], { encoding: "utf-8", env: childEnv }));
+  const processes = /** @type {import("node:child_process").ChildProcess[]} */ (Array());
+  let ready = 0;
+  const kids = await Promise.all([0, 1].map(() => new Promise((resolve) => {
+    const childProcess = spawn(process.execPath, [child, dir], { env: childEnv, timeout: 30000,
+      stdio: ["ignore", "ignore", "pipe", "ipc"] });
+    processes.push(childProcess);
+    let stderr = "";
+    childProcess.stderr?.on("data", (chunk) => { stderr += chunk; });
+    childProcess.once("error", (error) => { stderr += String(error); });
+    childProcess.once("message", (message) => {
+      if (message === "ready" && ++ready === 2) {
+        for (const worker of processes) worker.send("start", (error) => { if (error) worker.kill(); });
+      }
+    });
+    childProcess.once("close", (status) => resolve({ status, stderr }));
+  })));
   const elapsed = Date.now() - t0;
   check("자식 프로세스 2개 정상 종료", kids.every((k) => Object(k).status === 0), kids.map((k) => Object(k).stderr?.slice(0, 200)).join(" | "));
+  check("두 자식이 시작 장벽에서 준비됨", ready === 2, `ready=${ready}`);
 
   const final = storedAccessCount(kind, dir, rec.slug);
   const expected = baseline + 2 * N;
@@ -237,9 +281,12 @@ for (let i = 0; i < ${N}; i++) s.search("퀘벡");
     return counts;
   }, {});
   if (kind === "sqlite" && lost > unapplied) reasonCounts.gate_not_flushed = lost - unapplied;
+  // FileStore는 프로세스 간 잠금이 없어 동시 강화 일부가 소실될 수 있다.
+  const fileLossLimit = 30;
   console.log(`    ${kind} 기대 ${expected} / 실측 ${final} / 소실 ${lost} (${lossRate.toFixed(1)}%, ${elapsed}ms)`);
   if (kind === "sqlite") console.log(`    미반영 ${unapplied} / 사유 ${JSON.stringify(reasonCounts)}`);
-  check(kind === "sqlite" ? "SQLite 강화 소실 0" : `FileStore 강화 소실률 < 5% (실측 ${lossRate.toFixed(1)}%)`, kind === "sqlite" ? lost === 0 : lossRate < 5, `lost=${lost}/${2 * N}`);
+  check(kind === "sqlite" ? "test_sqlite_concurrent_reinforcement_has_zero_loss" : "test_file_reinforcement_loss_under_concurrent_workers",
+    kind === "sqlite" ? lost === 0 : lossRate >= 0 && lossRate < fileLossLimit, `lost=${lost}/${2 * N}, fileLimit=${fileLossLimit}%`);
   if (kind === "sqlite") check("SQLite 강화 미반영 카운트 0", unapplied === 0, JSON.stringify(reasonCounts));
   check("저장소가 손상되지 않음", final >= 0);
 }

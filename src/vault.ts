@@ -241,21 +241,24 @@ export class Vault {
       return record;
     } catch (err) {
       this.readCache.delete(fp);
-      this.quarantine(slug, archived, `frontmatter 파싱 실패: ${errText(err)}`);
+      const reason = !hasClosingDelimiter(raw)
+        ? "닫는 frontmatter 구분자(---) 없음 — 쓰기 중 절단 의심"
+        : `frontmatter 파싱 실패: ${errText(err)}`;
+      this.quarantine(slug, archived, reason);
       return null;
     }
   }
 
-	/** Markdown 원문을 파일 변경 없이 기억 레코드로 파싱한다. */
-	parseRawRecord(slug: string, raw: string): { record: MemoryRecord; hasExplicitId: boolean } {
-		if (raw.trim() === "") throw new Error("빈 파일");
-		if (!hasClosingDelimiter(raw)) throw new Error("닫는 frontmatter 구분자(---) 없음");
-		const { data, content } = loadMatter()(raw, MATTER_OPTIONS);
-		return {
-			record: this.fromFrontmatter(slug, data, content.trim()),
-			hasExplicitId: typeof data.id === "string" && data.id.length > 0,
-		};
-	}
+  /** Markdown 원문을 파일 변경 없이 기억 레코드로 파싱한다. */
+  parseRawRecord(slug: string, raw: string): { record: MemoryRecord; hasExplicitId: boolean } {
+    if (raw.trim() === "") throw new Error("빈 파일");
+    if (!hasClosingDelimiter(raw)) throw new Error("닫는 frontmatter 구분자(---) 없음 — 쓰기 중 절단 의심");
+    const { data, content } = loadMatter()(raw, MATTER_OPTIONS);
+    return {
+      record: this.fromFrontmatter(slug, data, content.trim()),
+      hasExplicitId: typeof data.id === "string" && data.id.length > 0,
+    };
+  }
 
   /**
    * 손상 파일을 quarantine/ 으로 **이동**한다(삭제 아님, 원본 바이트 그대로).
