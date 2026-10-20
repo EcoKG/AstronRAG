@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { readEnv } from "./env.js";
 import type { MemoryStore as Storage } from "./stores/memory-store.js";
 
 /**
@@ -18,16 +19,16 @@ import type { MemoryStore as Storage } from "./stores/memory-store.js";
  * - 절대 던지지 않는다. 계측 실패가 기억 조회·저장을 망가뜨리면 안 된다.
  * - **내용을 기록하지 않는다.** 질의문·본문·제목은 남기지 않는다 — 로그는 사용자의
  *   기억 그 자체가 아니라 "무엇이 몇 번 일어났는가" 만 담는다. 골든 질의셋을 만들 때처럼
- *   질의문이 필요하면 `BIGBRAIN_LOG_QUERIES=1` 로 명시적으로 켠다.
+ *   질의문이 필요하면 `ASTRONRAG_LOG_QUERIES=1` 로 명시적으로 켠다.
  * - 볼트 안에 점 파일로 둔다 — Obsidian 에서 숨겨지고, 설명 대상인 볼트와 함께 이동한다.
- * - `BIGBRAIN_USAGE_LOG=0` 으로 끌 수 있다.
+ * - `ASTRONRAG_USAGE_LOG=0` 으로 끌 수 있다.
  */
 
-const DISABLED = process.env.BIGBRAIN_USAGE_LOG === "0";
-const LOG_QUERIES = /^(1|true|yes)$/i.test(process.env.BIGBRAIN_LOG_QUERIES ?? "");
+const DISABLED = readEnv("ASTRONRAG_USAGE_LOG", "BIGBRAIN_USAGE_LOG") === "0";
+const LOG_QUERIES = /^(1|true|yes)$/i.test(readEnv("ASTRONRAG_LOG_QUERIES", "BIGBRAIN_LOG_QUERIES") ?? "");
 /** 이 크기를 넘으면 .old 로 한 번 굴린다 (무한 증식 방지). 기본 5MB */
 const MAX_BYTES = (() => {
-  const v = Number(process.env.BIGBRAIN_USAGE_LOG_MAX_BYTES);
+  const v = Number(readEnv("ASTRONRAG_USAGE_LOG_MAX_BYTES", "BIGBRAIN_USAGE_LOG_MAX_BYTES"));
   return Number.isFinite(v) && v > 0 ? v : 5 * 1024 * 1024;
 })();
 

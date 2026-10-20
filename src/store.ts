@@ -1,5 +1,6 @@
 import type { MemoryStore as Storage } from "./stores/memory-store.js";
 import { logWarn } from "./log.js";
+import { readEnv } from "./env.js";
 import { RETRIEVAL_THRESHOLD, activationOf, rank } from "./ranker.js";
 import {
   LexicalRetriever,
@@ -27,21 +28,21 @@ import type {
 const HOUR_MS = 3_600_000;
 /** recall 한 번에 쓰는 변형 질의 수 상한 — 넘는 것은 버린다 */
 export const MAX_ALT_QUERIES = 3;
-/** 키워드 점수 방식 (BIGBRAIN_SCORER) — "bm25f" 일 때만 BM25F, 그 밖의 값은 legacy */
-export const SCORER: Scorer = process.env.BIGBRAIN_SCORER === "bm25f" ? "bm25f" : "legacy";
-/** 그림자 모드 — legacy 로 회상할 때 bm25f 도 계산해 상위 5건 일치율만 남긴다. BIGBRAIN_SHADOW=0 이면 끈다 */
-const SHADOW = SCORER === "legacy" && process.env.BIGBRAIN_SHADOW !== "0";
-/** 융합에서 변형 질의 원점수에 곱하는 가중 (원 질의는 1) — BIGBRAIN_ALT_WEIGHT 가 0 초과 1 이하 수면 그 값(평가용), 아니면 0.7 */
+/** 키워드 점수 방식 (ASTRONRAG_SCORER) — "bm25f" 일 때만 BM25F, 그 밖의 값은 legacy */
+export const SCORER: Scorer = readEnv("ASTRONRAG_SCORER", "BIGBRAIN_SCORER") === "bm25f" ? "bm25f" : "legacy";
+/** 그림자 모드 — legacy 로 회상할 때 bm25f 도 계산해 상위 5건 일치율만 남긴다. ASTRONRAG_SHADOW=0 이면 끈다 */
+const SHADOW = SCORER === "legacy" && readEnv("ASTRONRAG_SHADOW", "BIGBRAIN_SHADOW") !== "0";
+/** 융합에서 변형 질의 원점수에 곱하는 가중 (원 질의는 1) — ASTRONRAG_ALT_WEIGHT 가 0 초과 1 이하 수면 그 값(평가용), 아니면 0.7 */
 const ALT_QUERY_WEIGHT = ((): number => {
-  const v = Number(process.env.BIGBRAIN_ALT_WEIGHT);
-  return process.env.BIGBRAIN_ALT_WEIGHT?.trim() && Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.7;
+  const v = Number(readEnv("ASTRONRAG_ALT_WEIGHT", "BIGBRAIN_ALT_WEIGHT"));
+  return readEnv("ASTRONRAG_ALT_WEIGHT", "BIGBRAIN_ALT_WEIGHT")?.trim() && Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.7;
 })();
 
 // --- 리포트(docs/memory-model-report.md) 기반 파라미터 -------------------
 // 기저활성 감쇠 DECAY_D·약해진 기억 임계 RETRIEVAL_THRESHOLD·RIF 임계는 ranker.ts 에 있다.
 /** 간격 게이트 — 직전 강화 후 이 시간이 지나야 저장강도 증가 (P3, 간격효과). 환경변수로 조정 */
 const SPACING_WINDOW_MS = (() => {
-  const v = Number(process.env.BIGBRAIN_SPACING_MS);
+  const v = Number(readEnv("ASTRONRAG_SPACING_MS", "BIGBRAIN_SPACING_MS"));
   return Number.isFinite(v) && v >= 0 ? v : 10 * 60_000; // 기본 10분
 })();
 /**
@@ -55,9 +56,9 @@ const HARD_RETRIEVAL_ACTIVATION = 0.5 - Math.log(1 / (1 - 0.5)); // ≈ -0.193
  * 간격 게이트에 막힌 접근도 매번 디스크에 기록할지 (기본 false).
  * accessCount/lastAccessed 는 활성 계산에 쓰이지 않는 표시용 필드라, 조회마다 쓰면
  * git working tree·Obsidian 동기화·백업이 "읽기만 했는데" 변경을 감지한다(감사 B).
- * 접근수 통계를 정확히 원하면 BIGBRAIN_FLUSH_EVERY_ACCESS=1 로 켠다.
+ * 접근수 통계를 정확히 원하면 ASTRONRAG_FLUSH_EVERY_ACCESS=1 로 켠다.
  */
-const FLUSH_EVERY_ACCESS = /^(1|true|yes)$/i.test(process.env.BIGBRAIN_FLUSH_EVERY_ACCESS ?? "");
+const FLUSH_EVERY_ACCESS = /^(1|true|yes)$/i.test(readEnv("ASTRONRAG_FLUSH_EVERY_ACCESS", "BIGBRAIN_FLUSH_EVERY_ACCESS") ?? "");
 /**
  * overlap 임계 3종 (감사 D3, 회상 RIF 임계는 ranker.ts). 분모를 min → 자카드로 바꾸면서 함께 재보정했다.
  * 같은 크기 집합 기준 환산: min 0.45→0.29, 0.5→0.33, 0.75→0.60.
@@ -69,17 +70,17 @@ const DUPLICATE_THRESHOLD = 0.6; // reflect 의 중복 후보 (종전 0.75)
  * 0 이면 종전의 고정 창 동작. 기본 0.1 = 나이의 10% 를 n 으로 나눈 만큼.
  */
 const SPACING_ALPHA = (() => {
-  const v = Number(process.env.BIGBRAIN_SPACING_ALPHA);
+  const v = Number(readEnv("ASTRONRAG_SPACING_ALPHA", "BIGBRAIN_SPACING_ALPHA"));
   return Number.isFinite(v) && v >= 0 ? v : 0.1;
 })();
 /** reflect 의 weakened 유예기간 — 이보다 어린 기억은 "약해졌다" 고 보지 않는다 (P6, 감사 C2) */
 const WEAKENED_GRACE_MS = (() => {
-  const v = Number(process.env.BIGBRAIN_WEAKENED_GRACE_H);
+  const v = Number(readEnv("ASTRONRAG_WEAKENED_GRACE_H", "BIGBRAIN_WEAKENED_GRACE_H"));
   return (Number.isFinite(v) && v >= 0 ? v : 72) * HOUR_MS; // 기본 72시간
 })();
 /** weakened 로 제시할 상한 비율 — 활성 하위 이만큼만 (0 이면 기능 끄기) */
 const WEAKENED_RATIO = (() => {
-  const v = Number(process.env.BIGBRAIN_WEAKENED_RATIO);
+  const v = Number(readEnv("ASTRONRAG_WEAKENED_RATIO", "BIGBRAIN_WEAKENED_RATIO"));
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 0.2; // 기본 하위 20%
 })();
 // -----------------------------------------------------------------------
@@ -139,9 +140,9 @@ export function contradictionReasons(a: string, b: string): string[] {
   return reasons;
 }
 
-/** `BIGBRAIN_STALE_DAYS` 가 유효하게 설정되면 전 타입에 쓰는 단일 낡음 임계(일), 아니면 null */
+/** `ASTRONRAG_STALE_DAYS` 가 유효하게 설정되면 전 타입에 쓰는 단일 낡음 임계(일), 아니면 null */
 const STALE_OVERRIDE = (() => {
-  const raw = process.env.BIGBRAIN_STALE_DAYS;
+  const raw = readEnv("ASTRONRAG_STALE_DAYS", "BIGBRAIN_STALE_DAYS");
   if (raw === undefined) return null;
   const v = Number(raw);
   return Number.isFinite(v) && v >= 0 ? v : null;
@@ -193,7 +194,7 @@ function newId(): string {
  * RECALL FIRST 수칙의 실효를 깎는 최전선 결함이었다. 임베딩 없이도 가장 흔한
  * 한↔영 혼용만은 메우도록 질의 토큰을 확장한다.
  *
- * 양방향으로 전개되며, 사용자 사전은 BIGBRAIN_SYNONYMS 로 덧붙일 수 있다
+ * 양방향으로 전개되며, 사용자 사전은 ASTRONRAG_SYNONYMS 로 덧붙일 수 있다
  * (형식: "배포=deploy,릴리스;설정=config" — 그룹은 `;`, 항목은 `,`, 좌변은 대표어).
  */
 const BUILTIN_SYNONYMS: string[][] = [
@@ -227,7 +228,7 @@ const BUILTIN_SYNONYMS: string[][] = [
 const SYNONYM_INDEX: Map<string, string[]> = (() => {
   const groups = BUILTIN_SYNONYMS.map((g) => [...g]);
   // 사용자 사전 병합
-  for (const raw of (process.env.BIGBRAIN_SYNONYMS ?? "").split(";")) {
+  for (const raw of (readEnv("ASTRONRAG_SYNONYMS", "BIGBRAIN_SYNONYMS") ?? "").split(";")) {
     const [head, rest] = raw.split("=");
     if (!head || !rest) continue;
     const words = [head, ...rest.split(",")].map((w) => w.trim().toLowerCase()).filter(Boolean);
@@ -914,7 +915,7 @@ export class MemoryService {
       episodic: "경험/사건 (episodic)",
       procedural: "방법/절차 (procedural)",
     };
-    let md = "# BigBrainMemory 인덱스\n\n> 자동 생성 파일입니다. 직접 수정하지 마세요.\n";
+    let md = "# AstronRAG 인덱스\n\n> 자동 생성 파일입니다. 직접 수정하지 마세요.\n";
     // 나이를 함께 싣는다. 이 파일은 SessionStart 훅이 통째로 컨텍스트에 주입하는
     // **주 채널**인데, 종전에는 확신도만 있고 나이가 없었다. recall 응답에는
     // age_days/stale_hint 가 붙는데 주입 채널에만 빠져 있던 비대칭이다.

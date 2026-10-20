@@ -19,7 +19,7 @@ export const VECTOR_MIN_COS = 0.9;
 export const VECTOR_TOP_K = 10;
 /** 선택 의존성 패키지 */
 export const TRANSFORMERS_PKG = "@huggingface/transformers";
-/** 선택 의존성 설치 명령 — BigBrainMemory 설치 디렉터리에서 실행한다 */
+/** 선택 의존성 설치 명령 — AstronRAG 설치 디렉터리에서 실행한다 */
 export const INSTALL_COMMAND = `npm i --no-save ${TRANSFORMERS_PKG}@^4.3.0`;
 /** 모델 파일 캐시 디렉터리 — 저장소·볼트 밖 */
 export const MODEL_CACHE_DIR = path.join(os.tmpdir(), "bigbrainmemory-models");
@@ -147,7 +147,7 @@ export class VectorRetriever {
 			this.state = "unavailable";
 			const missing = (err as { code?: string }).code === "ERR_MODULE_NOT_FOUND" && String(err).includes(TRANSFORMERS_PKG);
 			this.reason = missing
-				? `${TRANSFORMERS_PKG} 가 설치돼 있지 않습니다 — BigBrainMemory 디렉터리에서 \`${INSTALL_COMMAND}\` 를 실행한 뒤 서버를 다시 시작하세요`
+				? `${TRANSFORMERS_PKG} 가 설치돼 있지 않습니다 — AstronRAG 디렉터리에서 \`${INSTALL_COMMAND}\` 를 실행한 뒤 서버를 다시 시작하세요`
 				:`모델 로드 실패: ${err instanceof Error ? err.message : String(err)}`;
 			return;
 		}

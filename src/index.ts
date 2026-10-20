@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { readEnv } from "./env.js";
 import { createMemoryStore, requiresVaultMigration } from "./stores/index.js";
 import { MAX_ALT_QUERIES, MemoryService, isStale, reviewOverdue } from "./store.js";
 import { initUsageLog, logUsage, queryField } from "./usage.js";
@@ -17,7 +18,7 @@ import { ontologySchema } from "./ontology.js";
 import { recommendModel, type Role } from "./recommender.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const ontologyOverride = process.env.BBM_ONTOLOGY_PATH?.trim();
+const ontologyOverride = readEnv("ASTRONRAG_ONTOLOGY_PATH", "BBM_ONTOLOGY_PATH")?.trim();
 const ontologyPath = ontologyOverride ? path.resolve(ontologyOverride) : path.resolve(here, "..", "ontology", "ontology.json");
 
 /** 버전은 package.json 이 단일 출처다 — 종전에는 여기 하드코딩돼 이중 관리였다 (T39) */
@@ -42,21 +43,22 @@ const BUILD_STAMP = (() => {
     return "unknown";
   }
 })();
-const vaultDir = process.env.BIGBRAIN_VAULT
-  ? path.resolve(process.env.BIGBRAIN_VAULT)
+const vaultOverride = readEnv("ASTRONRAG_VAULT", "BIGBRAIN_VAULT");
+const vaultDir = vaultOverride
+  ? path.resolve(vaultOverride)
   : path.resolve(here, "..", "vault");
 
 const vault = createMemoryStore(vaultDir);
 const store = new MemoryService(vault);
 const MIGRATION_REQUIRED = requiresVaultMigration(vault);
-const MIGRATION_REQUIRED_MESSAGE = "이관 필요: migrate 도구 실행 또는 BBM_STORE=file 로 되돌리기";
+const MIGRATION_REQUIRED_MESSAGE = "이관 필요: migrate 도구 실행 또는 ASTRONRAG_STORE=file 로 되돌리기";
 initUsageLog(vault);
 
 /**
  * 볼트가 "지정됐는데 비어 있고 마커도 없는" 상태면 경로 오타/드라이브 이동을 의심한다 (감사 E3).
  * 이 경우 조용히 빈 볼트로 동작하면 모델이 "기억이 없다" 고 판단해 중복 저장을 시작하고
  * 볼트가 두 갈래로 분열된다. stderr 와 instructions 양쪽에 경고를 띄워 사람과 모델이
- * 모두 알아채게 한다. (BIGBRAIN_VAULT 를 지정하지 않은 첫 실행은 정상이므로 제외)
+ * 모두 알아채게 한다. (ASTRONRAG_VAULT 를 지정하지 않은 첫 실행은 정상이므로 제외)
  */
 function computeVaultWarning(): string | null {
   // 네이티브 메모리 디렉터리 오지정 — 마커보다 **먼저** 본다.
@@ -65,16 +67,16 @@ function computeVaultWarning(): string | null {
   const native = vault.nativeMemoryFiles;
   if (native.length > 0) {
     return (
-      `WARNING: "${vaultDir}" is a Claude Code NATIVE memory directory (${native.length} notes at its root), not a BigBrainMemory vault. ` +
-      `BigBrainMemory keeps memories in a \`memories/\` subfolder, so it reads 0 here — those notes are NOT lost, just invisible. ` +
-      `Its own MEMORY.md is left untouched. Tell the user to run \`npm run import:native\` (preview) then \`-- --apply\`, and point BIGBRAIN_VAULT at a separate vault directory.`
+      `WARNING: "${vaultDir}" is a Claude Code NATIVE memory directory (${native.length} notes at its root), not an AstronRAG vault. ` +
+      `AstronRAG keeps memories in a \`memories/\` subfolder, so it reads 0 here — those notes are NOT lost, just invisible. ` +
+      `Its own MEMORY.md is left untouched. Tell the user to run \`npm run import:native\` (preview) then \`-- --apply\`, and point ASTRONRAG_VAULT at a separate vault directory.`
     );
   }
   const st = vault.inspect();
   if (st.memories > 0 || st.archived > 0) return null;
-  if (!process.env.BIGBRAIN_VAULT) return null; // 기본 경로의 첫 실행 — 정상
+  if (!readEnv("ASTRONRAG_VAULT", "BIGBRAIN_VAULT")) return null; // 기본 경로의 첫 실행 — 정상
   if (st.hasMarker) return null; // 진짜로 비운 볼트
-  return `WARNING: BIGBRAIN_VAULT points at "${vaultDir}" but it contains no memories and no vault marker. If you expected memories here, the path may be wrong (typo, moved drive) — do NOT start storing duplicates until it is confirmed.`;
+  return `WARNING: ASTRONRAG_VAULT points at "${vaultDir}" but it contains no memories and no vault marker. If you expected memories here, the path may be wrong (typo, moved drive) — do NOT start storing duplicates until it is confirmed.`;
 }
 
 /**
@@ -106,7 +108,7 @@ const VAULT_WARNING = computeVaultWarning();
  * Claude Code 를 쓰지 않는 환경에서도 실행돼 버린다.
  */
 function computeHookWarning(): string | null {
-  if (process.env.BIGBRAIN_HOOK_CHECK === "0") return null;
+  if (readEnv("ASTRONRAG_HOOK_CHECK", "BIGBRAIN_HOOK_CHECK") === "0") return null;
   const candidates = [
     path.join(os.homedir(), ".claude", "settings.json"),
     path.join(process.cwd(), ".claude", "settings.json"),
@@ -120,7 +122,7 @@ function computeHookWarning(): string | null {
     }
   }
   return (
-    "NOTE: the BigBrainMemory SessionStart hook is NOT installed. In 60 controlled trials sessions saved " +
+    "NOTE: the AstronRAG SessionStart hook is NOT installed. In 60 controlled trials sessions saved " +
     "29/30 with it vs 17/30 without — these instructions alone often fail. Ask the user to run " +
     "`npm run setup:hook`; until then, `recall` now and `remember` as soon as a trigger fires."
   );
@@ -135,27 +137,13 @@ const MEMORY_TYPE = z
 
 /** instructions 에 실을 기억 인덱스 최대 건수 (컨텍스트 예산 보호). 0 이면 인덱스 생략 */
 const INDEX_LIMIT = (() => {
-  const v = Number(process.env.BIGBRAIN_INDEX_LIMIT);
+  const v = Number(readEnv("ASTRONRAG_INDEX_LIMIT", "BIGBRAIN_INDEX_LIMIT"));
   return Number.isFinite(v) && v >= 0 ? v : 40;
 })();
 
-/**
- * instructions 문자 예산 — **클라이언트가 초과분을 말없이 잘라낸다**.
- *
- * 실측: 전달된 블록 2079자 = 헤더 "## BigBrainMemory\n"(18) + 본문 2048 + "… [truncated]"(13).
- * 정확히 2^11 이다. 서버는 3268자(빈 볼트)를 내보내고 있었으므로 37% 가 유실됐다.
- *
- * 치명적이었던 것은 **잘리는 순서**다. memoryIndexLines() 출력이 배열 맨 끝에 붙어
- * 있어서 가장 먼저 잘렸고, 그 결과
- *   - E1(기억 인덱스 자동 노출)은 설계 이래 **한 번도 모델에 도달한 적이 없으며**
- *   - COLD START 지시도, age_days 해석 지침도 전량 유실됐다.
- * 회귀 테스트 15종이 이를 전부 놓친 이유는 "서버가 내보낸 문자열" 만 검사했기 때문이다.
- *
- * 그래서 이제 예산을 명시적으로 잡고, 우선순위가 낮은 것부터 **서버가 스스로 줄인다**.
- * 잘림을 클라이언트에 맡기지 않는다.
- */
+/** instructions 문자 예산을 제한해 클라이언트의 자동 잘림을 방지한다. */
 const INSTRUCTIONS_BUDGET = (() => {
-  const v = Number(process.env.BIGBRAIN_INSTRUCTIONS_BUDGET);
+  const v = Number(readEnv("ASTRONRAG_INSTRUCTIONS_BUDGET", "BIGBRAIN_INSTRUCTIONS_BUDGET"));
   return Number.isFinite(v) && v > 0 ? v : 2048;
 })();
 
@@ -164,13 +152,13 @@ const INSTRUCTIONS_BUDGET = (() => {
  * 프로젝트별 .mcp.json 의 env 로 지정하면 그 프로젝트의 기억만 + 전역 기억이 회상된다.
  * 미지정이면 스코프 필터를 걸지 않는다(= 종전과 동일하게 전체 조회).
  */
-const DEFAULT_PROJECT = process.env.BIGBRAIN_PROJECT?.trim() || undefined;
+const DEFAULT_PROJECT = readEnv("ASTRONRAG_PROJECT", "BIGBRAIN_PROJECT")?.trim() || undefined;
 
 /**
  * 서버 기동 시점의 기억 인덱스를 instructions 에 덧붙인다 (감사 E1).
  *
  * 네이티브 메모리는 MEMORY.md 내용 자체가 매 세션 시스템 프롬프트에 주입돼
- * 모델이 "무엇이 저장돼 있는지" 를 보고 시작한다. BigBrainMemory 는 vault/MEMORY.md 를
+ * 모델이 "무엇이 저장돼 있는지" 를 보고 시작한다. AstronRAG 는 vault/MEMORY.md 를
  * 생성만 하고 어떤 경로로도 재노출하지 않아, 볼트에 무엇이 있는지 모르는 모델이
  * recall 키워드를 추측해야 했다 — 표층 문자열 검색(D1)과 겹치면 첫 질의가 0건이 되기 쉽다.
  *
@@ -260,7 +248,7 @@ function buildInstructions(): string {
     // 훅 부재 경고는 행동수칙보다 앞에 둔다 — 수칙이 왜 잘 안 먹히는지를 설명하는 전제다.
     // 훅이 깔려 있으면 이 줄은 아예 없으므로 평상시 예산을 축내지 않는다.
     ...(HOOK_WARNING ? [HOOK_WARNING, ""] : []),
-    "BigBrainMemory is a persistent memory vault (Obsidian-compatible markdown). Behave like someone with long-term memory:",
+    "AstronRAG is a persistent memory vault (Obsidian-compatible markdown). Behave like someone with long-term memory:",
     "1. RECALL FIRST — at the start of a task, or when the user mentions past context, call `recall` before answering.",
     "2. REMEMBER — call `remember` the moment any of these happens, not at the end of the session: you edited a durable doc (CLAUDE.md, README, design notes) and a decision settled; the user corrected you or stated a preference; you finished exploring unfamiliar code and formed a conclusion worth reusing; you found a non-obvious root cause; a convention or workflow was agreed. Skip trivia that only matters in this conversation.",
     "3. CORRECT — when new information contradicts a memory, `revise` it (or `forget` if it is simply wrong) instead of storing a duplicate. If `remember` reports similar memories, revise one of those.",
@@ -321,7 +309,7 @@ function buildInstructions(): string {
 const INSTRUCTIONS = buildInstructions();
 
 const server = new McpServer(
-  { name: "bigbrainmemory", version: PKG_VERSION },
+  { name: "astronrag", version: PKG_VERSION },
   { instructions: INSTRUCTIONS },
 );
 
@@ -421,7 +409,7 @@ function searchHit(r: SearchResult): Record<string, unknown> {
   };
 }
 
-/** 선택형 벡터 계층과 그 모듈 — BIGBRAIN_VECTOR=1 일 때만 main 이 동적 import 로 채운다 */
+/** 선택형 벡터 계층과 그 모듈 — ASTRONRAG_VECTOR=1 일 때만 main 이 동적 import 로 채운다 */
 let vector: { vr: VectorRetriever; mod: typeof import("./vector-retriever.js") } | null = null;
 
 /**
@@ -482,7 +470,7 @@ function migrationGuard() {
  * 표식은 MCP 스펙이 보장하는 `_meta` 통과 필드라, 이 키를 모르는 클라이언트는
  * 그냥 무시한다(하위 호환).
  */
-const ALWAYS_LOAD = process.env.BIGBRAIN_ALWAYS_LOAD === "0" ? undefined : { "anthropic/alwaysLoad": true };
+const ALWAYS_LOAD = readEnv("ASTRONRAG_ALWAYS_LOAD", "BIGBRAIN_ALWAYS_LOAD") === "0" ? undefined : { "anthropic/alwaysLoad": true };
 
 server.registerTool(
   "remember",
@@ -623,7 +611,7 @@ server.registerTool(
         .string()
         .optional()
         .describe(
-          "Restrict to this project's memories plus global ones. Defaults to the server's BIGBRAIN_PROJECT. Pass an empty string to search every project.",
+          "Restrict to this project's memories plus global ones. Defaults to the server's ASTRONRAG_PROJECT. Pass an empty string to search every project.",
         ),
     },
   },
@@ -866,7 +854,7 @@ server.registerTool(
         .string()
         .optional()
         .describe(
-          "Restrict to this project's memories plus global ones. Defaults to the server's BIGBRAIN_PROJECT. Pass an empty string to list every project.",
+          "Restrict to this project's memories plus global ones. Defaults to the server's ASTRONRAG_PROJECT. Pass an empty string to list every project.",
         ),
     },
   },
@@ -887,7 +875,7 @@ server.registerTool(
  * 네이티브 메모리에는 `consolidate-memory` 스킬이 있어 슬래시 호출 한 번으로
  * "중복 병합 · 낡은 사실 수정 · 인덱스 정리" 절차가 로드되는데, 여기엔 대응물이 없었다.
  * MCP 프롬프트로 등록하면 Claude Code 에서
- * `/mcp__bigbrainmemory__consolidate` 슬래시 커맨드로 노출된다 —
+ * `/mcp__astronrag__consolidate` 슬래시 커맨드로 노출된다 —
  * 사용자가 원하는 시점에 정리를 **주도**할 수 있게 된다.
  */
 server.registerPrompt(
@@ -903,7 +891,7 @@ server.registerPrompt(
         content: {
           type: "text" as const,
           text: [
-            "bigbrainmemory 볼트를 정리하라. 아래 절차를 순서대로 따르되, 각 단계에서 판단 근거를 짧게 밝혀라.",
+            "astronrag 볼트를 정리하라. 아래 절차를 순서대로 따르되, 각 단계에서 판단 근거를 짧게 밝혀라.",
             "",
             "1. `reflect` 를 호출해 현재 상태를 파악한다.",
             "",
@@ -977,7 +965,7 @@ async function main() {
     }
   }
   // 벡터 계층은 켰을 때만 불러온다 — 연결 전에 만들어 두어 첫 recall 부터 상태(warming)를 알린다
-  if (process.env.BIGBRAIN_VECTOR === "1") {
+  if (readEnv("ASTRONRAG_VECTOR", "BIGBRAIN_VECTOR") === "1") {
     const mod = await import("./vector-retriever.js");
     vector = { vr: new mod.VectorRetriever(vault.nativeMemoryFiles.length > 0 ? null : vault), mod };
   }
@@ -995,7 +983,7 @@ async function main() {
     logWarn(
       `SessionStart 훅이 설치돼 있지 않습니다. 대조 실험 40회에서 훅이 있으면 20/20, ` +
         `없으면 13/20 이 저장됐습니다 — instructions 만으로는 저장이 잘 일어나지 않습니다. ` +
-        `BigBrainMemory 저장소에서 \`npm run setup:hook\` 을 실행해 주세요.`,
+        `AstronRAG 저장소에서 \`npm run setup:hook\` 을 실행해 주세요.`,
     );
   }
   if (st.quarantined > 0) {
