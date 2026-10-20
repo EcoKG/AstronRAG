@@ -1,11 +1,11 @@
 {
-  "name": "bigbrainmemory",
+  "name": "astronrag",
   "version": "0.1.0",
-  "description": "BigBrainMemory — human-like persistent memory MCP server (inspired by Claude Code memory + Obsidian)",
+  "description": "AstronRAG — human-like persistent memory MCP server (inspired by Claude Code memory + Obsidian)",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "bigbrainmemory": "dist/index.js"
+    "astronrag": "dist/index.js"
   },
   "files": [
     "dist",

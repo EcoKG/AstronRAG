@@ -90,7 +90,7 @@ export function cloneRecord(r: MemoryRecord): MemoryRecord {
  * 이 디렉터리가 **Claude Code 네이티브 메모리 저장소**인지 판별한다.
  *
  * 왜 필요한가 — "네이티브 메모리를 BBM 으로 대체한다" 는 목표에서 사용자가 가장
- * 자연스럽게 취하는 행동이 `BIGBRAIN_VAULT` 를 네이티브 memory 디렉터리로 지정하는
+ * 자연스럽게 취하는 행동이 `ASTRONRAG_VAULT` 를 네이티브 memory 디렉터리로 지정하는
  * 것이다. 그런데 그 경로는 **파괴적**이었다(실측 재현):
  *   1. 네이티브는 평면 구조(`<memory>/*.md`)라 BBM 은 기억을 0건으로 본다
  *   2. `regenerateIndex()` 가 `MEMORY.md` 를 자기 형식으로 **덮어쓴다** —
@@ -448,7 +448,7 @@ export class Vault {
   }
 
   /**
-   * 이 디렉터리가 BigBrainMemory 볼트임을 표시한다 (감사 E3).
+   * 이 디렉터리가 AstronRAG 볼트임을 표시한다.
    * 경로 오타로 엉뚱한 곳을 가리켜도 mkdirSync 가 조용히 빈 볼트를 만들어버려
    * "기억 전무" 가 정상처럼 보였다. 마커가 있으면 "진짜 빈 볼트" 와
    * "잘못된 경로에 새로 생긴 볼트" 를 구분할 수 있다.

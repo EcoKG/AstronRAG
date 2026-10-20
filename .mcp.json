@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "bigbrainmemory": {
+    "astronrag": {
       "command": "node",
       "args": ["./dist/index.js"]
     }
