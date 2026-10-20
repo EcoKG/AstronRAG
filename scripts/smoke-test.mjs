@@ -12,11 +12,11 @@ const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
 fs.mkdirSync(testTmp, { recursive: true });
 const testVault = fs.mkdtempSync(path.join(testTmp, "bbm-smoke-"));
 
-// 기본은 간격 게이트 0 (매 회상마다 강화 검증). 8번 항목에서 별도 볼트로 게이트 동작을 검증
+// 기본 강화 시험은 고정 창과 확장 간격을 모두 끈다.
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [path.join(root, "dist", "index.js")],
-  env: { ...process.env, BIGBRAIN_VAULT: testVault, BIGBRAIN_SPACING_MS: "0" },
+  env: { ...process.env, BIGBRAIN_VAULT: testVault, BIGBRAIN_SPACING_MS: "0", BIGBRAIN_SPACING_ALPHA: "0" },
 });
 const client = new Client({ name: "smoke-test", version: "0.0.1" });
 
@@ -42,6 +42,35 @@ async function call(name, args = {}) {
 }
 
 const toolText = (/** @type {any} */ result) => result.content[0].text;
+
+{
+  const previous = [process.env.BIGBRAIN_SPACING_MS, process.env.BIGBRAIN_SPACING_ALPHA];
+  process.env.BIGBRAIN_SPACING_MS = "1000";
+  process.env.BIGBRAIN_SPACING_ALPHA = "0.1";
+  const { MemoryService } = await import("../dist/store.js");
+  const { FileStore } = await import("../dist/stores/file-store.js");
+  const base = Date.parse("2026-01-01T00:00:00.000Z");
+  const directory = fs.mkdtempSync(path.join(testTmp, "bbm-spacing-boundary-"));
+  try {
+    for (const offset of [-1, 0, 1]) {
+      const backend = new FileStore(path.join(directory, String(offset)));
+      const service = new MemoryService(backend, undefined, () => base + 200000 + offset);
+      const { record } = service.remember({ title: "간격 경계", content: "결정적인 간격 회상", type: "semantic" });
+      backend.updateRecord(record.slug, (current) => ({ ...current, created: new Date(base).toISOString(),
+        lastReinforced: new Date(base + 190000).toISOString(), storageStrength: 2 }));
+      service.search("결정적인 간격 회상", { active: true });
+      const stored = backend.read(record.slug);
+      check("test_recall_spacing_before_at_after_boundary", offset < 0 ? stored?.storageStrength === 2 : Number(stored?.storageStrength) > 2,
+        `offset=${offset}ms strength=${stored?.storageStrength} clock=${base + 200000 + offset} alpha=0.1 window=1000`);
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+    for (const [index, key] of ["BIGBRAIN_SPACING_MS", "BIGBRAIN_SPACING_ALPHA"].entries()) {
+      if (previous[index] === undefined) delete process.env[key];
+      else process.env[key] = previous[index];
+    }
+  }
+}
 
 await client.connect(transport);
 console.log("1) 서버 연결 및 도구 목록");

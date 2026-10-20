@@ -242,25 +242,86 @@ await test("test_collector_and_recommend_use_no_network_or_auth", () => {
 });
 
 await test("test_cache_build_is_atomic_and_removes_temp_files", async () => {
-	const before = fs.readFileSync(path.join(root, "ontology", "ontology.json"), "utf8");
-	const builds = await Promise.all(Array.from({ length: 4 }, () => new Promise((resolve) => {
-		const child = spawn(process.execPath, [path.join(root, "scripts", "build-ontology.mjs")], { cwd: root, stdio: "ignore" });
-		child.once("exit", (code) => resolve(code));
-	})));
-	assert.ok(builds.every((code) => code === 0));
-	assert.equal(fs.readFileSync(path.join(root, "ontology", "ontology.json"), "utf8"), before);
-	assert.equal(fs.readdirSync(path.join(root, "ontology")).filter((name) => name.includes(".tmp-")).length, 0);
-	const temp = makeTemp("cache-failure-");
+	const temp = makeTemp("cache-atomic-");
 	try {
-		const source = path.join(temp, "bad.yaml");
+		const source = path.join(temp, "ontology.yaml");
 		const target = path.join(temp, "ontology.json");
+		fs.copyFileSync(path.join(root, "ontology", "ontology.yaml"), source);
+		const baseline = path.join(temp, "expected.json");
+		buildOntologyCache({ source, target: baseline });
+		const expected = fs.readFileSync(baseline, "utf8");
+		fs.unlinkSync(baseline);
+		const builds = await Promise.all(Array.from({ length: 4 }, () => new Promise((resolve, reject) => {
+			const child = spawn(process.execPath, [path.join(root, "scripts", "build-ontology.mjs"), source, target],
+				{ cwd: root, stdio: "ignore", timeout: 30000 });
+			child.once("error", reject);
+			child.once("close", (code) => resolve(code));
+		})));
+		assert.ok(builds.every((code) => code === 0));
+		const before = fs.readFileSync(target, "utf8");
+		ontologySchema.parse(JSON.parse(before));
+		assert.equal(before, expected);
+		assert.equal(fs.readdirSync(temp).filter((name) => name.includes(".tmp-")).length, 0);
 		fs.writeFileSync(source, "version: 1\nunknown: true\n", "utf8");
-		fs.writeFileSync(target, before, "utf8");
 		assert.throws(() => buildOntologyCache({ source, target }));
 		assert.equal(fs.readFileSync(target, "utf8"), before);
 		assert.equal(fs.readdirSync(temp).filter((name) => name.includes(".tmp-")).length, 0);
 	} finally {
 		removeTree(temp);
+	}
+});
+
+await test("test_cache_rename_retries_transient_errors", () => {
+	const directory = makeTemp("rename-retry-");
+	const source = path.join(root, "ontology", "ontology.yaml");
+	const target = path.join(directory, "ontology.json");
+	const originalRename = fs.renameSync;
+	const originalWait = Atomics.wait;
+	try {
+		for (const code of ["EPERM", "EACCES", "EBUSY"]) {
+			let calls = 0;
+			const waits = /** @type {number[]} */ (Array());
+			Atomics.wait = (array, index, value, timeout) => { waits.push(Number(timeout)); return originalWait(array, index, value, 0); };
+			fs.renameSync = (from, to) => {
+				if (++calls < 5) throw Object.assign(new Error(code), { code });
+				originalRename(from, to);
+			};
+			buildOntologyCache({ source, target });
+			assert.equal(calls, 5, code);
+			assert.deepEqual(waits, [20, 40, 80, 160]);
+			ontologySchema.parse(JSON.parse(fs.readFileSync(target, "utf8")));
+			assert.deepEqual(fs.readdirSync(directory), ["ontology.json"]);
+		}
+	} finally {
+		fs.renameSync = originalRename;
+		Atomics.wait = originalWait;
+		removeTree(directory);
+	}
+});
+
+await test("test_cache_rename_failure_preserves_target_and_cleans_temp", () => {
+	const directory = makeTemp("rename-failure-");
+	const source = path.join(root, "ontology", "ontology.yaml");
+	const target = path.join(directory, "ontology.json");
+	const originalRename = fs.renameSync;
+	const originalWait = Atomics.wait;
+	try {
+		for (const code of ["EPERM", "EACCES", "EBUSY", "ENOENT", "EIO"]) {
+			const original = Buffer.from("previous target bytes");
+			fs.writeFileSync(target, original);
+			let calls = 0;
+			const error = Object.assign(new Error(code), { code });
+			Atomics.wait = () => originalWait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 0);
+			fs.renameSync = () => { calls++; throw error; };
+			assert.throws(() => buildOntologyCache({ source, target }), (actual) => actual === error);
+			assert.equal(calls, ["EPERM", "EACCES", "EBUSY"].includes(code) ? 5 : 1, code);
+			assert.deepEqual(fs.readFileSync(target), original);
+			assert.deepEqual(fs.readdirSync(directory), ["ontology.json"]);
+		}
+	} finally {
+		fs.renameSync = originalRename;
+		Atomics.wait = originalWait;
+		removeTree(directory);
 	}
 });
 
