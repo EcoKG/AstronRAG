@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// BigBrainMemory — 세션 훅 도우미. setup-hook.mjs 가 등록하는 세 훅의 실제 본체다.
+// AstronRAG 세션 훅의 기억 주입·회상·저장 경고를 처리한다.
 //
 //   --start  : 세션 시작 시점의 기억 수를 마커에 기록하고, MEMORY.md 를 컨텍스트에 주입한다.
-//   --prompt : 부호화 큐를 내고, BIGBRAIN_AUTO_RECALL=1 이면 프롬프트로 역색인을 읽기 전용 검색해 관련 기억을 주입한다(자동 회상).
+//   --prompt : 부호화 큐를 내고, ASTRONRAG_AUTO_RECALL=1 이면 프롬프트로 역색인을 읽기 전용 검색해 관련 기억을 주입한다(자동 회상).
 //   --stop   : 세션 동안 새로 저장된 기억이 0건이면 경고한다.
 //
 // 왜 셸 one-liner 가 아니라 Node 스크립트인가:
@@ -18,6 +18,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { readEnv } from "./lib/env.mjs";
 
 /** 세션 시작 시점의 기억 수를 담는 마커 (볼트 루트, 점 파일이라 Obsidian 에서 숨겨진다) */
 const MARKER = ".bbm-session-start";
@@ -35,7 +37,7 @@ const MAX_LINES = 200;
  * 3회 이상 1285개(작업). 실패 사례로 보고된 호출열(Grep Read Read Read 등)도 전부 3 이상이다.
  */
 const MIN_TOOL_USES = (() => {
-  const v = Number(process.env.BIGBRAIN_STOP_MIN_TOOLS);
+  const v = Number(readEnv("ASTRONRAG_STOP_MIN_TOOLS", "BIGBRAIN_STOP_MIN_TOOLS"));
   return Number.isFinite(v) && v >= 0 ? v : 3;
 })();
 /** 훅 입력(stdin) 을 기다리는 한계 시간 — 넘기면 없는 셈 치고 진행한다(행 방지) */
@@ -50,14 +52,15 @@ const AUTO_MAX = 3;
 const AUTO_RELATIVE = 0.5;
 /** 자동 회상: 마커에 남기는 주입 slug 수 상한 */
 const AUTO_SLUG_KEEP = 200;
-/** 자동 회상: 주입할 최소 절대 점수 (BIGBRAIN_AUTO_MIN_SCORE) */
+/** 자동 회상의 최소 절대 점수를 정한다. */
 const AUTO_MIN_SCORE = (() => {
-  const v = Number(process.env.BIGBRAIN_AUTO_MIN_SCORE);
-  return process.env.BIGBRAIN_AUTO_MIN_SCORE?.trim() && Number.isFinite(v) && v >= 0 ? v : 9;
+  const value = readEnv("ASTRONRAG_AUTO_MIN_SCORE", "BIGBRAIN_AUTO_MIN_SCORE");
+  const v = Number(value);
+  return value?.trim() && Number.isFinite(v) && v >= 0 ? v : 9;
 })();
-/** 자동 회상: 주입 블록 전체 문자 수 상한 (BIGBRAIN_AUTO_BUDGET) */
+/** 자동 회상 블록의 전체 문자 수 상한을 정한다. */
 const AUTO_BUDGET = (() => {
-  const v = Number(process.env.BIGBRAIN_AUTO_BUDGET);
+  const v = Number(readEnv("ASTRONRAG_AUTO_BUDGET", "BIGBRAIN_AUTO_BUDGET"));
   return Number.isFinite(v) && v > 0 ? Math.floor(v) : 1500;
 })();
 
@@ -88,43 +91,42 @@ function readJson(fp) {
   return v;
 }
 
-/**
- * mcpServers 맵에서 이 서버의 항목을 찾아 `{ name, vault }` 로 돌려준다.
- *
- * **등록 키 이름만으로 찾으면 안 된다.** 종전에는 `/bigbrain/i` 로 키를 걸렀는데,
- * 사용자가 `bbm` · `memory` · `brain` 같은 이름으로 등록하면 항목을 통째로 놓친다.
- * 그 결과가 특히 나쁘다 — 볼트는 전역 폴백으로 새고, 도구 이름은 하드코딩된
- * `mcp__bigbrainmemory__remember` 로 나간다. 지연 로드된 도구는 **정확한 이름으로만**
- * 부를 수 있으므로, 존재하지 않는 이름을 광고하면 모델이 로드에 실패하고
- * "메모리를 쓸 수 없다" 고 결론짓는다. 아무것도 주입하지 않느니만 못하다.
- *
- * 그래서 이름이 아니라 **실체**로 판별한다: BIGBRAIN_VAULT 를 들고 있거나,
- * 실행 명령이 이 패키지를 가리키거나, 키가 bigbrain 계열이거나.
- */
+/** MCP 설정에서 볼트·등록 키·실행 대상으로 서버를 경고 없이 찾는다. */
 function findServer(servers) {
   if (!servers || typeof servers !== "object") return null;
-  const hasVault = (cfg) => typeof cfg?.env?.BIGBRAIN_VAULT === "string" && cfg.env.BIGBRAIN_VAULT.trim() !== "";
+  const hasVault = (cfg) => {
+    const value = readEnv("ASTRONRAG_VAULT", "BIGBRAIN_VAULT", cfg?.env ?? {}, false);
+    return typeof value === "string" && value.trim() !== "";
+  };
   const looksLikeUs = (name, cfg) => {
-    if (/bigbrain/i.test(name)) return true;
+    if (/astronrag/i.test(name)) return true;
     if (hasVault(cfg)) return true;
     const cmd = [cfg?.command, ...(Array.isArray(cfg?.args) ? cfg.args : [])].filter((x) => typeof x === "string").join(" ");
-    return /bigbrainmemory/i.test(cmd);
+    if (/astronrag/i.test(cmd)) return true;
+    const entry = fileURLToPath(new URL("../dist/index.js", import.meta.url));
+    return Array.isArray(cfg?.args) && cfg.args.some((arg) => typeof arg === "string" && path.resolve(arg) === entry);
   };
   // 볼트를 실제로 들고 있는 항목을 우선한다 — 여러 개가 걸릴 때 더 구체적인 쪽이다
   const entries = Object.entries(servers).filter(([n, c]) => looksLikeUs(n, c));
   const withVault = entries.find(([, c]) => hasVault(c));
   const [name] = withVault ?? entries[0] ?? [];
   if (!name) return null;
-  const env = servers[name]?.env;
-  const v = env?.BIGBRAIN_VAULT;
-  const p = env?.BIGBRAIN_PROJECT;
+  const env = servers[name]?.env ?? {};
+  const v = readEnv("ASTRONRAG_VAULT", "BIGBRAIN_VAULT", env, false);
+  const p = readEnv("ASTRONRAG_PROJECT", "BIGBRAIN_PROJECT", env, false);
   return {
     name,
+    env,
     vault: typeof v === "string" && v.trim() !== "" ? v : null,
     project: typeof p === "string" && p.trim() !== "" ? p.trim() : undefined,
   };
 }
-const vaultFromServers = (servers) => findServer(servers)?.vault ?? null;
+const vaultFromServers = (servers) => {
+  const server = findServer(servers);
+  if (!server?.vault) return null;
+  readEnv("ASTRONRAG_VAULT", "BIGBRAIN_VAULT", server.env);
+  return server.vault;
+};
 const serverNameFromServers = (servers) => findServer(servers)?.name ?? null;
 
 /**
@@ -145,47 +147,39 @@ function resolveServerName() {
   return (
     serverNameFromServers(userCfg?.projects?.[cwd]?.mcpServers) ??
     serverNameFromServers(userCfg?.mcpServers) ??
-    "bigbrainmemory"
+    "astronrag"
   );
 }
 
 /**
- * 서버의 기본 검색 범위(BIGBRAIN_PROJECT)를 서버 설정과 같은 우선순위로 찾는다. 없으면 undefined(전체).
+ * 서버의 기본 검색 범위를 서버 설정과 같은 우선순위로 찾는다.
  * 범위를 맞추지 않으면 자동 회상이 서버 recall 에서는 보이지 않는 다른 프로젝트 기억을 주입한다.
  */
 function resolveProject() {
-  if (process.env.BIGBRAIN_PROJECT?.trim()) return process.env.BIGBRAIN_PROJECT.trim();
+  const project = readEnv("ASTRONRAG_PROJECT", "BIGBRAIN_PROJECT");
+  if (project?.trim()) return project.trim();
   const cwd = process.cwd();
   const userCfg = readJson(path.join(os.homedir(), ".claude.json"));
   for (const servers of [readJson(path.join(cwd, ".mcp.json"))?.mcpServers, userCfg?.projects?.[cwd]?.mcpServers, userCfg?.mcpServers]) {
     const s = findServer(servers);
-    if (s) return s.project;
+    if (s) {
+      if (s.project !== undefined) readEnv("ASTRONRAG_PROJECT", "BIGBRAIN_PROJECT", s.env);
+      return s.project;
+    }
   }
   return undefined;
 }
 
-/**
- * **실행 시점**에 볼트를 해석한다 — 이것이 이 스크립트의 핵심이다.
- *
- * 설치 시점 경로를 훅에 박아두면, 프로젝트마다 BIGBRAIN_VAULT 로 볼트를 나누는
- * 순간 훅만 옛 볼트를 계속 바라본다. 그러면 한 세션 안에서
- *   훅  : "볼트에 이런 기억들이 있다" (볼트 B 내용)
- *   서버: "COLD START — this vault is EMPTY" (볼트 A 기준)
- * 라는 **정면으로 모순된 두 신호**가 동시에 주입된다. 모델은 인덱스에 내용이
- * 보이면 "메모리는 이미 잘 돌고 있다" 고 판단해 저장을 건너뛰기 쉽다.
- * 실제로 그 분열이 관측됐다(훅은 실제 볼트 3건, 서버는 빈 테스트 볼트).
- *
- * 그래서 서버와 **같은 근거**를 같은 우선순위로 다시 읽는다.
- * 훅은 프로젝트 디렉터리에서 실행되므로 cwd 가 기준점이다.
- */
+/** 명시 경로·환경·프로젝트·사용자·설치 기본값 순서로 실행 볼트를 정한다. */
 function resolveVault(fallback, forced) {
   const cwd = process.cwd();
 
   // 사용자가 설치 시 --vault 로 **명시**했다면 그 의도가 자동탐지를 이긴다
   if (forced) return { dir: path.resolve(forced), source: "설치 시 명시(--vault)" };
 
-  if (process.env.BIGBRAIN_VAULT?.trim()) {
-    return { dir: path.resolve(process.env.BIGBRAIN_VAULT), source: "BIGBRAIN_VAULT 환경변수" };
+  const vault = readEnv("ASTRONRAG_VAULT", "BIGBRAIN_VAULT");
+  if (vault?.trim()) {
+    return { dir: path.resolve(vault), source: "ASTRONRAG_VAULT 환경변수" };
   }
   // 프로젝트 스코프가 사용자 전역보다 우선한다
   const fromProject = vaultFromServers(readJson(path.join(cwd, ".mcp.json"))?.mcpServers);
@@ -222,7 +216,7 @@ try {
 	selectedStore = createMemoryStore(vaultDir);
 	if (requiresVaultMigration(selectedStore)) {
 		selectedStore.close();
-		process.stderr.write("이관 필요: migrate 도구 실행 또는 BBM_STORE=file 로 되돌리기\n");
+		process.stderr.write("이관 필요: migrate 도구 실행 또는 ASTRONRAG_STORE=file 로 되돌리기\n");
 		process.exit(0);
 	}
 } catch {
@@ -360,7 +354,7 @@ function readMarker() {
  * 내용은 남기지 않는다. 수치와 식별자뿐이다.
  */
 function logUsage(event) {
-  if (process.env.BIGBRAIN_USAGE_LOG === "0") return;
+  if (readEnv("ASTRONRAG_USAGE_LOG", "BIGBRAIN_USAGE_LOG") === "0") return;
   try {
     selectedStore?.appendUsageEvent({ src: "hook", ...event });
   } catch {
@@ -394,12 +388,12 @@ function stripFences(text) {
 }
 
 /**
- * 프롬프트로 영속 역색인을 읽기 전용 검색해 자동 회상 블록을 만든다 (T44). BIGBRAIN_AUTO_RECALL=1 일 때만 동작한다.
+ * 프롬프트로 영속 역색인을 읽기 전용 검색해 자동 회상 블록을 만든다.
  * 검색하지 않았으면 null, 검색했으면 { block(주입할 게 없으면 null), slugs, topScore }.
  * 인덱스·기억 파일을 쓰지 않고 강화도 하지 않는다 — 모델이 고른 회상이 아니므로 저장강도를 올릴 근거가 없다.
  */
 async function autoRecall(prompt, injected) {
-  if (process.env.BIGBRAIN_AUTO_RECALL !== "1" || typeof prompt !== "string") return null;
+  if (readEnv("ASTRONRAG_AUTO_RECALL", "BIGBRAIN_AUTO_RECALL") !== "1" || typeof prompt !== "string") return null;
   const text = prompt.trim();
   if (text.length < AUTO_MIN_PROMPT || text.startsWith("/")) return null;
   const query = stripFences(text).trim().slice(0, AUTO_QUERY_CHARS);
@@ -434,8 +428,8 @@ async function autoRecall(prompt, injected) {
     if (picked.length >= AUTO_MAX || results.length < limit || !eligible(floor, top)) break;
   }
   const open = (n) =>
-    `<bigbrainmemory-auto-recall matched="${n}" note="자동 검색 결과. 관련 없으면 무시. 전문은 read_memory">`;
-  const close = "</bigbrainmemory-auto-recall>";
+    `<astronrag-auto-recall matched="${n}" note="자동 검색 결과. 관련 없으면 무시. 전문은 read_memory">`;
+  const close = "</astronrag-auto-recall>";
   const line = (r, desc) => {
     const m = r.record;
     const age = Math.max(0, Math.floor((Date.now() - Date.parse(m.updated)) / 86_400_000));
@@ -535,7 +529,7 @@ if (mode === "prompt") {
 
   // 쿨다운 — 세션당 1회는 과했지만 매 턴도 안 된다(경보 피로). 그 사이를 잡는다.
   const COOLDOWN = (() => {
-    const v = Number(process.env.BIGBRAIN_CUE_COOLDOWN);
+    const v = Number(readEnv("ASTRONRAG_CUE_COOLDOWN", "BIGBRAIN_CUE_COOLDOWN"));
     return Number.isFinite(v) && v > 0 ? v : 15;
   })();
   if (Number.isFinite(m.lastCueTurn) && turns - m.lastCueTurn < COOLDOWN) {
@@ -550,7 +544,7 @@ if (mode === "prompt") {
   const lexicalHit = hookInput.prompt !== null && LEXICAL.test(hookInput.prompt);
   // prompt 를 못 받는 환경의 폴백 — 충분히 진행됐는데 아직 저장이 0건이면 한 번 물어본다
   const TURN_CUE = (() => {
-    const v = Number(process.env.BIGBRAIN_CUE_TURNS);
+    const v = Number(readEnv("ASTRONRAG_CUE_TURNS", "BIGBRAIN_CUE_TURNS"));
     return Number.isFinite(v) && v > 0 ? v : 8;
   })();
   // 세션 시작이 아니라 **마지막 저장 이후** 몇 턴이 지났는지를 본다
@@ -570,14 +564,14 @@ if (mode === "prompt") {
     : `${turns - baseTurn} turns since anything was last stored${baseTurn > 0 ? " (a memory was stored earlier in this session — this is about what has happened since)" : ""}.`;
 
   emitPrompt(
-    `<bigbrainmemory-cue kind="lexical-hint">\n` +
+    `<astronrag-cue kind="lexical-hint">\n` +
       `${why}\n` +
       `If a REMEMBER trigger genuinely fired — the user corrected you or stated a preference, a decision settled, ` +
       `you found a non-obvious root cause, a convention was agreed — call ${tool("remember")} **now**, while the ` +
       `wording is still verbatim in context, rather than at the end of the session. Record provenance accurately in ` +
       `\`source\` and pick \`type\` yourself; do not infer either from this cue. ` +
       `If nothing durable happened, ignore this and continue — it is shown once per session.\n` +
-      `</bigbrainmemory-cue>`,
+      `</astronrag-cue>`,
   );
   logUsage({ event: "cue", sessionId: m.sessionId, turns, reason: lexicalHit ? "lexical" : "turns" });
   process.exit(0);
@@ -632,14 +626,14 @@ if (mode === "start") {
   // "빈 볼트는 정상" 이라고 안심시키므로 정반대의 신호를 준다. 그 오해를 여기서 차단한다.
   const lossWarning =
     lost > 0
-      ? `<bigbrainmemory-alert severity="high">\n` +
+      ? `<astronrag-alert severity="high">\n` +
         `MEMORY LOSS DETECTED — the vault held ${lost + total} memories at the last session start and holds ${total} now ` +
         `(active + archived). This count cannot drop on its own: \`forget\` moves files to archive/ instead of deleting, ` +
-        `so ${lost} memories disappeared outside the normal path — a wrong BIGBRAIN_VAULT path, an external delete, or a test ` +
+        `so ${lost} memories disappeared outside the normal path — a wrong ASTRONRAG_VAULT path, an external delete, or a test ` +
         `pointed at the live vault. Tell the user before doing anything else, and do NOT start re-storing from scratch ` +
         `until the cause is known: if the vault is merely misconfigured, the memories still exist elsewhere and duplicating ` +
         `them will split the vault in two.\n` +
-        `</bigbrainmemory-alert>\n`
+        `</astronrag-alert>\n`
       : "";
 
   const attrs = `vault="${vaultDir.replace(/\\/g, "/")}" memories="${count}"`;
@@ -662,13 +656,13 @@ if (mode === "start") {
   if (count === 0) {
     process.stdout.write(
       lossWarning +
-        `<bigbrainmemory-index ${attrs}>\n` +
+        `<astronrag-index ${attrs}>\n` +
         `COLD START — this vault holds 0 memories. That is expected on a fresh vault and is NOT ` +
         `evidence that memory is unneeded; it means seeding the vault is part of this session's job.\n` +
         toolLines +
         `Call remember the moment a trigger fires — a decision settles, the user states a preference ` +
         `or corrects you, you find a non-obvious root cause — not at the end of the session.\n` +
-        `</bigbrainmemory-index>\n`,
+        `</astronrag-index>\n`,
     );
     process.exit(0);
   }
@@ -704,14 +698,14 @@ if (mode === "start") {
   // 주입은 회상을 **대체하는 것이 아니라 시작점**이라는 점을 같은 블록 안에서 말한다.
   process.stdout.write(
     lossWarning +
-      `<bigbrainmemory-index ${attrs}>\n${body}\n</bigbrainmemory-index>\n` +
+      `<astronrag-index ${attrs}>\n${body}\n</astronrag-index>\n` +
       toolLines +
       `These lines are point-in-time observations, not live state, and each carries its age. ` +
       `Treat them as a starting point for retrieval — not as verified fact: before asserting anything from ` +
       `this index about code, paths, versions or config, read the current source, and \`revise\` the memory if reality moved on. ` +
       `Use recall for full text; a one-line summary is not the memory.\n` +
       `(This index was injected by a SessionStart hook reading the vault above. ` +
-      `If the bigbrainmemory server reports a different vault or says the vault is EMPTY, ` +
+      `If the AstronRAG server reports a different vault or says the vault is EMPTY, ` +
       `the two are pointing at different paths — trust the server's tools, and tell the user about the mismatch.)\n`,
   );
   process.exit(0);
@@ -813,7 +807,7 @@ process.stdout.write(
     hookSpecificOutput: {
       hookEventName: "Stop",
       additionalContext:
-        `BigBrainMemory: this session stored 0 new memories (vault still holds ${m.count}). ` +
+        `AstronRAG: this session stored 0 new memories (vault still holds ${m.count}). ` +
         `Before finishing, check whether any REMEMBER trigger fired in this session — a decision settled, ` +
         `the user corrected you or stated a preference, you found a non-obvious root cause, a convention was agreed. ` +
         `If one did, call ${tool("remember")} now with what you still have verbatim in context. ` +

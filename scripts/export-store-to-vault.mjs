@@ -7,6 +7,7 @@ import { parseArgs } from "node:util";
 import matter from "gray-matter";
 import { SqliteStore } from "../dist/stores/sqlite-store.js";
 import { Vault } from "../dist/vault.js";
+import { readEnv } from "./lib/env.mjs";
 
 /** @typedef {{ storePath: string; out?: string; dryRun?: boolean; cwd?: string; env?: NodeJS.ProcessEnv }} ExportOptions */
 
@@ -47,12 +48,11 @@ function validatePaths(storePath, out, cwd, env) {
 	const source = fs.realpathSync(storePath);
 	const protectedPaths = [path.dirname(source), path.resolve("D:/BigBrainMemory"), path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "vault")];
 	if (path.basename(path.dirname(source)).toLowerCase() === ".bbm") protectedPaths.push(path.dirname(path.dirname(source)));
-	for (const name of ["BIGBRAIN_VAULT"]) {
-		if (env[name]?.trim()) {
-			const candidate = path.resolve(cwd, env[name]);
-			protectedPaths.push(candidate);
-			if (fs.existsSync(candidate)) protectedPaths.push(fs.realpathSync(candidate));
-		}
+	const vault = readEnv("ASTRONRAG_VAULT", "BIGBRAIN_VAULT", env);
+	if (vault?.trim()) {
+		const candidate = path.resolve(cwd, vault);
+		protectedPaths.push(candidate);
+		if (fs.existsSync(candidate)) protectedPaths.push(fs.realpathSync(candidate));
 	}
 	const realOut = path.join(boundary, path.relative(cwd, out));
 	if (protectedPaths.some((protectedPath) => overlaps(out, protectedPath) || overlaps(realOut, protectedPath))) throw new Error("출력이 원본 DB 또는 운영 vault 보호 경로와 겹칩니다");
