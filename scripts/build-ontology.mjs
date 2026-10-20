@@ -23,10 +23,20 @@ export function buildOntologyCache({ source = path.join(root, "ontology", "ontol
 	const temporary = path.join(path.dirname(target), `.${path.basename(target)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 	try {
 		fs.writeFileSync(temporary, `${JSON.stringify(ontology, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
-		fs.renameSync(temporary, target);
+		for (let attempt = 0; ; attempt++) {
+			try {
+				fs.renameSync(temporary, target);
+				break;
+			} catch (error) {
+				if (attempt >= 4 || !["EPERM", "EACCES", "EBUSY"].includes(error?.code)) throw error;
+				Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20 * 2 ** attempt);
+			}
+		}
 	} finally {
 		if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true });
 	}
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) buildOntologyCache();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	buildOntologyCache({ source: process.argv[2], target: process.argv[3] });
+}
