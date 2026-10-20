@@ -213,13 +213,14 @@ try {
 		return emitWarning.call(process, warning, ...args);
 	};
 	const { createMemoryStore, requiresVaultMigration } = await import(new URL("../dist/stores/index.js", import.meta.url).href);
-	selectedStore = createMemoryStore(vaultDir);
+	selectedStore = createMemoryStore(vaultDir, process.env, { readOnly: mode === "prompt" });
 	if (requiresVaultMigration(selectedStore)) {
 		selectedStore.close();
 		process.stderr.write("이관 필요: migrate 도구 실행 또는 ASTRONRAG_STORE=file 로 되돌리기\n");
 		process.exit(0);
 	}
-} catch {
+} catch (error) {
+	if (error instanceof Error && error.message.startsWith("이관 필요:")) process.stderr.write(`${error.message}\n`);
 	process.exit(0);
 }
 process.once("exit", () => selectedStore?.close());
@@ -413,8 +414,7 @@ async function autoRecall(prompt, injected) {
   for (let limit = AUTO_MAX * 2; ; limit *= 2) {
     let results;
     try {
-      const currentFilePath = selectedStore?.constructor?.name === "SqliteStore" ? selectedStore.filePath("", false) : undefined;
-      results = store.searchPersistedIndex(vaultDir, query, { limit, project, currentFilePath }).results;
+      results = store.searchPersistedIndex(vaultDir, query, { limit, project, currentStore: selectedStore }).results;
     } catch {
       return null;
     }

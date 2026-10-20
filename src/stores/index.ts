@@ -12,21 +12,27 @@ export type StoreEnvironment = {
 	BBM_SQLITE_PATH?: string;
 };
 
-export type StoreFactory = (root: string, env: StoreEnvironment) => MemoryStore;
+export type StoreFactory = (root: string, env: StoreEnvironment, options?: { readOnly?: boolean }) => MemoryStore;
 
 export const VAULT_IMPORT_COMPLETED_META_KEY = "vault_import_completed_at";
 
 /** 저장소 종류를 생성 함수에 연결해 새 구현을 등록 한 줄로 확장한다. */
 export const STORE_FACTORIES: Readonly<Record<string, StoreFactory>> = Object.freeze({
-	sqlite: (root, env) => new SqliteStore(root, readEnv("ASTRONRAG_SQLITE_PATH", "BBM_SQLITE_PATH", env) || path.join(root, ".bbm", "store.sqlite")),
-	file: (root) => new FileStore(root),
+	sqlite: (root, env, options) => {
+		const databasePath = readEnv("ASTRONRAG_SQLITE_PATH", "BBM_SQLITE_PATH", env) || path.join(root, ".bbm", "store.sqlite");
+		if (options?.readOnly && !fs.existsSync(databasePath) && hasLegacyMarkdown(root)) {
+			throw new Error("이관 필요: migrate 도구 실행 또는 ASTRONRAG_STORE=file 로 되돌리기");
+		}
+		return new SqliteStore(root, databasePath, options);
+	},
+	file: (root, _env, options) => new FileStore(root, options),
 });
 
-export function createMemoryStore(root: string, env: StoreEnvironment = process.env): MemoryStore {
+export function createMemoryStore(root: string, env: StoreEnvironment = process.env, options: { readOnly?: boolean } = {}): MemoryStore {
 	const kind = readEnv("ASTRONRAG_STORE", "BBM_STORE", env) || "sqlite";
 	const factory = STORE_FACTORIES[kind];
 	if (!factory) throw new Error(`지원하지 않는 ASTRONRAG_STORE 값: ${kind}`);
-	return factory(path.resolve(root), env);
+	return factory(path.resolve(root), env, options);
 }
 
 function hasLegacyMarkdown(root: string): boolean {

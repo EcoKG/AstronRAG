@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { logWarn } from "./log.js";
-import type { MemoryStore as Storage } from "./stores/memory-store.js";
+import type { MemoryIdentity, MemoryStore as Storage } from "./stores/memory-store.js";
 import { cloneRecord, writeFileAtomic } from "./vault.js";
 import type { MemoryRecord, MemoryType } from "./types.js";
 
@@ -20,7 +20,7 @@ export const BM25F_K1 = 1.2;
 /** 영속 역색인 디렉터리 — 볼트 루트 아래에 두고, 안에 "*" 한 줄 .gitignore 를 둔다 */
 export const INDEX_DIR = ".bbm-index";
 /** 역색인 형식 버전 — 토큰화·조사 목록·파일 구조가 바뀌면 올린다 */
-export const INDEX_VERSION = 1;
+export const INDEX_VERSION = 2;
 /** 역색인 파일 이름 */
 export const INDEX_FILE = `lexical.v${INDEX_VERSION}.json`;
 
@@ -171,11 +171,11 @@ export function fuseWeightedMax(lists: Candidate[][], weights: number[]): Candid
 	return [...fused.values()];
 }
 
-/** 레코드 1건의 색인 항목 — 항목 키, 파일 신원, 레코드, 필드별 사전 토큰 */
+/** 레코드의 기억 신원과 필드별 토큰을 보관한다. */
 interface Entry {
 	key: string;
-	/** 읽기 직전에 뜬 (ino, mtimeNs, size) — 디스크와 대조하지 않은 항목(upsert)은 null */
-	stat: FileStat | null;
+	/** 읽기 직전의 기억 신원이며 저장소와 대조하지 않은 항목은 null이다. */
+	stat: MemoryIdentity | null;
 	record: MemoryRecord;
 	titleT: string[];
 	tagT: string[];
@@ -227,10 +227,10 @@ function bm25fScore(q: ParsedQuery, h: number[], e: Entry, bm: Bm25fStats, field
 /** 파일 신원 (ino, mtimeNs, size) — 십진 문자열 */
 type FileStat = [string, string, string];
 
-/** 인덱스 파일의 문서 1건 — 항목 키, 파일 신원, 필드별 토큰 수·토큰, 제목+설명 토큰, 레코드 */
+/** 인덱스 문서의 기억 신원·토큰·레코드를 정의한다. */
 interface IndexDoc {
 	key: string;
-	stat: FileStat | null;
+	stat: MemoryIdentity | null;
 	len: number[];
 	title: string[];
 	tags: string[];
@@ -374,17 +374,19 @@ export class LexicalRetriever implements Retriever {
 		return r;
 	}
 
-	/**
-	 * 읽기 전용 검색기에서 slug 의 항목이 지금 파일과 같은 파일 신원인지 — 파일이 없거나 바뀌었으면 false.
-	 * 그 slug 의 파일만 stat 한다. 읽기 전용이 아니면 sync 가 이미 대조했으므로 항상 true.
-	 */
-	isCurrent(slug: string, currentFilePath?: string): boolean {
+	/** 읽기 전용 후보의 기억 신원을 대조하며 내용 해시가 같으면 순위 정보 변경을 허용한다. */
+	isCurrent(slug: string, currentStore?: Pick<Storage, "getIdentity" | "filePath">): boolean {
 		const root = this.readOnlyRoot;
 		if (!root) return true;
 		const keys = [entryKey(slug, false), entryKey(slug, true)].filter((k) => this.keyIndex.has(k));
 		return keys.length > 0 && keys.every((k) => {
-			const source = currentFilePath ?? keyPath(root, k);
-			return sameStat(this.docs[this.keyIndex.get(k) as number].stat, fileStat(source));
+			const saved = this.docs[this.keyIndex.get(k) as number].stat;
+			const current = currentStore?.getIdentity
+				? currentStore.getIdentity(slug, k.startsWith("a:"))
+				: fileStat(currentStore ? currentStore.filePath(slug, k.startsWith("a:")) : keyPath(root, k));
+			return saved?.[0] === "content" && current?.[0] === "content"
+				? saved[1] === current[1]
+				: sameStat(saved, current);
 		});
 	}
 
@@ -523,8 +525,8 @@ export class LexicalRetriever implements Retriever {
 		return [...found].filter((u) => tokenMatch(t, u));
 	}
 
-	/** 필드 문자열이 같으면 이전 토큰을 재사용하고 레코드·파일 신원만 새것으로 바꾼 항목을 만든다 */
-	private entryFor(rec: MemoryRecord, archived: boolean, prev: Entry | undefined, stat: FileStat | null): Entry {
+	/** 필드가 같으면 토큰을 재사용하며 레코드와 기억 신원을 갱신한다. */
+	private entryFor(rec: MemoryRecord, archived: boolean, prev: Entry | undefined, stat: MemoryIdentity | null): Entry {
 		const key = entryKey(rec.slug, archived);
 		const tags = rec.tags.join(" ");
 		if (
@@ -549,8 +551,8 @@ export class LexicalRetriever implements Retriever {
 	}
 
 	/**
-	 * 볼트를 listSlugs(true) 순서로 맞춘다. 파일마다 stat 을 먼저 떠 기록된 파일 신원과 같으면 항목을 그대로 쓰고,
-	 * 다르면 vault.read 로 다시 읽는다(T38 읽기 캐시와 같은 키·순서). 바뀐 것이 있으면 인덱스 파일을 통째로 교체한다.
+	 * 저장소를 기억 신원과 listSlugs(true) 순서에 맞춰 동기화한다.
+	 * 신원이 다르면 다시 읽고 변경된 색인을 저장한다.
 	 * 기억 파일이 그대로여도 인덱스 파일이 마지막 적재·저장 때와 다르면(지워짐·다른 프로세스가 덮어씀) 교체한다.
 	 */
 	sync(vault: Storage): void {
@@ -562,7 +564,7 @@ export class LexicalRetriever implements Retriever {
 			const at = this.keyIndex.get(entryKey(slug, archived));
 			const prev = at === undefined ? undefined : this.docs[at];
 			// 읽기 전에 뜬다 — 뒤에 뜨면 "옛 내용 + 새 신원" 이 기록돼 다음 변경까지 낡은 항목이 남는다
-			const st = fileStat(vault.filePath(slug, archived));
+			const st = vault.getIdentity ? vault.getIdentity(slug, archived) : fileStat(vault.filePath(slug, archived));
 			let e = prev;
 			if (!prev || !sameStat(prev.stat, st)) {
 				const rec = vault.read(slug, archived);
