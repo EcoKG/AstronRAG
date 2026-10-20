@@ -226,7 +226,7 @@ try {
 		const source = fs.readFileSync(path.join(root, "ontology/ontology.yaml"), "utf8");
 		const data = yaml.load(source);
 		const codex = { "@id": "model:synthetic-codex", id: "synthetic-codex", name: "Synthetic", contextTokens: 500000, defaultEffort: "low", supportedEfforts: ["low"], features: ["text"], platforms: ["platform:codex"] };
-		data.platforms.push({ "@id": "platform:codex", name: "Codex" });
+		if (!data.platforms.some((platform) => platform["@id"] === "platform:codex")) data.platforms.push({ "@id": "platform:codex", name: "Codex" });
 		data.models.push(codex);
 		const target = path.join(scratch, "mixed.yaml");
 		fs.writeFileSync(target, yaml.dump(data));

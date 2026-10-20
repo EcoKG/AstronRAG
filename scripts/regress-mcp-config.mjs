@@ -107,7 +107,9 @@ try {
 	const recommend = tools.find((tool) => tool.name === "recommend");
 	check(
 		"recommend 입력 스키마",
-		JSON.stringify(Object.keys(recommend?.inputSchema?.properties ?? {}).sort()) === JSON.stringify(["description", "role"]),
+		JSON.stringify(Object.keys(recommend?.inputSchema?.properties ?? {}).sort()) === JSON.stringify(["description", "platform", "role"])
+			&& JSON.stringify(recommend?.inputSchema?.required) === JSON.stringify(["description", "role"])
+			&& JSON.stringify(Reflect.get(recommend?.inputSchema?.properties?.platform ?? {}, "enum")) === JSON.stringify(["claude", "codex"]),
 		JSON.stringify(recommend?.inputSchema),
 	);
   await client.close();
