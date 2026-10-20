@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
-const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+const testTmp = path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? os.tmpdir());
 fs.mkdirSync(testTmp, { recursive: true });
 const distUrl = (f) => `file://${path.join(root, "dist", f).replace(/\\/g, "/")}`;
 const { Vault } = await import(distUrl("vault.js"));
@@ -114,10 +114,10 @@ console.log("3) 신생 기억은 기본 창 유지");
 }
 
 // ── 4. α=0 이면 종전 고정 창 동작
-console.log("4) BIGBRAIN_SPACING_ALPHA=0 로 종전 동작 복원");
+console.log("4) ASTRONRAG_SPACING_ALPHA=0 로 종전 동작 복원");
 {
-  const prev = process.env.BIGBRAIN_SPACING_ALPHA;
-  process.env.BIGBRAIN_SPACING_ALPHA = "0";
+  const prev = process.env.ASTRONRAG_SPACING_ALPHA;
+  process.env.ASTRONRAG_SPACING_ALPHA = "0";
   try {
     const { MemoryStore: Fresh } = await import(`${distUrl("store.js")}?alpha=0`);
     const dir = freshDir();
@@ -131,8 +131,8 @@ console.log("4) BIGBRAIN_SPACING_ALPHA=0 로 종전 동작 복원");
     const n = strengthOf(dir, "알파-제로");
     check("α=0 이면 11분 주기로 매번 강화 (종전 동작)", n >= 5, `strength=${n}`);
   } finally {
-    if (prev === undefined) delete process.env.BIGBRAIN_SPACING_ALPHA;
-    else process.env.BIGBRAIN_SPACING_ALPHA = prev;
+    if (prev === undefined) delete process.env.ASTRONRAG_SPACING_ALPHA;
+    else process.env.ASTRONRAG_SPACING_ALPHA = prev;
   }
 }
 

@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cli = path.join(root, "scripts", "migrate-vault-to-store.mjs");
 const { SqliteStore } = await import(pathToFileURL(path.join(root, "dist", "stores", "sqlite-store.js")).href);
 const { Vault } = await import(pathToFileURL(path.join(root, "dist", "vault.js")).href);
-const tempRoot = fs.mkdtempSync(path.join(process.env.BBM_TEST_TMPDIR || os.tmpdir(), "bbm-migration-"));
+const tempRoot = fs.mkdtempSync(path.join(process.env.ASTRONRAG_TEST_TMPDIR || os.tmpdir(), "bbm-migration-"));
 let failed = 0;
 
 function test(name, run) {
@@ -63,8 +63,8 @@ test("test_migrate_requires_explicit_vault_and_store_path_without_io", () => {
 	const environmentStore = path.join(tempRoot, "must-not-use-environment.sqlite");
 	const environmentBackupRoot = path.join(tempRoot, "must-not-create-backup");
 	const env = {
-		BIGBRAIN_VAULT: source,
-		BBM_SQLITE_PATH: environmentStore,
+		ASTRONRAG_VAULT: source,
+		ASTRONRAG_SQLITE_PATH: environmentStore,
 		LOCALAPPDATA: environmentBackupRoot,
 	};
 	const missingVault = run(["--store-path", environmentStore], env);
@@ -82,8 +82,8 @@ test("test_migrate_resolves_explicit_and_environment_paths", () => {
 	const backup = path.join(tempRoot, "paths-backup");
 	const store = path.join(tempRoot, "paths.sqlite");
 	const result = run(["--dry-run", "--vault", source, "--store-path", store, "--backup-dir", backup], {
-		BIGBRAIN_VAULT: path.join(tempRoot, "wrong-vault"),
-		BBM_SQLITE_PATH: path.join(tempRoot, "wrong-store.sqlite"),
+		ASTRONRAG_VAULT: path.join(tempRoot, "wrong-vault"),
+		ASTRONRAG_SQLITE_PATH: path.join(tempRoot, "wrong-store.sqlite"),
 	});
 	assert.equal(result.status, 0, result.stderr);
 	assert.equal(JSON.parse(result.stdout).vault, path.resolve(source));
@@ -265,7 +265,7 @@ test("test_migrate_verify_detects_extra_and_duplicate_count_mismatches", () => {
 	db.exec("DELETE FROM usage_events WHERE rowid = (SELECT MAX(rowid) FROM usage_events)");
 	db.exec("INSERT INTO memory_revisions(slug, created, record_json) SELECT slug, created, record_json FROM memory_revisions LIMIT 1");
 	const columns = /** @type {string[]} */ (db.prepare("PRAGMA table_info(memories)").all().map((column) => String(column.name)));
-	const extra = /** @type {Record<string, unknown>} */ (db.prepare("SELECT * FROM memories LIMIT 1").get());
+	const extra = /** @type {Record<string, import("node:sqlite").SQLOutputValue>} */ (db.prepare("SELECT * FROM memories LIMIT 1").get());
 	assert.ok(extra);
 	extra.slug = "extra";
 	extra.id = "mem-extra";
@@ -410,7 +410,7 @@ test("test_migrate_usage_log_change_rolls_back_with_operator_message", () => {
 });
 
 test("test_migrate_product_code_has_no_bbm_test_branches", () => {
-	assert.doesNotMatch(fs.readFileSync(cli, "utf8"), /BBM_TEST_/);
+	assert.doesNotMatch(fs.readFileSync(cli, "utf8"), /ASTRONRAG_TEST_/);
 });
 
 test("test_migrate_serializes_concurrent_writers_and_rechecks_marker", () => assert.match(fs.readFileSync(cli, "utf8"), /BEGIN IMMEDIATE|importVaultSnapshot/));

@@ -9,7 +9,7 @@ import { ontologySchema, parseOntology } from "../dist/ontology.js";
 import { recommendModel } from "../dist/recommender.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const testTmpDir = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+const testTmpDir = path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? os.tmpdir());
 fs.mkdirSync(testTmpDir, { recursive: true });
 const tempRoot = fs.mkdtempSync(path.join(testTmpDir, "bbm-recommend-"));
 const tempVault = path.join(tempRoot, "vault");
@@ -75,7 +75,7 @@ function removeTree(directory) {
 
 try {
 	client = new Client({ name: "regress-recommend", version: "0.0.1" });
-	await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(root, "dist", "index.js")], cwd: root, env: { ...process.env, BIGBRAIN_VAULT: tempVault, BBM_ONTOLOGY_PATH: ontologyPath } }));
+	await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(root, "dist", "index.js")], cwd: root, env: { ...process.env, ASTRONRAG_VAULT: tempVault, ASTRONRAG_ONTOLOGY_PATH: ontologyPath } }));
 	const before = fs.readdirSync(tempVault).sort();
 
 	await test("test_recommend_temp_directory_uses_selected_base", () => {
@@ -94,7 +94,7 @@ try {
 	await test("test_recommend_uses_default_ontology_when_override_is_empty", async () => {
 		const defaultClient = new Client({ name: "regress-recommend-default", version: "0.0.1" });
 		try {
-			await defaultClient.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(root, "dist", "index.js")], cwd: root, env: { ...process.env, BIGBRAIN_VAULT: tempVault, BBM_ONTOLOGY_PATH: "" } }));
+			await defaultClient.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(root, "dist", "index.js")], cwd: root, env: { ...process.env, ASTRONRAG_VAULT: tempVault, ASTRONRAG_ONTOLOGY_PATH: "" } }));
 			const result = await defaultClient.callTool({ name: "recommend", arguments: { description: "ordinary task", role: "impl" } });
 			assert.equal(payload(result).model, "claude-opus-5-5");
 		} finally {

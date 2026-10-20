@@ -104,8 +104,8 @@ console.log("4) 구버전 노트 하위 호환");
   check("기존 메타데이터 보존", rec?.storageStrength === 3 && rec?.accessCount === 2);
 }
 
-// ── 5. MCP 계층 — BIGBRAIN_PROJECT 기본 스코프
-console.log("5) BIGBRAIN_PROJECT 서버 기본 스코프");
+// ── 5. MCP 계층 — ASTRONRAG_PROJECT 기본 스코프
+console.log("5) ASTRONRAG_PROJECT 서버 기본 스코프");
 {
   const { dir } = seeded();
   async function callRecall(env, args) {
@@ -113,7 +113,7 @@ console.log("5) BIGBRAIN_PROJECT 서버 기본 스코프");
       command: process.execPath,
       args: [entry],
       cwd: root,
-      env: { ...process.env, BIGBRAIN_VAULT: dir, BBM_STORE: "file", ...env },
+      env: { ...process.env, ASTRONRAG_VAULT: dir, ASTRONRAG_STORE: "file", ...env },
     });
     const client = new Client({ name: "regress-scoping", version: "0.0.1" });
     await client.connect(transport);
@@ -123,7 +123,7 @@ console.log("5) BIGBRAIN_PROJECT 서버 기본 스코프");
     return { json: JSON.parse(Object(res.content)[0].text), instructions };
   }
 
-  const scoped = await callRecall({ BIGBRAIN_PROJECT: "alpha" }, {});
+  const scoped = await callRecall({ ASTRONRAG_PROJECT: "alpha" }, {});
   const got = scoped.json.results.map((r) => r.slug);
   check("서버 스코프가 recall 기본값으로 적용됨", !got.includes("베타-빌드-방법"), got.join(","));
   check("자기 프로젝트 + 전역은 반환", got.includes("알파-빌드-방법") && got.includes("공통-빌드-취향"));
@@ -131,11 +131,11 @@ console.log("5) BIGBRAIN_PROJECT 서버 기본 스코프");
   check("instructions 에 현재 스코프 안내", /Project scope "alpha"/.test(scoped.instructions));
   check("전역 저장 지침도 안내", /omit it for knowledge that should follow the user everywhere/.test(scoped.instructions));
 
-  const escaped = await callRecall({ BIGBRAIN_PROJECT: "alpha" }, { project: "" });
+  const escaped = await callRecall({ ASTRONRAG_PROJECT: "alpha" }, { project: "" });
   check("빈 문자열로 전체 검색 가능", escaped.json.results.map((r) => r.slug).includes("베타-빌드-방법"));
 
   const noScope = await callRecall({}, {});
-  check("BIGBRAIN_PROJECT 없으면 전체 조회", noScope.json.results.length === 3, `len=${noScope.json.results.length}`);
+  check("ASTRONRAG_PROJECT 없으면 전체 조회", noScope.json.results.length === 3, `len=${noScope.json.results.length}`);
   check("스코프 없으면 안내문도 없음", !/Current project scope/.test(noScope.instructions));
 }
 

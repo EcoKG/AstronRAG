@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 
 const root = path.resolve(import.meta.dirname, "..");
 const distUrl = (name) => pathToFileURL(path.join(root, "dist", name)).href;
-const tmpRoot = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+const tmpRoot = path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? os.tmpdir());
 fs.mkdirSync(tmpRoot, { recursive: true });
 
 const tests = /** @type {{ name: string, run: () => unknown | Promise<unknown> }[]} */ (Array());
@@ -156,7 +156,7 @@ async function withSqliteMcp(name, setup, run) {
 	const transport = new StdioClientTransport({
 		command: process.execPath,
 		args: [path.join(root, "dist", "index.js")],
-		env: { ...process.env, BIGBRAIN_VAULT: dir, BBM_STORE: "sqlite" },
+		env: { ...process.env, ASTRONRAG_VAULT: dir, ASTRONRAG_STORE: "sqlite" },
 		stderr: "pipe",
 	});
 	const client = new Client({ name: `store-contract-${name}`, version: "0.0.1" });
@@ -172,7 +172,7 @@ async function withSqliteMcp(name, setup, run) {
 test("test_store_factory_defaults_empty_to_sqlite", () => {
 	for (const value of [undefined, ""]) {
 		const dir = temp("factory-default");
-		const store = stores.createMemoryStore(dir, { BBM_STORE: value });
+		const store = stores.createMemoryStore(dir, { ASTRONRAG_STORE: value });
 		assert.ok(store instanceof stores.SqliteStore);
 		store.close();
 		fs.rmSync(dir, { recursive: true, force: true });
@@ -182,7 +182,7 @@ test("test_store_factory_defaults_empty_to_sqlite", () => {
 test("test_store_factory_rejects_unknown_kind", () => {
 	for (const value of ["postgres", " sqlite", "sqlite ", "SQLITE", "File"]) {
 		const dir = temp("factory-reject");
-		assert.throws(() => stores.createMemoryStore(dir, { BBM_STORE: value }), new RegExp(value));
+		assert.throws(() => stores.createMemoryStore(dir, { ASTRONRAG_STORE: value }), new RegExp(value));
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
 });
@@ -190,7 +190,7 @@ test("test_store_factory_rejects_unknown_kind", () => {
 test("test_sqlite_default_path_under_vault_bbm", () => {
 	for (const value of [undefined, ""]) {
 		const dir = temp("default-path");
-		const store = stores.createMemoryStore(dir, { BBM_STORE: "sqlite", BBM_SQLITE_PATH: value });
+		const store = stores.createMemoryStore(dir, { ASTRONRAG_STORE: "sqlite", ASTRONRAG_SQLITE_PATH: value });
 		assert.equal(store.databasePath, path.join(dir, ".bbm", "store.sqlite"));
 		store.close();
 		fs.rmSync(dir, { recursive: true, force: true });
@@ -363,10 +363,10 @@ test("test_sqlite_hook_reads_persisted_index_without_markdown_files", () => {
 		cwd: root,
 		input: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "sqlite-hook", prompt: "zirconium deployment procedure" }),
 		encoding: "utf8",
-		env: { ...process.env, BBM_STORE: "sqlite", BIGBRAIN_AUTO_RECALL: "1", BIGBRAIN_AUTO_MIN_SCORE: "0" },
+		env: { ...process.env, ASTRONRAG_STORE: "sqlite", ASTRONRAG_AUTO_RECALL: "1", ASTRONRAG_AUTO_MIN_SCORE: "0" },
 	});
 	assert.equal(child.status, 0);
-	assert.match(child.stdout, /<bigbrainmemory-auto-recall/);
+	assert.match(child.stdout, /<astronrag-auto-recall/);
 	fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -406,7 +406,7 @@ test("test_sqlite_permission_error_does_not_fallback_to_file", () => {
 	const dir = temp("permission");
 	const parentFile = path.join(dir, "not-a-directory");
 	fs.writeFileSync(parentFile, "x");
-	assert.throws(() => stores.createMemoryStore(dir, { BBM_STORE: "sqlite", BBM_SQLITE_PATH: path.join(parentFile, "store.sqlite") }));
+	assert.throws(() => stores.createMemoryStore(dir, { ASTRONRAG_STORE: "sqlite", ASTRONRAG_SQLITE_PATH: path.join(parentFile, "store.sqlite") }));
 	assert.deepEqual(new Vault(dir).listSlugs(true), []);
 	fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -414,12 +414,12 @@ test("test_sqlite_permission_error_does_not_fallback_to_file", () => {
 test("test_sqlite_does_not_persist_environment_credentials", () => {
 	const dir = temp("secret");
 	const secret = `secret-${Date.now()}-credential`;
-	process.env.BBM_TEST_SECRET = secret;
+	process.env.ASTRONRAG_TEST_SECRET = secret;
 	const store = new stores.SqliteStore(dir);
 	store.setMeta("safe", "value");
 	store.close();
 	assert.equal(fs.readFileSync(path.join(dir, ".bbm", "store.sqlite")).includes(Buffer.from(secret)), false);
-	delete process.env.BBM_TEST_SECRET;
+	delete process.env.ASTRONRAG_TEST_SECRET;
 	fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -462,7 +462,7 @@ test("test_sqlite_empty_database_with_legacy_markdown_blocks_memory_tools_only",
 		for (const [name, args] of calls) {
 			const result = await client.callTool({ name, arguments: args });
 			assert.equal(result.isError, true, String(name));
-			assert.match(result.content?.[0]?.text ?? "", /이관 필요: migrate 도구 실행 또는 BBM_STORE=file 로 되돌리기/, String(name));
+			assert.match(result.content?.[0]?.text ?? "", /이관 필요: migrate 도구 실행 또는 ASTRONRAG_STORE=file 로 되돌리기/, String(name));
 		}
 		const recommended = await client.callTool({ name: "recommend", arguments: { description: "구현", role: "impl" } });
 		assert.notEqual(recommended.isError, true);
@@ -509,12 +509,12 @@ test("test_sqlite_migration_guard_hook_is_silent_and_exits_zero", () => {
 		cwd: root,
 		input: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "migration-hook", prompt: "legacy" }),
 		encoding: "utf8",
-		env: { ...process.env, BBM_STORE: "sqlite", BIGBRAIN_AUTO_RECALL: "1" },
+		env: { ...process.env, ASTRONRAG_STORE: "sqlite", ASTRONRAG_AUTO_RECALL: "1" },
 	});
 	assert.equal(child.status, 0);
 	assert.equal(child.stdout, "");
 	assert.equal(child.stderr.trim().split(/\r?\n/).length, 1, child.stderr);
-	assert.match(child.stderr, /이관 필요: migrate 도구 실행 또는 BBM_STORE=file 로 되돌리기/);
+	assert.match(child.stderr, /이관 필요: migrate 도구 실행 또는 ASTRONRAG_STORE=file 로 되돌리기/);
 	fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -545,7 +545,7 @@ test("test_file_store_usage_report_since_excludes_old_hook_event", () => {
 	const child = spawnSync(process.execPath, [path.join(root, "scripts", "usage-report.mjs"), "--vault", dir, "--since", "2026-01-01", "--json"], {
 		cwd: root,
 		encoding: "utf8",
-		env: { ...process.env, BBM_STORE: "file" },
+		env: { ...process.env, ASTRONRAG_STORE: "file" },
 	});
 	assert.equal(child.status, 0, child.stderr);
 	assert.equal(JSON.parse(child.stdout).window.events, 0, child.stdout);
@@ -567,7 +567,7 @@ test("test_hook_failure_keeps_stdout_empty_with_sqlite_store", () => {
 		cwd: root,
 		input: "{}",
 		encoding: "utf8",
-		env: { ...process.env, BIGBRAIN_VAULT: dir, BBM_STORE: "sqlite", BBM_SQLITE_PATH: path.join(parentFile, "store.sqlite") },
+		env: { ...process.env, ASTRONRAG_VAULT: dir, ASTRONRAG_STORE: "sqlite", ASTRONRAG_SQLITE_PATH: path.join(parentFile, "store.sqlite") },
 	});
 	assert.equal(child.stdout, "");
 	fs.rmSync(dir, { recursive: true, force: true });

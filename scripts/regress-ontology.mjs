@@ -11,7 +11,7 @@ import { buildOntologyCache } from "./build-ontology.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtures = path.join(root, "test", "fixtures", "official-docs");
-const testTmpDir = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+const testTmpDir = path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? os.tmpdir());
 fs.mkdirSync(testTmpDir, { recursive: true });
 let failures = 0;
 
@@ -53,7 +53,7 @@ await test("test_npm_test_without_repository_temp_directory", () => {
 });
 
 await test("test_npm_test_with_bbm_test_tmpdir", () => {
-	assert.equal(testTmpDir, path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir()));
+	assert.equal(testTmpDir, path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? os.tmpdir()));
 	assert.equal(fs.existsSync(testTmpDir), true);
 });
 

@@ -7,7 +7,7 @@
 //   4 upsert·remove·k 컷오프가 search 에 반영되고 필드 기여 합이 점수와 같다
 //   5 revise 로 제목이 바뀌면 캐시된 토큰이 아니라 새 제목으로 검색된다
 //   6 bm25f 점수가 식(IDF·필드 길이 정규화·k1 포화·동의어 0.6배·조사 흡수)대로 나오고, 새로 만든 인덱스와 파일에서 적재한 인덱스의 점수가 같다
-//   7 BIGBRAIN_SCORER 가 bm25f 가 아니면 legacy 이고, 그림자 모드는 수치만 남기며 회상 출력을 바꾸지 않는다
+//   7 ASTRONRAG_SCORER 가 bm25f 가 아니면 legacy 이고, 그림자 모드는 수치만 남기며 회상 출력을 바꾸지 않는다
 //
 // 라이브 볼트는 건드리지 않는다 — 전부 os.tmpdir() 임시 볼트.
 
@@ -20,7 +20,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const distUrl = (f) => pathToFileURL(path.join(root, "dist", f)).href;
 // 스코어러·그림자·변형 가중은 store 모듈 로드 시 읽는다 — 사용자 환경과 무관하게 기본값으로 시작한다
-for (const k of ["BIGBRAIN_SCORER", "BIGBRAIN_SHADOW", "BIGBRAIN_ALT_WEIGHT"]) delete process.env[k];
+for (const k of ["ASTRONRAG_SCORER", "ASTRONRAG_SHADOW", "ASTRONRAG_ALT_WEIGHT"]) delete process.env[k];
 const { Vault } = await import(distUrl("vault.js"));
 const storeModule = await import(distUrl("store.js"));
 const { MemoryStore, parseQuery } = storeModule;
@@ -342,7 +342,7 @@ try {
 	}
 
 	// ── 7. 스코어러 선택·그림자
-	console.log("7) BIGBRAIN_SCORER·그림자 모드 (T46·G5)");
+	console.log("7) ASTRONRAG_SCORER·그림자 모드 (T46·G5)");
 	{
 		const dir = freshDir();
 		const v = new Vault(dir);
@@ -367,29 +367,29 @@ try {
 			s.reinforce = () => {};
 			return s;
 		};
-		const xyz = await load("xyz", { BIGBRAIN_SCORER: "xyz" });
-		const bm = await load("bm", { BIGBRAIN_SCORER: "bm25f" });
-		const off = await load("off", { BIGBRAIN_SHADOW: "0" });
-		const badAlt = await load("badalt", { BIGBRAIN_ALT_WEIGHT: "2" });
+		const xyz = await load("xyz", { ASTRONRAG_SCORER: "xyz" });
+		const bm = await load("bm", { ASTRONRAG_SCORER: "bm25f" });
+		const off = await load("off", { ASTRONRAG_SHADOW: "0" });
+		const badAlt = await load("badalt", { ASTRONRAG_ALT_WEIGHT: "2" });
 		check("기본 스코어러는 legacy", storeModule.SCORER === "legacy");
 		check("알 수 없는 값은 legacy", xyz.SCORER === "legacy");
 		check("bm25f 는 bm25f", bm.SCORER === "bm25f");
 		const base = open(storeModule);
 		const q = "kiwi guide";
 		const baseOut = JSON.stringify(base.searchDetailed(q, { limit: 5 }));
-		check("BIGBRAIN_SCORER=xyz 출력이 기본과 같음", JSON.stringify(open(xyz).searchDetailed(q, { limit: 5 })) === baseOut);
+		check("ASTRONRAG_SCORER=xyz 출력이 기본과 같음", JSON.stringify(open(xyz).searchDetailed(q, { limit: 5 })) === baseOut);
 		const bmStore = open(bm);
 		const bmOut = bmStore.searchDetailed(q, { limit: 5 });
 		check("bm25f 스코어러 출력은 legacy 점수와 다름", JSON.stringify(bmOut) !== baseOut && bmOut.results.length > 0);
 		check("bm25f 스코어러에서는 그림자를 계산하지 않음", bmStore.shadowTop5 === undefined);
 		check("legacy 기본에서 그림자 일치율은 0~1", typeof base.shadowTop5 === "number" && base.shadowTop5 >= 0 && base.shadowTop5 <= 1, `${base.shadowTop5}`);
 		const offStore = open(off);
-		check("BIGBRAIN_SHADOW=0 출력이 그림자 켠 출력과 같음", JSON.stringify(offStore.searchDetailed(q, { limit: 5 })) === baseOut);
-		check("BIGBRAIN_SHADOW=0 이면 그림자 없음", offStore.shadowTop5 === undefined);
+		check("ASTRONRAG_SHADOW=0 출력이 그림자 켠 출력과 같음", JSON.stringify(offStore.searchDetailed(q, { limit: 5 })) === baseOut);
+		check("ASTRONRAG_SHADOW=0 이면 그림자 없음", offStore.shadowTop5 === undefined);
 		const alts = { limit: 5, altQueries: ["kiwi notes", "rollout"] };
 		check("변형 질의가 있어도 그림자 켬·끔 출력이 같음", JSON.stringify(base.searchDetailed(q, alts)) === JSON.stringify(offStore.searchDetailed(q, alts)));
 		check("변형 질의가 있어도 그림자 일치율을 낸다", typeof base.shadowTop5 === "number");
-		check("범위 밖 BIGBRAIN_ALT_WEIGHT 는 기본 가중(0.7)", JSON.stringify(open(badAlt).searchDetailed(q, alts)) === JSON.stringify(base.searchDetailed(q, alts)));
+		check("범위 밖 ASTRONRAG_ALT_WEIGHT 는 기본 가중(0.7)", JSON.stringify(open(badAlt).searchDetailed(q, alts)) === JSON.stringify(base.searchDetailed(q, alts)));
 		base.searchDetailed("zzzqqq nothing", { limit: 5 });
 		check("후보가 없으면 그림자 없음", base.shadowTop5 === undefined);
 		base.searchDetailed(q, { limit: 5 });
