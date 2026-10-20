@@ -17,6 +17,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// 시험 기본값을 사용자 환경 설정과 격리한다.
+for (const key of Object.keys(process.env)) {
+  if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key) && !key.startsWith("ASTRONRAG_TEST_")) delete process.env[key];
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const distUrl = (f) => `file://${path.join(root, "dist", f).replace(/\\/g, "/")}`;
@@ -31,7 +36,7 @@ function check(name, cond, detail = "") {
     console.error(`  ✘ ${name} ${detail}`);
   }
 }
-const cleanups = [];
+const cleanups = /** @type {string[]} */ (Array());
 function freshDir() {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-cache-"));
   cleanups.push(d);
@@ -61,8 +66,9 @@ console.log("1) 반복 읽기 일관성");
 // **모든 필드를 동적으로 순회**한다 — cloneRecord 는 "원시값 + 문자열 배열" 전제의
 // 수동 클론이라, 미래에 중첩 필드가 추가되고 클론에서 빠지면 얕은 복사가 조용히
 // 새는데, 필드를 하나하나 나열하는 테스트는 그 필드를 모른다. 순회는 안다.
-console.log("2) 클론 격리 (전 필드 동적 순회)");
-{
+function cache_returns_isolated_records() {
+  console.log("cache_returns_isolated_records");
+  console.log("2) 클론 격리 (전 필드 동적 순회)");
   const dir = freshDir();
   const s = new MemoryStore(new Vault(dir));
   const rec = s.remember({
@@ -92,7 +98,9 @@ console.log("2) 클론 격리 (전 필드 동적 순회)");
   const b = v.read(rec.slug); // 다시 캐시 히트 — a 의 변이가 하나라도 비치면 실패
   check("어떤 필드의 변이도 다음 읽기에 안 비침", JSON.stringify(b) === pristine,
     JSON.stringify(b) === pristine ? "" : `diff: ${JSON.stringify(b).slice(0, 200)}`);
+  check("다른 Vault 인스턴스도 원본 유지", JSON.stringify(new Vault(dir).read(rec.slug)) === pristine);
 }
+cache_returns_isolated_records();
 
 // ── 3. 다른 프로세스의 원자적 쓰기가 즉시 보인다 (T3 재읽기 계약 보존)
 console.log("3) 타 프로세스 쓰기 감지");

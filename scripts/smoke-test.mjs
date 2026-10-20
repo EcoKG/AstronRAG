@@ -1,4 +1,4 @@
-// BigBrainMemory 스모크 테스트 — 실제 MCP 클라이언트로 stdio 서버를 구동해 전체 기억 사이클을 검증
+// AstronRAG 스모크 테스트 — 실제 MCP 클라이언트로 stdio 서버를 구동해 전체 기억 사이클을 검증
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import fs from "node:fs";
@@ -6,17 +6,22 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// 시험 기본값을 사용자 환경 설정과 격리한다.
+for (const key of Object.keys(process.env)) {
+  if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key) && !key.startsWith("ASTRONRAG_TEST_")) delete process.env[key];
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
-const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+const testTmp = path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? os.tmpdir());
 fs.mkdirSync(testTmp, { recursive: true });
-const testVault = fs.mkdtempSync(path.join(testTmp, "bbm-smoke-"));
+const testVault = fs.mkdtempSync(path.join(testTmp, "astronrag-smoke-"));
 
 // 기본 강화 시험은 고정 창과 확장 간격을 모두 끈다.
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [path.join(root, "dist", "index.js")],
-  env: { ...process.env, BIGBRAIN_VAULT: testVault, BIGBRAIN_SPACING_MS: "0", BIGBRAIN_SPACING_ALPHA: "0" },
+  env: { ...process.env, ASTRONRAG_STORE: "file", ASTRONRAG_VAULT: testVault, ASTRONRAG_SPACING_MS: "0", ASTRONRAG_SPACING_ALPHA: "0" },
 });
 const client = new Client({ name: "smoke-test", version: "0.0.1" });
 
@@ -44,13 +49,13 @@ async function call(name, args = {}) {
 const toolText = (/** @type {any} */ result) => result.content[0].text;
 
 {
-  const previous = [process.env.BIGBRAIN_SPACING_MS, process.env.BIGBRAIN_SPACING_ALPHA];
-  process.env.BIGBRAIN_SPACING_MS = "1000";
-  process.env.BIGBRAIN_SPACING_ALPHA = "0.1";
+  const previous = [process.env.ASTRONRAG_SPACING_MS, process.env.ASTRONRAG_SPACING_ALPHA];
+  process.env.ASTRONRAG_SPACING_MS = "1000";
+  process.env.ASTRONRAG_SPACING_ALPHA = "0.1";
   const { MemoryService } = await import("../dist/store.js");
   const { FileStore } = await import("../dist/stores/file-store.js");
   const base = Date.parse("2026-01-01T00:00:00.000Z");
-  const directory = fs.mkdtempSync(path.join(testTmp, "bbm-spacing-boundary-"));
+  const directory = fs.mkdtempSync(path.join(testTmp, "astronrag-spacing-boundary-"));
   try {
     for (const offset of [-1, 0, 1]) {
       const backend = new FileStore(path.join(directory, String(offset)));
@@ -65,7 +70,7 @@ const toolText = (/** @type {any} */ result) => result.content[0].text;
     }
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
-    for (const [index, key] of ["BIGBRAIN_SPACING_MS", "BIGBRAIN_SPACING_ALPHA"].entries()) {
+    for (const [index, key] of ["ASTRONRAG_SPACING_MS", "ASTRONRAG_SPACING_ALPHA"].entries()) {
       if (previous[index] === undefined) delete process.env[key];
       else process.env[key] = previous[index];
     }
@@ -97,10 +102,10 @@ check("출처(source) 기록됨 (P8)", r1.json?.stored?.source === "코드 리�
 const slug1 = r1.json.stored.slug;
 
 const r2 = await call("remember", {
-  title: "BigBrainMemory 프로젝트는 Obsidian 볼트를 저장소로 쓴다",
+  title: "AstronRAG 프로젝트는 Obsidian 볼트를 저장소로 쓴다",
   content: "MCP 서버의 기억은 vault/ 아래 마크다운 파일로 저장되며 Obsidian에서 열 수 있다.",
   type: "semantic",
-  tags: ["bigbrainmemory", "obsidian"],
+  tags: ["astronrag", "obsidian"],
 });
 const slug2 = r2.json.stored.slug;
 check("두 번째 기억 저장됨", !!slug2);
@@ -146,11 +151,11 @@ check("access_count 누적", after.access_count >= 2, `count=${after.access_coun
 
 console.log("8) 간격효과 — 게이트가 켜지면 벼락치기 반복이 저장강도를 부풀리지 않는다 (P3)");
 {
-  const gatedVault = fs.mkdtempSync(path.join(testTmp, "bbm-smoke-gated-"));
+  const gatedVault = fs.mkdtempSync(path.join(testTmp, "astronrag-smoke-gated-"));
   const t2 = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(root, "dist", "index.js")],
-    env: { ...process.env, BIGBRAIN_VAULT: gatedVault, BIGBRAIN_SPACING_MS: "600000" }, // 10분 게이트
+    env: { ...process.env, ASTRONRAG_STORE: "file", ASTRONRAG_VAULT: gatedVault, ASTRONRAG_SPACING_MS: "600000" }, // 10분 게이트
   });
   const c2 = new Client({ name: "gated", version: "0.0.1" });
   await c2.connect(t2);

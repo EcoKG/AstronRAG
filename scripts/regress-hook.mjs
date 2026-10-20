@@ -1,7 +1,7 @@
 // 세션 훅 회귀 테스트 — session-guard.mjs 의 볼트 해석과 무저장 감지.
 //
 // 고정하는 문제:
-//   H1 훅이 설치 시점 경로를 박아두면, 프로젝트마다 BIGBRAIN_VAULT 로 볼트를 나누는
+//   H1 훅이 설치 시점 경로를 박아두면, 프로젝트마다 ASTRONRAG_VAULT 로 볼트를 나누는
 //      순간 훅만 옛 볼트를 계속 본다. 그러면 한 세션에서
 //        훅  : "볼트에 이런 기억들이 있다"(볼트 B)
 //        서버: "COLD START — this vault is EMPTY"(볼트 A)
@@ -18,6 +18,11 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+// 시험 기본값을 사용자 환경 설정과 격리한다.
+for (const key of Object.keys(process.env)) {
+  if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key) && !key.startsWith("ASTRONRAG_TEST_")) delete process.env[key];
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const guard = path.join(here, "session-guard.mjs");
 
@@ -31,13 +36,14 @@ function check(name, cond, detail = "") {
 }
 
 const cleanups = /** @type {string[]} */ (Array());
-const testTmp = path.resolve(process.env.BBM_TEST_TMPDIR ?? os.tmpdir());
+const testTmp = path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? os.tmpdir());
 fs.mkdirSync(testTmp, { recursive: true });
 function freshDir(name) {
   const d = fs.mkdtempSync(path.join(testTmp, `bbm-hook-${name}-`));
   cleanups.push(d);
   return d;
 }
+const isolatedHome = freshDir("isolated-home");
 
 /** 볼트 하나를 만들고 기억 n건을 채운다 */
 function makeVault(root, label, n) {
@@ -58,7 +64,7 @@ function run(args, cwd, input = "", extraEnv = {}) {
       encoding: "utf-8",
       timeout: 15000,
       input,
-      env: { ...process.env, BBM_STORE: "file", ...extraEnv },
+      env: { ...process.env, HOME: isolatedHome, USERPROFILE: isolatedHome, ASTRONRAG_STORE: "file", ...extraEnv },
     });
     return { out, code: 0 };
   } catch (err) {
@@ -83,8 +89,9 @@ const stopContext = (out) => {
 };
 
 // ── 1. 실행 시점 볼트 해석 (H1)
-console.log("1) 실행 시점 볼트 해석 — 프로젝트 설정을 따라간다");
-{
+function hook_new_names_preserve_config_scope() {
+  console.log("hook_new_names_preserve_config_scope");
+  console.log("1) 실행 시점 볼트 해석 — 프로젝트 설정을 따라간다");
   const root = freshDir("resolve");
   const vaultA = makeVault(root, "A", 0); // 설치 시점 값
   const vaultB = makeVault(root, "B", 2); // 프로젝트가 실제로 쓰는 볼트
@@ -92,7 +99,7 @@ console.log("1) 실행 시점 볼트 해석 — 프로젝트 설정을 따라간
   fs.mkdirSync(proj, { recursive: true });
   fs.writeFileSync(
     path.join(proj, ".mcp.json"),
-    JSON.stringify({ mcpServers: { bigbrainmemory: { env: { BIGBRAIN_VAULT: vaultB } } } }),
+    JSON.stringify({ mcpServers: { astronrag: { env: { ASTRONRAG_VAULT: vaultB } } } }),
     "utf-8",
   );
 
@@ -103,7 +110,29 @@ console.log("1) 실행 시점 볼트 해석 — 프로젝트 설정을 따라간
   // 사용자가 명시한 경우엔 그 의도가 이긴다
   const forced = run(["--start", "--vault-force", vaultA], proj);
   check("--vault-force 는 자동탐지를 이김", forced.out.includes(`vault="${vaultA.replace(/\\/g, "/")}"`), forced.out.slice(0, 200));
+
+  const home = freshDir("home");
+  const userProject = makeVault(root, "USER_PROJECT", 1);
+  const userGlobal = makeVault(root, "USER_GLOBAL", 1);
+  const envVault = makeVault(root, "ENV", 1);
+  fs.writeFileSync(path.join(home, ".claude.json"), JSON.stringify({
+    projects: { [proj]: { mcpServers: { astronrag: { env: { ASTRONRAG_VAULT: userProject } } } } },
+    mcpServers: { astronrag: { env: { ASTRONRAG_VAULT: userGlobal } } },
+  }));
+  const env = { HOME: home, USERPROFILE: home };
+  const selected = (extra = {}) => run(["--start", "--vault", vaultA], proj, "", { ...env, ...extra });
+  const hasVault = (result, vault) => result.out.includes(`vault="${vault.replace(/\\/g, "/")}"`);
+  check("프로젝트 설정이 사용자 설정보다 우선", hasVault(selected(), vaultB));
+  check("새 환경이 프로젝트 설정보다 우선", hasVault(selected({ ASTRONRAG_VAULT: envVault }), envVault));
+  check("강제 볼트가 새 환경보다 우선", hasVault(run(["--start", "--vault-force", vaultA], proj, "", { ...env, ASTRONRAG_VAULT: envVault }), vaultA));
+  fs.unlinkSync(path.join(proj, ".mcp.json"));
+  check("사용자 프로젝트 설정이 전역보다 우선", hasVault(selected(), userProject));
+  fs.writeFileSync(path.join(home, ".claude.json"), JSON.stringify({ mcpServers: { astronrag: { env: { ASTRONRAG_VAULT: userGlobal } } } }));
+  check("사용자 전역 설정이 설치 폴백보다 우선", hasVault(selected(), userGlobal));
+  fs.unlinkSync(path.join(home, ".claude.json"));
+  check("설정이 없으면 설치 폴백 사용", hasVault(selected(), vaultA));
 }
+hook_new_names_preserve_config_scope();
 
 // ── 2. 주입 블록이 출처를 밝힌다 (H2)
 console.log("2) 주입 블록의 출처 표기");
@@ -123,8 +152,9 @@ console.log("2) 주입 블록의 출처 표기");
 // 만들었다 — 볼트가 빔 → 주입 없음 → 모델이 메모리 존재를 인지 못 함 → 저장 0건 →
 // 다음 세션도 빔. 대조 실험에서 서버 instructions 의 COLD START 문구는 양쪽 세션 모두
 // 온전히 도착했는데도, 훅 주입이 있던 쪽만 도구를 호출했다.
-console.log("2-b) 콜드 스타트 주입");
-{
+function hook_actual_registered_name_preserved() {
+  console.log("hook_actual_registered_name_preserved");
+  console.log("2-b) 콜드 스타트 주입");
   const root = freshDir("cold");
   const v = makeVault(root, "C", 0); // 기억 0건 — MEMORY.md 는 헤더만 있다
   const { out, code } = run(["--start", "--vault-force", v], root);
@@ -133,8 +163,8 @@ console.log("2-b) 콜드 스타트 주입");
   check("건수 0 을 표기", out.includes('memories="0"'), out.slice(0, 200));
   check("'비었으니 메모리가 불필요' 라는 오독을 차단", /NOT\s+evidence that memory is unneeded/.test(out));
   // 지연 로드(deferred)된 도구는 정확한 이름을 알아야 불러올 수 있다
-  check("remember 도구 이름을 그대로 노출", /mcp__[A-Za-z0-9_-]*bigbrain[A-Za-z0-9_-]*__remember/i.test(out), out.slice(0, 400));
-  check("recall 도구 이름도 노출", /mcp__[A-Za-z0-9_-]*bigbrain[A-Za-z0-9_-]*__recall/i.test(out));
+  check("remember 도구 이름을 그대로 노출", /mcp__astronrag__remember/.test(out), out.slice(0, 400));
+  check("recall 도구 이름도 노출", /mcp__astronrag__recall/.test(out));
   check("저장 시점(세션 끝이 아님)을 지시", /not at the end of the session/.test(out));
   check("종료코드 0", code === 0);
 
@@ -143,39 +173,40 @@ console.log("2-b) 콜드 스타트 주입");
   fs.mkdirSync(proj, { recursive: true });
   fs.writeFileSync(
     path.join(proj, ".mcp.json"),
-    JSON.stringify({ mcpServers: { "my-bigbrain": { env: { BIGBRAIN_VAULT: v } } } }),
+    JSON.stringify({ mcpServers: { "my-astronrag": { env: { ASTRONRAG_VAULT: v } } } }),
     "utf-8",
   );
   const named = run(["--start"], proj);
-  check("등록 키가 다르면 그 키로 도구 이름을 만든다", named.out.includes("mcp__my-bigbrain__remember"), named.out.slice(0, 400));
+  check("등록 키가 다르면 그 키로 도구 이름을 만든다", named.out.includes("mcp__my-astronrag__remember"), named.out.slice(0, 400));
 
-  // **이름에 bigbrain 이 없는 키도 찾아야 한다.** 종전엔 /bigbrain/i 로 키를 걸러서
+  // **이름에 astronrag 이 없는 키도 찾아야 한다.** 종전엔 /astronrag/i 로 키를 걸러서
   // `bbm`·`memory` 같은 이름으로 등록하면 항목을 통째로 놓쳤다. 그 결과가 특히 나쁘다 —
-  // 볼트는 전역으로 새고, 도구 이름은 존재하지 않는 mcp__bigbrainmemory__* 로 나간다.
+  // 볼트는 전역으로 새고, 도구 이름은 존재하지 않는 mcp__astronrag__* 로 나간다.
   // 지연 로드 도구는 정확한 이름으로만 부를 수 있으므로, 틀린 이름 광고는 무주입보다 나쁘다.
   const vOther = makeVault(root, "OTHER", 3);
   const proj2 = path.join(root, "proj2");
   fs.mkdirSync(proj2, { recursive: true });
   fs.writeFileSync(
     path.join(proj2, ".mcp.json"),
-    JSON.stringify({ mcpServers: { bbm: { env: { BIGBRAIN_VAULT: vOther } } } }),
+    JSON.stringify({ mcpServers: { bbm: { env: { ASTRONRAG_VAULT: vOther } } } }),
     "utf-8",
   );
   const odd = run(["--start"], proj2);
-  check("키 이름에 bigbrain 이 없어도 볼트를 찾음", odd.out.includes(vOther.replace(/\\/g, "/")), odd.out.slice(0, 300));
-  check("키 이름에 bigbrain 이 없어도 그 키로 도구 이름 생성", odd.out.includes("mcp__bbm__remember"), odd.out.slice(0, 400));
+  check("키 이름에 astronrag 이 없어도 볼트를 찾음", odd.out.includes(vOther.replace(/\\/g, "/")), odd.out.slice(0, 300));
+  check("키 이름에 astronrag 이 없어도 그 키로 도구 이름 생성", odd.out.includes("mcp__bbm__remember"), odd.out.slice(0, 400));
 
   // 실행 명령으로도 판별한다(env 를 안 쓰고 인자로 넘기는 등록 방식)
   const proj3 = path.join(root, "proj3");
   fs.mkdirSync(proj3, { recursive: true });
   fs.writeFileSync(
     path.join(proj3, ".mcp.json"),
-    JSON.stringify({ mcpServers: { memory: { command: "node", args: ["/opt/bigbrainmemory/dist/index.js"] } } }),
+    JSON.stringify({ mcpServers: { memory: { command: "node", args: ["/opt/astronrag/dist/index.js"] } } }),
     "utf-8",
   );
   const byCmd = run(["--start", "--vault", v], proj3);
   check("실행 명령으로도 서버를 식별", byCmd.out.includes("mcp__memory__remember"), byCmd.out.slice(0, 400));
 }
+hook_actual_registered_name_preserved();
 
 // ── 2-c. 기억은 있는데 인덱스를 못 읽는 경우
 console.log("2-c) MEMORY.md 손실 — 건수라도 알린다");
@@ -263,7 +294,7 @@ console.log("4-b) SQLite 훅 실패 시 stdout 침묵");
     ["--start", "--vault-force", root],
     root,
     startEvent(),
-    { BBM_STORE: "sqlite", BBM_SQLITE_PATH: path.join(parentFile, "store.sqlite") },
+    { ASTRONRAG_STORE: "sqlite", ASTRONRAG_SQLITE_PATH: path.join(parentFile, "store.sqlite") },
   );
   check("test_hook_failure_keeps_stdout_empty_with_sqlite_store", result.out === "" && result.code === 0, result.out.slice(0, 200));
 }
@@ -450,8 +481,9 @@ console.log("6-b) 인덱스 절단 표시");
 //
 // Stop 은 매 턴 실행되므로 한 번의 지연이 대화 전체에 곱해진다. stdin 이 닫히지 않는
 // 파이프로 상속돼도 훅은 반드시 즉시 끝나야 한다.
-console.log("7) stdin 부재·불량 내성");
-{
+function hook_config_format_preserved() {
+  console.log("hook_config_format_preserved");
+  console.log("7) stdin 부재·불량 내성");
   const root = freshDir("stdin");
   const v = makeVault(root, "I", 2);
   const t0 = Date.now();
@@ -463,8 +495,21 @@ console.log("7) stdin 부재·불량 내성");
 
   const junk = run(["--start", "--vault-force", v], root, "이건 JSON 이 아닙니다{{{");
   check("깨진 stdin 이어도 종료코드 0", junk.code === 0);
-  check("깨진 stdin 이어도 주입은 정상", junk.out.includes("bigbrainmemory-index"), junk.out.slice(0, 200));
+  check("깨진 stdin 이어도 주입은 정상", junk.out.includes("astronrag-index"), junk.out.slice(0, 200));
+
+  const legacyVault = makeVault(root, "LEGACY_INVALID_NEW", 9);
+  for (const cfg of [null, [], { mcpServers: "invalid" }, { mcpServers: { astronrag: { env: { ASTRONRAG_VAULT: 123, BIGBRAIN_VAULT: legacyVault, ASTRONRAG_PROJECT: [] } } } }]) {
+    fs.writeFileSync(path.join(root, ".mcp.json"), JSON.stringify(cfg));
+    const result = run(["--start", "--vault", v], root, "JSON 아님{");
+    check("비정상 MCP 설정도 종료코드 0", result.code === 0, JSON.stringify(cfg));
+    check("비정상 새 환경 값은 설치 폴백 사용", result.out.includes(`vault="${v.replace(/\\/g, "/")}"`), result.out.slice(0, 200));
+    check("비정상 새 값이 옛 볼트로 돌아가지 않음", !result.out.includes(`vault="${legacyVault.replace(/\\/g, "/")}"`));
+  }
+  fs.writeFileSync(path.join(root, ".mcp.json"), "JSON 아님{");
+  const malformed = run(["--start", "--vault", v], root);
+  check("깨진 MCP JSON도 폴백과 종료코드 유지", malformed.code === 0 && malformed.out.includes('memories="2"'));
 }
+hook_config_format_preserved();
 
 for (const d of cleanups) fs.rmSync(d, { recursive: true, force: true });
 
