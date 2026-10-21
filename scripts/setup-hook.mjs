@@ -215,7 +215,7 @@ try {
 
 const hooks = settings.hooks && typeof settings.hooks === "object" ? settings.hooks : {};
 
-// 세 훅을 한 벌로 다룬다 — 전부 같은 마커 파일로 세션 상태를 공유한다.
+// 세 훅은 동일 session_id의 세션별 마커 파일로 상태를 공유한다.
 //   SessionStart    회상 트리거 (볼트 인덱스 주입)
 //   UserPromptSubmit 자동 회상·부호화 큐 (턴 시작 — 원문이 아직 살아 있는 시점)
 //   Stop            무저장 감지 (안전망, 세션 끝)

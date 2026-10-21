@@ -13,6 +13,7 @@
 // 라이브 볼트는 건드리지 않는다 — 전부 os.tmpdir() 임시 볼트.
 
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -20,7 +21,7 @@ import { fileURLToPath } from "node:url";
 
 // 시험 기본값을 사용자 환경 설정과 격리한다.
 for (const key of Object.keys(process.env)) {
-  if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key) && !key.startsWith("ASTRONRAG_TEST_")) delete process.env[key];
+	if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key)) delete process.env[key];
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -36,7 +37,7 @@ function check(name, cond, detail = "") {
 }
 
 const cleanups = /** @type {string[]} */ (Array());
-const testTmp = path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? os.tmpdir());
+const testTmp = path.resolve(os.tmpdir());
 fs.mkdirSync(testTmp, { recursive: true });
 function freshDir(name) {
   const d = fs.mkdtempSync(path.join(testTmp, `bbm-hook-${name}-`));
@@ -57,23 +58,25 @@ function makeVault(root, label, n) {
 }
 
 /** guard 실행 — { out, code }. input 은 훅이 stdin 으로 받는 이벤트 JSON. */
-function run(args, cwd, input = "", extraEnv = {}) {
+function run(args, cwd, input = JSON.stringify({ session_id: "S1", source: "startup" }), extraEnv = {}) {
+	const forced = args.indexOf("--vault-force");
+	const vault = forced >= 0 ? args[forced + 1] : cwd;
   try {
     const out = execFileSync(process.execPath, [guard, ...args], {
       cwd,
       encoding: "utf-8",
       timeout: 15000,
-      input,
-      env: { ...process.env, HOME: isolatedHome, USERPROFILE: isolatedHome, ASTRONRAG_STORE: "file", ...extraEnv },
+			input: input ?? JSON.stringify({ session_id: "S1", source: "startup" }),
+			env: { ...process.env, HOME: isolatedHome, USERPROFILE: isolatedHome, ...(forced >= 0 ? { ASTRONRAG_VAULT: vault } : {}), ASTRONRAG_SQLITE_PATH: path.join(vault, ".bbm", "store.sqlite"), ASTRONRAG_STORE: "file", ...extraEnv },
     });
     return { out, code: 0 };
   } catch (err) {
     return { out: err.stdout ?? "", code: err.status ?? -1 };
   }
 }
-const startEvent = (o = {}) => JSON.stringify({ hook_event_name: "SessionStart", ...o });
-const stopEvent = (o = {}) => JSON.stringify({ hook_event_name: "Stop", ...o });
-const readMarkerRaw = (v) => fs.readFileSync(path.join(v, ".bbm-session-start"), "utf-8").trim();
+const startEvent = (o = {}) => JSON.stringify({ hook_event_name: "SessionStart", session_id: "S1", ...o });
+const stopEvent = (o = {}) => JSON.stringify({ hook_event_name: "Stop", session_id: "S1", ...o });
+const readMarkerRaw = (v, id = "S1") => fs.readFileSync(path.join(v, ".bbm", "sessions", `${createHash("sha256").update(id).digest("hex")}.json`), "utf-8").trim();
 const addMemory = (v, n) => fs.writeFileSync(path.join(v, "memories", `${n}.md`), "x", "utf-8");
 /**
  * Stop 훅 출력에서 **모델에 실제로 전달되는 본문**을 꺼낸다 (도달하지 않으면 "").
@@ -319,29 +322,29 @@ console.log("5) 마커 생명주기 — 재개·압축이 기준선을 지운다
   const afterCompact = run(["--stop", "--vault-force", v1], root, stopEvent({ session_id: "S1" }));
   check("압축 전 저장분이 인정돼 침묵함(오탐 없음)", afterCompact.out.trim() === "", afterCompact.out.slice(0, 200));
 
-  // 5-2. session_id 를 못 받아도 source 로 이어지는 세션을 알아본다
+	// 5-2. ID 없는 start는 재개 source여도 세션 파일을 만들지 않는다.
   const v2 = makeVault(root, "M2", 0);
-  run(["--start", "--vault-force", v2], root, startEvent({ source: "startup" }));
+	run(["--start", "--vault-force", v2], root, startEvent({ session_id: null, source: "startup" }));
   addMemory(v2, "a");
-  run(["--start", "--vault-force", v2], root, startEvent({ source: "resume" }));
-  check("session_id 없어도 resume 이면 기준선 보존", JSON.parse(readMarkerRaw(v2)).count === 0, readMarkerRaw(v2));
+	run(["--start", "--vault-force", v2], root, startEvent({ session_id: null, source: "resume" }));
+	check("session_id 없으면 resume도 marker 생성 없음", !fs.existsSync(path.join(v2, ".bbm", "sessions")));
 
   // 5-3. 진짜 새 세션이면 기준선을 갱신해야 한다(안 하면 영원히 침묵)
   const v3 = makeVault(root, "M3", 0);
   run(["--start", "--vault-force", v3], root, startEvent({ session_id: "S1", source: "startup" }));
   addMemory(v3, "a");
   run(["--start", "--vault-force", v3], root, startEvent({ session_id: "S2", source: "startup" }));
-  check("다른 session_id 면 기준선 갱신(1건)", JSON.parse(readMarkerRaw(v3)).count === 1, readMarkerRaw(v3));
+	check("다른 session_id 면 독립 기준선(1건)", JSON.parse(readMarkerRaw(v3, "S2")).count === 1, readMarkerRaw(v3, "S2"));
 
-  // 5-4. 다른 세션의 Stop 은 비교가 성립하지 않으므로 침묵
+	// 5-4. 먼저 시작한 세션의 Stop도 자신의 기준선으로 저장을 인정한다.
   const cross = run(["--stop", "--vault-force", v3], root, stopEvent({ session_id: "S1" }));
-  check("마커를 남긴 세션과 다르면 stop 침묵", cross.out.trim() === "", cross.out.slice(0, 200));
+	check("먼저 시작한 세션의 저장 인정", cross.out.trim() === "", cross.out.slice(0, 200));
 
-  // 5-5. 구형(숫자만) 마커 하위 호환 — 업그레이드해도 경고가 깨지지 않아야 한다
+	// 5-5. 구형 숫자 marker는 추적 근거로 사용하지 않는다.
   const v4 = makeVault(root, "M4", 2);
   fs.writeFileSync(path.join(v4, ".bbm-session-start"), "2", "utf-8");
   const legacy = run(["--stop", "--vault-force", v4], root, stopEvent({ session_id: "S9" }));
-  check("구형 숫자 마커도 해석해 경고", stopContext(legacy.out) !== "", legacy.out.slice(0, 200));
+	check("구형 숫자 marker만 있으면 Stop 침묵", legacy.out === "", legacy.out.slice(0, 200));
 }
 
 // ── 6. 경고 빈도 (H6)
@@ -417,14 +420,14 @@ console.log("5-b) 볼트 손실 감지");
 
   // 1회차: 기준선 기록 (총 5건)
   run(["--start", "--vault-force", v], root, startEvent({ session_id: "L1", source: "startup" }));
-  check("마커에 총량 기록", JSON.parse(readMarkerRaw(v)).total === 5, readMarkerRaw(v));
+	check("마커에 총량 기록", JSON.parse(readMarkerRaw(v, "L1")).total === 5, readMarkerRaw(v, "L1"));
 
   // forget 은 이동이다 — 총량 불변이므로 경고하면 안 된다 (오탐 방지)
   fs.mkdirSync(archiveOf(v), { recursive: true });
   fs.renameSync(path.join(v, "memories", "L-0.md"), path.join(archiveOf(v), "L-0.md"));
   const forgot = run(["--start", "--vault-force", v], root, startEvent({ session_id: "L2", source: "startup" }));
   check("forget(아카이브 이동)은 손실이 아님", !/MEMORY LOSS/.test(forgot.out), forgot.out.slice(0, 200));
-  check("이동 후에도 총량은 5로 유지", JSON.parse(readMarkerRaw(v)).total === 5, readMarkerRaw(v));
+	check("이동 후에도 총량은 5로 유지", JSON.parse(readMarkerRaw(v, "L2")).total === 5, readMarkerRaw(v, "L2"));
 
   // 진짜 소실 — 볼트 밖에서 파일이 사라진다
   fs.unlinkSync(path.join(v, "memories", "L-1.md"));

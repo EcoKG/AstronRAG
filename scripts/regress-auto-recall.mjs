@@ -97,7 +97,7 @@ function tempDir(tag) {
 const home = tempDir("home");
 
 /** 자식 훅 환경 — HOME 을 임시 디렉터리로 돌려 실사용 설정을 읽지 않게 한다 */
-const hookEnv = (extra = {}) => ({ ...process.env, USERPROFILE: home, HOME: home, ASTRONRAG_STORE: "file", ...extra });
+const hookEnv = (extra = {}, vault = home) => ({ ...process.env, USERPROFILE: home, HOME: home, ASTRONRAG_VAULT: vault, ASTRONRAG_SQLITE_PATH: path.join(vault, ".bbm", "store.sqlite"), ASTRONRAG_STORE: "file", ...extra });
 
 /** session-guard 를 띄워 { stdout, status, ms } 를 돌려준다 */
 function runGuard(args, { cwd, input = "", env = {}, script = guard }) {
@@ -107,7 +107,7 @@ function runGuard(args, { cwd, input = "", env = {}, script = guard }) {
 		input,
 		encoding: "utf-8",
 		timeout: 15000,
-		env: hookEnv(env),
+		env: hookEnv(env, args[args.indexOf("--vault-force") + 1] ?? cwd),
 	});
 	return { stdout: r.stdout ?? "", status: r.status, ms: performance.now() - t0 };
 }
@@ -126,6 +126,9 @@ const start = (vault, sessionId, source = "startup") =>
 		cwd: vault,
 		input: JSON.stringify({ hook_event_name: "SessionStart", session_id: sessionId, source }),
 	});
+
+/** 세션 ID 원문을 해시한 marker 경로를 반환한다. */
+const sessionMarkerPath = (vault, id) => path.join(vault, ".bbm", "sessions", `${crypto.createHash("sha256").update(id).digest("hex")}.json`);
 
 /** 훅 stdout 의 JSON (비었으면 null, 깨졌으면 undefined) */
 function parseOut(stdout) {
@@ -314,7 +317,8 @@ if (values.bench) {
 			...(hit ? [{ label: `hit(${hit.label})`, text: `please check ${hit.query} again` }] : []),
 			{ label: "miss", text: "please check this unrelated thing again" },
 		];
-		const marker = path.join(dir, ".bbm-session-start");
+		start(dir, "BENCH");
+		const marker = sessionMarkerPath(dir, "BENCH");
 		const fileCount = fs.readdirSync(path.join(dir, "memories")).length;
 		const hookRuns = (text) => {
 			const runs = Array.from({ length: rounds }, () => {
@@ -519,7 +523,7 @@ try {
 	{
 		start(v, "D1");
 		const first = recallOf(prompt(v, "D1", EXACT).stdout);
-		const marker = () => JSON.parse(fs.readFileSync(path.join(v, ".bbm-session-start"), "utf-8"));
+		const marker = () => JSON.parse(fs.readFileSync(sessionMarkerPath(v, "D1"), "utf-8"));
 		check("첫 턴에 주입", first.slugs.includes(EXACT_SLUG));
 		check("마커에 주입한 slug 가 남는다", marker().autoSlugs?.includes(EXACT_SLUG), JSON.stringify(marker()));
 		const second = recallOf(prompt(v, "D1", EXACT).stdout);
@@ -608,12 +612,16 @@ try {
 		fs.writeFileSync(markerPath, String(n), "utf-8");
 		const legacy = prompt(v, "LEGACY", EXACT);
 		check("숫자 하나짜리 구형 마커에서도 주입", legacy.status === 0 && recallOf(legacy.stdout).slugs.includes(EXACT_SLUG), legacy.stdout.slice(0, 200));
-		check("구형 마커를 JSON 으로 올리며 slug 를 기록", JSON.parse(fs.readFileSync(markerPath, "utf-8")).autoSlugs?.includes(EXACT_SLUG));
+		check("구형 숫자 marker 불변", fs.readFileSync(markerPath, "utf-8") === String(n));
+		start(v, "NOSLUG");
+		const noSlugPath = sessionMarkerPath(v, "NOSLUG");
+		fs.writeFileSync(noSlugPath, JSON.stringify({ sessionId: "NOSLUG", count: n, total: n, warned: false }), "utf-8");
 		fs.writeFileSync(markerPath, JSON.stringify({ sessionId: "NOSLUG", count: n, total: n, warned: false }), "utf-8");
 		const noField = prompt(v, "NOSLUG", EXACT);
 		check("autoSlugs 없는 마커에서도 주입", recallOf(noField.stdout).slugs.includes(EXACT_SLUG));
 		const stop = runGuard(["--stop", "--vault-force", v], { cwd: v, input: JSON.stringify({ session_id: "NOSLUG" }) });
-		check("Stop 훅이 autoSlugs 를 보존", stop.status === 0 && JSON.parse(fs.readFileSync(markerPath, "utf-8")).autoSlugs?.includes(EXACT_SLUG), fs.readFileSync(markerPath, "utf-8"));
+		check("Stop 훅이 autoSlugs 를 보존", stop.status === 0 && JSON.parse(fs.readFileSync(noSlugPath, "utf-8")).autoSlugs?.includes(EXACT_SLUG), fs.readFileSync(noSlugPath, "utf-8"));
+		check("구형 JSON marker 불변", fs.readFileSync(markerPath, "utf-8") === JSON.stringify({ sessionId: "NOSLUG", count: n, total: n, warned: false }));
 	}
 
 	console.log("8) 대조 필요(T49 세 번째 채널)·프로젝트 범위");
@@ -687,6 +695,7 @@ try {
 	console.log("11) 사용 로그 — 건수·1위 점수만, 질의 내용 없음");
 	{
 		const w = fixtureVault("log");
+		start(w, "S11");
 		prompt(w, "S11", EXACT);
 		const raw = fs.readFileSync(path.join(w, ".bbm-usage.jsonl"), "utf-8");
 		const last = JSON.parse(raw.trim().split("\n").at(-1) ?? "{}");
@@ -732,7 +741,7 @@ try {
 	{
 		const src = fs.readFileSync(guard, "utf-8");
 		const staticImports = [...src.matchAll(/^import\s[^;]*?from\s+"([^"]+)"/gm)].map((m) => m[1]).sort();
-		check("session-guard 정적 import 는 환경 도우미·node 내장 모듈뿐", JSON.stringify(staticImports) === JSON.stringify(["./lib/env.mjs", "node:fs", "node:os", "node:path", "node:url"]), JSON.stringify(staticImports));
+		check("session-guard 정적 import 는 환경 도우미·node 내장 모듈뿐", JSON.stringify(staticImports) === JSON.stringify(["./lib/env.mjs", "node:crypto", "node:fs", "node:os", "node:path", "node:url"]), JSON.stringify(staticImports));
 		const mod = await import("node:module");
 		if (typeof mod.registerHooks !== "function") console.log("  - 건너뜀: module.registerHooks 가 없는 Node");
 		else {
@@ -781,7 +790,7 @@ try {
 				cwd: t,
 				encoding: "utf-8",
 				timeout: 60000,
-				env: hookEnv(),
+				env: hookEnv({}, vault),
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 		} catch (err) {
