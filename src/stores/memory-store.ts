@@ -43,7 +43,8 @@ export interface MemoryStore {
 	writeIndex(markdown: string): void;
 	inspect(): StoreInspection;
 	makeSlug(title: string): string;
-	appendUsageEvent(event: Omit<StoreUsageEvent, "ts"> & { ts?: string }): void;
+	/** 사용 이벤트 추가의 제한 시간과 오류 전달 정책을 지정한다. */
+	appendUsageEvent(event: Omit<StoreUsageEvent, "ts"> & { ts?: string }, options?: { timeoutMs?: number; throwOnError?: boolean }): void;
 	readUsageEvents(): StoreUsageEvent[];
 	loadEmbeddings(model: string, expectedDim?: number): StoredEmbedding[];
 	replaceEmbeddings(model: string, rows: StoredEmbedding[]): void;

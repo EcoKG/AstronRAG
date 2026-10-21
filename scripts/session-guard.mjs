@@ -43,6 +43,8 @@ const MIN_TOOL_USES = (() => {
 })();
 /** 훅 입력(stdin) 을 기다리는 한계 시간 — 넘기면 없는 셈 치고 진행한다(행 방지) */
 const STDIN_TIMEOUT_MS = 250;
+/** usage 쓰기의 busy 재시도 총예산을 밀리초로 정한다. */
+const USAGE_WRITE_TIMEOUT_MS = 125;
 /** 자동 회상: 이보다 짧은 프롬프트는 검색하지 않는다 */
 const AUTO_MIN_PROMPT = 8;
 /** 자동 회상: 코드블록을 뺀 프롬프트에서 질의로 쓰는 앞부분 길이 */
@@ -377,24 +379,16 @@ function readMarker(file = markerPath, sessionId = hookInput.sessionId) {
 	} catch { return null; }
 }
 
-/**
- * 사용 계측 — 서버와 **같은 로그 파일**에 세션 단위 사건을 남긴다 (T33).
- *
- * 왜 훅이 기록하는가: 저장률의 분모인 "세션" 을 아는 것은 훅뿐이다. stdio 서버는 세션
- * 개념이 없고(프로세스가 곧 세션에 가까운 근사일 뿐), `session_id` 는 훅 입력으로만 온다.
- * 게다가 Stop 훅은 이미 "이 세션에서 새로 저장됐는가" 를 계산하고 있다 — A/B 1차 지표를
- * 이미 손에 쥐고 있으면서 버리고 있었다.
- *
- * 내용은 남기지 않는다. 수치와 식별자뿐이다.
- */
+/** 수치·식별자만 기록하고 쓰기 실패는 내용 없는 stderr 한 줄로 알린다. */
 function logUsage(event) {
 	if (!hookInput.sessionId) return;
-  if (readEnv("ASTRONRAG_USAGE_LOG", "BIGBRAIN_USAGE_LOG") === "0") return;
-  try {
-    selectedStore?.appendUsageEvent({ src: "hook", ...event });
-  } catch {
-    /* 계측 실패가 훅을 망가뜨리면 안 된다. */
-  }
+	if (readEnv("ASTRONRAG_USAGE_LOG", "BIGBRAIN_USAGE_LOG") === "0") return;
+	try {
+		selectedStore?.appendUsageEvent({ src: "hook", ...event }, { timeoutMs: USAGE_WRITE_TIMEOUT_MS, throwOnError: true });
+	} catch (error) {
+		const code = typeof error?.code === "string" && /^[A-Z0-9_]{1,40}$/.test(error.code) ? error.code : "UNKNOWN";
+		process.stderr.write(`astronrag usage: write failed (${code})\n`);
+	}
 }
 
 /** 동일 디렉터리의 임시 JSON을 rename해 최종 파일을 원자적으로 교체한다. */
@@ -534,22 +528,18 @@ if (mode === "prompt") {
   // 자동 회상 (T44). 이미 주입한 slug 는 같은 세션의 마커가 있을 때만 거르고 기록한다
   const recall = await autoRecall(hookInput.prompt, m && tracked ? m.autoSlugs : []);
   if (recall) {
-    // 질의 내용은 남기지 않는다 — 건수와 1위 점수뿐이다
-		if (tracked) logUsage({ tool: "auto_recall", sessionId: hookInput.sessionId, injected: recall.slugs.length, topScore: recall.topScore });
+		logUsage({ tool: "auto_recall", sessionId: hookInput.sessionId, injected: recall.slugs.length, topScore: recall.topScore });
     if (m && tracked && recall.slugs.length > 0) m.autoSlugs = [...m.autoSlugs, ...recall.slugs].slice(-AUTO_SLUG_KEEP);
   }
-  /**
-   * 회상 블록과 부호화 큐를 한 JSON 의 hookSpecificOutput.additionalContext 로 낸다(회상 → 큐 순서). 낼 것이 없으면 아무것도 쓰지 않는다.
-   * 평문과 JSON 을 섞어 내면 JSON 으로 해석되지 않고, 최상위 additionalContext 는 무시된다.
-   */
-  const emitPrompt = (cue = "") => {
-    const context = [recall?.block, cue].filter(Boolean).join("\n");
-    if (context) {
-      process.stdout.write(
-        `${JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } })}\n`,
-      );
-    }
-  };
+	/** 회상·큐를 단일 JSON으로 출력한다. */
+	const emitPrompt = (cue = "") => {
+		const context = [recall?.block, cue].filter(Boolean).join("\n");
+		if (context) {
+			process.stdout.write(
+				`${JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } })}\n`,
+			);
+		}
+	};
   if (!m || !tracked) {
     emitPrompt();
     process.exit(0);
