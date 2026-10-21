@@ -6,6 +6,16 @@
 
 기본은 SQLite(`ASTRONRAG_STORE=sqlite`), Markdown은 `ASTRONRAG_STORE=file`입니다. SQLite의 기본 DB는 `<볼트>/.bbm/store.sqlite`입니다. Markdown 파일 편집이나 뷰어 내보내기는 **파일 저장소 데이터**에 적용합니다. SQLite DB를 쓰면서 `memories/*.md`만 편집해도 DB의 기억이 바뀌지는 않습니다.
 
+SQLite 테이블은 기억과 부속 데이터용 `memories`·`memory_tags`·`memory_links`·`memory_history`·`memory_derived_from`·`memory_revisions`, 사용 이벤트용 `usage_events`, 벡터용 `embeddings`, 메타데이터용 `store_meta`, 추천 피드백용 `recommendation_feedback`입니다. 추천 피드백에는 검증된 식별자·구조화 신호·수치형 결과·판정과 생성 시각을 저장하며 본문·설명은 저장하지 않습니다. file store에서 `record_recommendation_feedback`를 호출하면 unsupported 오류입니다. 입력·중복·신뢰도 반영 조건은 [피드백 도구](tools.md#record_recommendation_feedback)를 따릅니다.
+
+근거: `src/stores/sqlite-store.ts`의 `SqliteStore.constructor`·`SqliteStore.recordRecommendationFeedback`·`SqliteStore.recommendationFeedbackStats`, `src/index.ts`의 `server.registerTool`의 `record_recommendation_feedback` 등록.
+
+## MCP 도구 노출 확인
+
+빌드한 서버를 사용하도록 MCP 클라이언트의 실행 경로를 확인하고 서버 프로세스를 재시작한 뒤 재연결합니다. 클라이언트의 도구 목록에서 11개 도구와 `model_catalog`·`record_recommendation_feedback`를 확인합니다. 두 도구는 저장소 종류·온톨로지 유효성과 관계없이 등록되며, 호출 시의 지원 여부·오류는 [도구 문서](tools.md)를 따릅니다.
+
+근거: `src/index.ts`의 `server.registerTool`의 각 도구 등록·`main`, `scripts/regress-mcp-config.mjs`의 `expected`.
+
 ## Markdown에서 SQLite로 이관
 
 운영 MCP 프로세스를 멈추고 실행합니다. 아래 경로를 실제 경로로 바꿉니다.
@@ -29,6 +39,8 @@ node scripts/export-store-to-vault.mjs --store-path ./data/store.sqlite --out ./
 DB를 읽기 전용으로 열어 새 Markdown 볼트로 내보냅니다. `--out` 생략 시 현재 작업 폴더 아래 고유한 새 폴더를 사용합니다. 출력은 작업 폴더 안의 빈 폴더만 허용하며 운영 볼트·원본 DB 디렉터리와 겹치는 경로, 링크를 거부합니다. `--dry-run`은 전체 검증과 예상 건수만 출력하고 파일을 만들지 않습니다.
 
 기억·보관 기억·교정 스냅샷·사용 이벤트·벡터를 보존합니다. 손상 행이나 볼트 형식으로 손실 없이 표현할 수 없는 값은 쓰기 전에 실패합니다. 벡터는 단일 모델·같은 차원만 지원합니다. 출력 폴더를 확인한 뒤 FileStore 경로로 사용합니다. 근거: `scripts/export-store-to-vault.mjs`의 `defaultOut`·`parseCli`·`exportStoreToVault`, `src/stores/sqlite-store.ts`의 `SqliteStore.integrityCheck`.
+
+`recommendation_feedback`는 Markdown 볼트로 내보내지 않습니다. 추천 피드백을 보존하려면 원본 SQLite DB도 보관합니다. 근거: `src/stores/sqlite-store.ts`의 `SqliteStore.exportVaultSnapshot`, `scripts/export-store-to-vault.mjs`의 `exportStoreToVault`.
 
 ## Markdown 볼트 구조
 

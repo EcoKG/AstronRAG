@@ -4,7 +4,7 @@
 
 ## 도구 입력
 
-도구 9개는 모두 조건 없이 등록됩니다. 아래 표에서 필수 외 항목은 선택입니다. `id`는 id 또는 슬러그를 뜻합니다. 기억 유형은 `episodic`·`semantic`·`procedural`·`preference`입니다.
+도구 11개는 모두 조건 없이 등록됩니다. 아래 표에서 필수 외 항목은 선택입니다. 기억 도구의 `id`는 id 또는 슬러그를 뜻합니다. 기억 유형은 `episodic`·`semantic`·`procedural`·`preference`입니다. 추천 관련 도구의 모델 식별자는 아래 각 절의 검증을 따릅니다.
 
 | 도구 | 필수 | 선택 입력·기본값 | 근거 |
 |---|---|---|---|
@@ -16,9 +16,44 @@
 | `link` | `source`, `target` | `relation` | `src/index.ts`의 `server.registerTool`의 `link` 등록 |
 | `reflect` | 없음 | 없음 | `src/index.ts`의 `server.registerTool`의 `reflect` 등록 |
 | `list_memories` | 없음 | `type`, `status`(active/superseded/archived), `project` | `src/index.ts`의 `server.registerTool`의 `list_memories` 등록 |
-| `recommend` | `description`(공백 제거 후 1~4000자), `role` | `platform`(claude/codex). role: research/plan/impl/review/ship/ops/coordinator | `src/index.ts`의 `server.registerTool`의 `recommend` 등록 |
+| `recommend` | `description`(앞뒤 공백 제거 후 1~4000자), `role` | `platform`(claude/codex), `size`(small/medium/large), `risk`(normal/high), `novelty`(new/existing), `cross_review_of` | `src/index.ts`의 `server.registerTool`의 `recommend` 등록 |
+| `model_catalog` | 없음 | 없음 | `src/index.ts`의 `server.registerTool`의 `model_catalog` 등록, `src/ontology.ts`의 `modelCatalog` |
+| `record_recommendation_feedback` | `event_id`, `policy_version`, `catalog_revision`, `rule_id`, `model`, `effort`, `role`, `risk`, `verdict`, `input_tokens`, `output_tokens`, `cost_usd`, `duration_ms`, `reverts` | `size`, `novelty`, `cross_review_of` | `src/recommender.ts`의 `feedbackInputSchema`·`validateFeedback` |
 
-`recommend`는 패키지의 온톨로지에서 모델과 effort를 추천합니다. 플랫폼 필터를 받을 수 있고, 파일 읽기·스키마 검증 실패는 `isError` 응답입니다. 외부 모델을 호출해 실행하는 도구는 아닙니다.
+## recommend
+
+패키지 온톨로지의 규칙으로 모델과 effort를 추천합니다. 외부 모델을 호출해 작업을 실행하지 않습니다.
+
+- 필수 입력: `description`은 앞뒤 공백 제거 후 1~4000자, `role`은 research/plan/impl/review/ship/ops/coordinator 중 하나입니다.
+- 선택 입력: `platform`은 claude/codex, `size`는 small/medium/large, `risk`는 normal/high, `novelty`는 new/existing입니다. `cross_review_of`는 검토 대상 모델의 등록된 ID 또는 유일한 별칭이며 앞뒤 공백 제거 후 1~100자입니다. ID·별칭은 대소문자를 구분하지 않으며 알 수 없거나 모호하면 오류입니다.
+- `size`·`novelty`를 생략하면 설명의 키워드로 분류하며 해당 키워드가 없으면 각각 medium·existing입니다. `risk`가 high이거나 보안 키워드가 있으면 위험도는 high입니다. `risk: normal`로 보안 키워드의 판정을 낮추지는 않습니다. 플랫폼 필터와 정책 우선순위 때문에 다른 계열의 교차 검토가 불가능하면 `reasons`에 사유를 돌려줍니다.
+- 출력: `policy_version`, `catalog_revision`, `rule_id`, `model`, `effort`, `role`, 적용된 `size`·`novelty`, `classification`(taskType·difficulty·risk), `reasons`, `appliedConstraints`, `evidence`, `candidates`, `ruleConfidence`입니다. 같은 결과를 JSON 텍스트와 `structuredContent`로 반환합니다.
+- 피드백에는 추천 응답의 버전·규칙·모델·effort·역할과 적용된 `size`·`novelty`, `classification.risk`를 사용합니다. 교차 검토를 지정했다면 같은 `cross_review_of`도 보냅니다. 온톨로지 읽기·스키마 검증 실패, 유효하지 않은 교차 검토 식별자, 허용된 추천 규칙이 없는 경우는 `isError` 응답입니다.
+
+근거: `src/index.ts`의 `server.registerTool`의 `recommend` 등록, `src/recommender.ts`의 `recommendModel`·`classifyTask`·`resolveModel`.
+
+## model_catalog
+
+입력은 없습니다. 출력은 `catalog_revision`과 `models` 배열이며 JSON 텍스트와 `structuredContent`로 같은 결과를 반환합니다.
+
+각 모델의 필드는 `id`, `aliases`, `platform`(claude/codex), `contextTokens`, `maxOutputTokens`, `supportedEfforts`, `pricing`, `sourceUrls`, `evidence`, `checkedAt`, `excluded`, `recommendable`입니다. `pricing`은 가격 tier 배열이며 `promptTokens`는 토큰 구간을 나타내고, `input`·`cacheWrite5m`·`cacheWrite1h`·`cacheRead`·`output`의 단위는 **USD/100만 토큰**입니다. 미확인 최대 출력·가격·확인일은 `null`입니다.
+
+제외된 모델도 목록에 남으며 `excluded`가 true이면 `recommendable`은 항상 false입니다. 온톨로지 읽기·스키마 검증 실패는 `isError` 응답입니다.
+
+근거: `src/index.ts`의 `server.registerTool`의 `model_catalog` 등록, `src/ontology.ts`의 `modelCatalog`·`modelCatalogSchema`·`priceTier`·`isRecommendable`.
+
+## record_recommendation_feedback
+
+추천 결과의 검증된 식별자와 수치형 결과·판정을 SQLite의 `recommendation_feedback` 테이블에 기록합니다. 입력 스키마는 strict이며 정의되지 않은 필드와 본문·설명 같은 자유 텍스트를 거부합니다.
+
+- 필수 식별자: `event_id`는 UUID, `policy_version`·`catalog_revision`은 영문·숫자·점·하이픈으로 된 1~64자입니다. `rule_id`는 `rule:` 뒤에 소문자·숫자·하이픈 1~100자이며, `model`은 등록된 규칙의 모델 ID입니다. `effort`는 low/medium/high/xhigh/max/ultra, `role`은 recommend와 같은 열거형, `risk`는 normal/high, `verdict`는 pass/fail/inconclusive입니다.
+- 필수 수치: `input_tokens`·`output_tokens`·`duration_ms`·`reverts`는 0 이상 9,007,199,254,740,991 이하의 안전 정수입니다. `cost_usd`는 유한한 0 이상 USD 값 또는 `null`이며 생략할 수 없습니다.
+- 선택 신호: `size`(small/medium/large), `novelty`(new/existing), `cross_review_of`(앞뒤 공백 제거 후 1~100자인 등록된 ID 또는 유일한 별칭)입니다. 교차 검토 식별자는 대소문자 구분 없이 해석하고 저장 전에 정식 모델 ID로 정규화합니다.
+- 검증: 현재 온톨로지의 `policy_version`·`catalog_revision`과 같아야 합니다. `rule_id`에 지정된 모델·effort와 일치하고 추천 가능한 모델이어야 합니다. 역할·위험도·규모·신규성·교차 검토 계열 등 규칙의 구조화 조건을 검사합니다. 자유 텍스트를 받지 않으므로 `keyword`·`difficulty`·`analysis` 조건은 재검사하지 않습니다.
+- 응답과 중복: 처음 저장하면 `recorded: true`, `duplicate: false`입니다. 같은 `event_id`에 정규화된 같은 입력을 재전송하면 `recorded: true`, `duplicate: true`이며 중복 저장하지 않습니다. 같은 ID의 값이 다르거나 검증·저장에 실패하면 `isError`입니다. 읽기 전용 SQLite에는 기록할 수 없으며, file store에서는 도구가 등록되어 있어도 unsupported 오류를 반환합니다.
+- 신뢰도: 같은 정책·카탈로그 버전의 규칙별 표본에서 inconclusive를 제외합니다. 성공은 pass이면서 되돌림이 0인 경우입니다. 내장 온톨로지의 `confidencePolicy`는 최소 20건·사전 가중치 20을 사용하며, 표본이 20건 미만이면 규칙의 사전 신뢰도, 20건 이상이면 `(20 × 사전 신뢰도 + 성공 수) / (20 + 표본 수)`입니다. 이 값은 같은 우선순위 안의 정렬에만 쓰입니다. 외부 온톨로지는 그 `confidencePolicy`를 따릅니다.
+
+근거: `src/index.ts`의 `server.registerTool`의 `record_recommendation_feedback` 등록, `src/recommender.ts`의 `feedbackInputSchema`·`validateFeedback`·`resolveModel`·`calculateRuleConfidence`·`recommendModel`, `src/stores/sqlite-store.ts`의 `SqliteStore.recordRecommendationFeedback`·`SqliteStore.recommendationFeedbackStats`, `ontology/ontology.json`의 `confidencePolicy`.
 
 ## 기억 응답과 경계 동작
 
