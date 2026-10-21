@@ -1,248 +1,778 @@
 version: 1
+policy_version: 2026-10-21.1
+catalog_revision: 2026-10-21.1
+confidencePolicy:
+  minimumSamples: 20
+  priorWeight: 20
+classification:
+  securityKeywords:
+    - security
+    - 보안
+    - concurrent
+    - 동시
+    - timing
+    - 타이밍
+    - 정보 노출
+    - 취약점
+    - vulnerability
+  difficultKeywords:
+    - large code
+    - 대형 코드
+    - architecture
+    - 아키텍처
+    - 근본 원인
+    - root cause
+    - 어려운 설계
+  smallKeywords:
+    - 한 파일 수정
+    - 확정된 작은 수정
+    - small confirmed fix
+  newKeywords:
+    - 새로운 설계
+    - new architecture
+  analysisKeywords:
+    - 근본 원인
+    - root cause
+    - 원인 규명
+    - 대규모 원인 조사
+    - large investigation
+    - complex investigation
+documentSources:
+  - https://platform.claude.com/docs/ko/about-claude/models/choosing-a-model
+  - https://platform.claude.com/docs/en/about-claude/models/choosing-a-model
+  - https://platform.claude.com/docs/en/about-claude/models/overview
+  - https://platform.claude.com/docs/en/build-with-claude/effort
+  - https://platform.claude.com/docs/en/build-with-claude/extended-thinking
+  - https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+  - https://platform.claude.com/docs/en/about-claude/pricing
+  - https://platform.claude.com/docs/en/build-with-claude/batch-processing
 taskTypes:
-  - "@id": task:coding
+  - '@id': task:coding
     name: Coding
-  - "@id": task:knowledge
+  - '@id': task:knowledge
     name: Knowledge
 difficulties:
-  - "@id": difficulty:normal
+  - '@id': difficulty:normal
     name: Normal
-  - "@id": difficulty:high
+  - '@id': difficulty:high
     name: High
 risks:
-  - "@id": risk:normal
+  - '@id': risk:normal
     name: Normal
-  - "@id": risk:high
+  - '@id': risk:high
     name: High
 nodeRoles:
-  - "@id": role:research
+  - '@id': role:research
     name: Research
-  - "@id": role:plan
+  - '@id': role:plan
     name: Plan
-  - "@id": role:impl
+  - '@id': role:impl
     name: Implementation
-  - "@id": role:review
+  - '@id': role:review
     name: Review
-  - "@id": role:ship
+  - '@id': role:ship
     name: Ship
-  - "@id": role:ops
+  - '@id': role:ops
     name: Operations
-  - "@id": role:coordinator
+  - '@id': role:coordinator
     name: Coordinator
 models:
-  - "@id": model:claude-fable-5-1
+  - '@id': model:claude-fable-5-1
     id: claude-fable-5-1
+    aliases:
+      - Fable
+    family: claude-fable
+    latest: true
     name: Claude Fable 5.1
     contextTokens: 1000000
     maxOutputTokens: 128000
     defaultEffort: high
-    supportedEfforts: [low, medium, high, xhigh, max]
-    features: [adaptive, image, multilingual, text, tools, vision]
-    platforms: [platform:bedrock, platform:claude-api, platform:foundry, platform:vertex]
+    supportedEfforts:
+      - low
+      - medium
+      - high
+      - xhigh
+      - max
+    features:
+      - adaptive
+      - image
+      - multilingual
+      - text
+      - tools
+      - vision
+    platforms:
+      - platform:bedrock
+      - platform:claude-api
+      - platform:foundry
+      - platform:vertex
     pricing:
-      - { promptTokens: null, input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 0.25, output: 50 }
+      - promptTokens: null
+        input: 10
+        cacheWrite5m: 12.5
+        cacheWrite1h: 20
+        cacheRead: 0.25
+        output: 50
     sources:
-      - { url: "https://platform.claude.com/docs/en/about-claude/models/overview", checkedAt: "2026-10-19", fields: [name, contextTokens, maxOutputTokens, defaultEffort, features, platforms] }
-      - { url: "https://platform.claude.com/docs/en/build-with-claude/effort", checkedAt: "2026-10-19", fields: [supportedEfforts] }
-      - { url: "https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing", checkedAt: "2026-10-19", fields: [pricing] }
-  - "@id": model:claude-opus-5-5
-    id: claude-opus-5-5
-    name: Claude Opus 5.5
-    contextTokens: 1000000
-    maxOutputTokens: 128000
-    defaultEffort: medium
-    supportedEfforts: [low, medium, high, xhigh, max]
-    features: [adaptive, image, multilingual, text, tools, vision]
-    platforms: [platform:bedrock, platform:claude-api, platform:foundry, platform:vertex]
-    pricing:
-      - { promptTokens: null, input: 4, cacheWrite5m: 5, cacheWrite1h: 8, cacheRead: 0.2, output: 20 }
-    sources:
-      - { url: "https://platform.claude.com/docs/en/about-claude/models/overview", checkedAt: "2026-10-19", fields: [name, contextTokens, maxOutputTokens, defaultEffort, features, platforms] }
-      - { url: "https://platform.claude.com/docs/en/build-with-claude/effort", checkedAt: "2026-10-19", fields: [supportedEfforts] }
-      - { url: "https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing", checkedAt: "2026-10-19", fields: [pricing] }
-  - "@id": model:claude-sonnet-5-5
-    id: claude-sonnet-5-5
-    name: Claude Sonnet 5.5
-    contextTokens: 1000000
-    maxOutputTokens: 128000
-    defaultEffort: high
-    supportedEfforts: [low, medium, high, xhigh, max]
-    features: [adaptive, image, multilingual, text, tools, vision]
-    platforms: [platform:bedrock, platform:claude-api, platform:foundry, platform:vertex]
-    pricing:
-      - { promptTokens: null, input: 2, cacheWrite5m: 2.5, cacheWrite1h: 4, cacheRead: 0.1, output: 10 }
-    sources:
-      - { url: "https://platform.claude.com/docs/en/about-claude/models/overview", checkedAt: "2026-10-19", fields: [name, contextTokens, maxOutputTokens, defaultEffort, features, platforms] }
-      - { url: "https://platform.claude.com/docs/en/build-with-claude/effort", checkedAt: "2026-10-19", fields: [supportedEfforts] }
-      - { url: "https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing", checkedAt: "2026-10-19", fields: [pricing] }
-  - "@id": model:claude-haiku-5-5
+      - url: https://platform.claude.com/docs/en/about-claude/models/overview
+        checkedAt: '2026-10-19'
+        fields:
+          - features
+          - platforms
+      - url: https://platform.claude.com/docs/en/about-claude/models/overview
+        checkedAt: '2026-10-21'
+        fields:
+          - contextTokens
+          - defaultEffort
+          - maxOutputTokens
+          - name
+      - url: https://platform.claude.com/docs/en/build-with-claude/effort
+        checkedAt: '2026-10-21'
+        fields:
+          - supportedEfforts
+      - url: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+        checkedAt: '2026-10-21'
+        fields:
+          - pricing
+  - '@id': model:claude-haiku-5-5
     id: claude-haiku-5-5
+    aliases:
+      - Haiku
+    family: claude-haiku
+    latest: true
     name: Claude Haiku 5.5
     contextTokens: 1000000
     maxOutputTokens: 128000
     defaultEffort: medium
-    supportedEfforts: [low, medium, high, xhigh, max]
-    features: [adaptive, image, multilingual, text, tools, vision]
-    platforms: [platform:bedrock, platform:claude-api, platform:foundry, platform:vertex]
+    supportedEfforts:
+      - low
+      - medium
+      - high
+      - xhigh
+      - max
+    features:
+      - adaptive
+      - image
+      - multilingual
+      - text
+      - tools
+      - vision
+    platforms:
+      - platform:bedrock
+      - platform:claude-api
+      - platform:foundry
+      - platform:vertex
     pricing:
-      - { promptTokens: 100000, input: 0.1, cacheWrite5m: 0.125, cacheWrite1h: 0.2, cacheRead: 0.01, output: 0.5 }
-      - { promptTokens: null, input: 0.5, cacheWrite5m: 0.625, cacheWrite1h: 1, cacheRead: 0.05, output: 2.5 }
+      - promptTokens: 100000
+        input: 0.1
+        cacheWrite5m: 0.125
+        cacheWrite1h: 0.2
+        cacheRead: 0.01
+        output: 0.5
+      - promptTokens: null
+        input: 0.5
+        cacheWrite5m: 0.625
+        cacheWrite1h: 1
+        cacheRead: 0.05
+        output: 2.5
     sources:
-      - { url: "https://platform.claude.com/docs/en/about-claude/models/overview", checkedAt: "2026-10-19", fields: [name, contextTokens, maxOutputTokens, defaultEffort, features, platforms] }
-      - { url: "https://platform.claude.com/docs/en/build-with-claude/effort", checkedAt: "2026-10-19", fields: [supportedEfforts] }
-      - { url: "https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing", checkedAt: "2026-10-19", fields: [pricing] }
-  - "@id": model:gpt-6.1-sol
+      - url: https://platform.claude.com/docs/en/about-claude/models/overview
+        checkedAt: '2026-10-19'
+        fields:
+          - features
+          - platforms
+      - url: https://platform.claude.com/docs/en/about-claude/models/overview
+        checkedAt: '2026-10-21'
+        fields:
+          - contextTokens
+          - defaultEffort
+          - maxOutputTokens
+          - name
+      - url: https://platform.claude.com/docs/en/build-with-claude/effort
+        checkedAt: '2026-10-21'
+        fields:
+          - supportedEfforts
+      - url: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+        checkedAt: '2026-10-21'
+        fields:
+          - pricing
+  - '@id': model:claude-opus-5-5
+    id: claude-opus-5-5
+    aliases:
+      - Opus
+    family: claude-opus
+    latest: true
+    name: Claude Opus 5.5
+    contextTokens: 1000000
+    maxOutputTokens: 128000
+    defaultEffort: medium
+    supportedEfforts:
+      - low
+      - medium
+      - high
+      - xhigh
+      - max
+    features:
+      - adaptive
+      - image
+      - multilingual
+      - text
+      - tools
+      - vision
+    platforms:
+      - platform:bedrock
+      - platform:claude-api
+      - platform:foundry
+      - platform:vertex
+    pricing:
+      - promptTokens: null
+        input: 4
+        cacheWrite5m: 5
+        cacheWrite1h: 8
+        cacheRead: 0.2
+        output: 20
+    sources:
+      - url: https://platform.claude.com/docs/en/about-claude/models/overview
+        checkedAt: '2026-10-19'
+        fields:
+          - features
+          - platforms
+      - url: https://platform.claude.com/docs/en/about-claude/models/overview
+        checkedAt: '2026-10-21'
+        fields:
+          - contextTokens
+          - defaultEffort
+          - maxOutputTokens
+          - name
+      - url: https://platform.claude.com/docs/en/build-with-claude/effort
+        checkedAt: '2026-10-21'
+        fields:
+          - supportedEfforts
+      - url: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+        checkedAt: '2026-10-21'
+        fields:
+          - pricing
+  - '@id': model:claude-sonnet-5-5
+    id: claude-sonnet-5-5
+    aliases:
+      - Sonnet
+    family: claude-sonnet
+    latest: true
+    name: Claude Sonnet 5.5
+    contextTokens: 1000000
+    maxOutputTokens: 128000
+    defaultEffort: high
+    supportedEfforts:
+      - low
+      - medium
+      - high
+      - xhigh
+      - max
+    features:
+      - adaptive
+      - image
+      - multilingual
+      - text
+      - tools
+      - vision
+    platforms:
+      - platform:bedrock
+      - platform:claude-api
+      - platform:foundry
+      - platform:vertex
+    pricing:
+      - promptTokens: null
+        input: 2
+        cacheWrite5m: 2.5
+        cacheWrite1h: 4
+        cacheRead: 0.1
+        output: 10
+    sources:
+      - url: https://platform.claude.com/docs/en/about-claude/models/overview
+        checkedAt: '2026-10-19'
+        fields:
+          - features
+          - platforms
+      - url: https://platform.claude.com/docs/en/about-claude/models/overview
+        checkedAt: '2026-10-21'
+        fields:
+          - contextTokens
+          - defaultEffort
+          - maxOutputTokens
+          - name
+      - url: https://platform.claude.com/docs/en/build-with-claude/effort
+        checkedAt: '2026-10-21'
+        fields:
+          - supportedEfforts
+      - url: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+        checkedAt: '2026-10-21'
+        fields:
+          - pricing
+  - '@id': model:gpt-6.1-sol
     id: gpt-6.1-sol
+    aliases:
+      - Codex
+    family: codex-sol
+    latest: true
+    evidence:
+      - evidence:codex-catalog
+    checkedAt: '2026-10-20'
     name: Latest workhorse model for coding and everyday work.
     contextTokens: 500000
     defaultEffort: low
-    supportedEfforts: [low, medium, high, xhigh, max, ultra]
-    features: [text, image]
-    platforms: [platform:codex]
-  - "@id": model:gpt-6-astra
+    supportedEfforts:
+      - low
+      - medium
+      - high
+      - xhigh
+      - max
+      - ultra
+    features:
+      - text
+      - image
+    platforms:
+      - platform:codex
+  - '@id': model:gpt-6-astra
     id: gpt-6-astra
+    aliases:
+      - Astra
+    family: codex-astra
+    latest: true
+    evidence:
+      - evidence:codex-catalog
+    checkedAt: '2026-10-20'
     name: Frontier intelligence for the most demanding work.
     contextTokens: 272000
     defaultEffort: medium
-    supportedEfforts: [low, medium, high, xhigh, max, ultra]
-    features: [text, image]
-    platforms: [platform:codex]
-  - "@id": model:gpt-6-sol
+    supportedEfforts:
+      - low
+      - medium
+      - high
+      - xhigh
+      - max
+      - ultra
+    features:
+      - text
+      - image
+    platforms:
+      - platform:codex
+  - '@id': model:gpt-6-sol
     id: gpt-6-sol
+    family: codex-sol
+    latest: false
+    evidence:
+      - evidence:codex-catalog
+    checkedAt: '2026-10-20'
     name: Previous generation workhorse model.
     contextTokens: 272000
     defaultEffort: medium
-    supportedEfforts: [low, medium, high, xhigh, max, ultra]
-    features: [text, image]
-    platforms: [platform:codex]
-  - "@id": model:gpt-6-luna
+    supportedEfforts:
+      - low
+      - medium
+      - high
+      - xhigh
+      - max
+      - ultra
+    features:
+      - text
+      - image
+    platforms:
+      - platform:codex
+  - '@id': model:gpt-6-luna
     id: gpt-6-luna
+    family: codex-luna
+    latest: true
+    evidence:
+      - evidence:codex-catalog
+    checkedAt: '2026-10-20'
     name: Fast and affordable model for easier tasks.
     contextTokens: 272000
     defaultEffort: medium
-    supportedEfforts: [low, medium, high, xhigh, max]
-    features: [text, image]
-    platforms: [platform:codex]
-  - "@id": model:gpt-5.6-sol
+    supportedEfforts:
+      - low
+      - medium
+      - high
+      - xhigh
+      - max
+    features:
+      - text
+      - image
+    platforms:
+      - platform:codex
+  - '@id': model:gpt-5.6-sol
     id: gpt-5.6-sol
+    family: codex-sol
+    latest: false
+    evidence:
+      - evidence:codex-catalog
+    checkedAt: '2026-10-20'
     name: Older generation workhorse model.
     contextTokens: 272000
     defaultEffort: low
-    supportedEfforts: [low, medium, high, xhigh, max, ultra]
-    features: [text, image]
-    platforms: [platform:codex]
+    supportedEfforts:
+      - low
+      - medium
+      - high
+      - xhigh
+      - max
+      - ultra
+    features:
+      - text
+      - image
+    platforms:
+      - platform:codex
 efforts:
-  - { "@id": effort:low, name: Low }
-  - { "@id": effort:medium, name: Medium }
-  - { "@id": effort:high, name: High }
-  - { "@id": effort:xhigh, name: Extra high }
-  - { "@id": effort:max, name: Maximum }
-  - { "@id": effort:ultra, name: Ultra }
+  - '@id': effort:low
+    name: Low
+  - '@id': effort:medium
+    name: Medium
+  - '@id': effort:high
+    name: High
+  - '@id': effort:xhigh
+    name: Extra high
+  - '@id': effort:max
+    name: Maximum
+  - '@id': effort:ultra
+    name: Ultra
 platforms:
-  - { "@id": platform:codex, name: Codex }
-  - { "@id": platform:claude, name: Claude }
-  - { "@id": platform:claude-api, name: Claude API }
-  - { "@id": platform:bedrock, name: Amazon Bedrock }
-  - { "@id": platform:vertex, name: Google Vertex AI }
-  - { "@id": platform:foundry, name: Microsoft Foundry }
+  - '@id': platform:codex
+    name: Codex
+  - '@id': platform:claude
+    name: Claude
+  - '@id': platform:claude-api
+    name: Claude API
+  - '@id': platform:bedrock
+    name: Amazon Bedrock
+  - '@id': platform:vertex
+    name: Google Vertex AI
+  - '@id': platform:foundry
+    name: Microsoft Foundry
 graphs:
-  - "@id": graph:model-placement
+  - '@id': graph:model-placement
     name: Model placement
-    nodes: [task:coding, task:knowledge, difficulty:normal, difficulty:high, risk:normal, risk:high, role:research, role:plan, role:impl, role:review, role:ship, role:ops, role:coordinator, model:claude-opus-5-5, model:claude-sonnet-5-5, model:claude-haiku-5-5, effort:medium, effort:high, metric:cost, metric:duration, metric:rollback, metric:rejection, metric:intermittent-failure, metric:coordinator-interventions, metric:coordinator-cost]
+    nodes:
+      - task:coding
+      - task:knowledge
+      - difficulty:normal
+      - difficulty:high
+      - risk:normal
+      - risk:high
+      - role:research
+      - role:plan
+      - role:impl
+      - role:review
+      - role:ship
+      - role:ops
+      - role:coordinator
+      - model:claude-opus-5-5
+      - model:claude-sonnet-5-5
+      - model:claude-haiku-5-5
+      - effort:medium
+      - effort:high
+      - metric:cost
+      - metric:duration
+      - metric:rollback
+      - metric:rejection
+      - metric:intermittent-failure
+      - metric:coordinator-interventions
+      - metric:coordinator-cost
 resultMetrics:
-  - { "@id": metric:cost, name: Cost }
-  - { "@id": metric:duration, name: Duration }
-  - { "@id": metric:rollback, name: Rollback count }
-  - { "@id": metric:rejection, name: Rejection count }
-  - { "@id": metric:intermittent-failure, name: Intermittent failure rate }
-  - { "@id": metric:coordinator-interventions, name: Coordinator interventions }
-  - { "@id": metric:coordinator-cost, name: Coordinator cost }
+  - '@id': metric:cost
+    name: Cost
+  - '@id': metric:duration
+    name: Duration
+  - '@id': metric:rollback
+    name: Rollback count
+  - '@id': metric:rejection
+    name: Rejection count
+  - '@id': metric:intermittent-failure
+    name: Intermittent failure rate
+  - '@id': metric:coordinator-interventions
+    name: Coordinator interventions
+  - '@id': metric:coordinator-cost
+    name: Coordinator cost
 evidence:
-  - "@id": evidence:codex-catalog
+  - '@id': evidence:owner-policy
+    label: 주인님 결정 2026-10-21 자율 배정 기준표
+    link: ontology/evidence/owner-policy-2026-10-21.md
+  - '@id': evidence:codex-catalog
     label: Codex CLI catalog observation
-    link: "ontology/evidence/codex-catalog-2026-10-20.md"
-  - "@id": evidence:official-models
+    link: ontology/evidence/codex-catalog-2026-10-20.md
+  - '@id': evidence:official-models
     label: Official model overview
-    link: "https://platform.claude.com/docs/en/about-claude/models/overview"
-  - "@id": evidence:official-effort
+    link: https://platform.claude.com/docs/en/about-claude/models/overview
+  - '@id': evidence:official-effort
     label: Official effort guidance
-    link: "https://platform.claude.com/docs/en/build-with-claude/effort"
-  - "@id": evidence:role-stats
+    link: https://platform.claude.com/docs/en/build-with-claude/effort
+  - '@id': evidence:role-stats
     label: Role and model measurements
-    link: "ontology/evidence/measurements-2026-10-19.md"
-  - "@id": evidence:seed-measurements
+    link: ontology/evidence/measurements-2026-10-19.md
+  - '@id': evidence:seed-measurements
     label: Project seed measurements
-    link: "ontology/evidence/measurements-2026-10-19.md"
+    link: ontology/evidence/measurements-2026-10-19.md
 constraints:
-  - "@id": constraint:owner-exclusions
+  - '@id': constraint:owner-exclusions
     kind: exclude
-    models: [gpt-6-astra, claude-fable-5-1]
+    models:
+      - gpt-6-astra
+      - claude-fable-5-1
     reason: Owner constraint excludes gpt-6-astra and Fable from recommendations and candidates.
-  - "@id": constraint:owner-claude-default
-    kind: default
-    platform: claude
-    models: [claude-opus-5-5]
-    reason: Owner constraint makes Claude Opus the default model.
+    evidence:
+      - evidence:owner-policy
+  - '@id': constraint:latest-models
+    kind: latest-only
+    reason: Only the latest catalog model in each family is eligible.
+    evidence:
+      - evidence:owner-policy
+  - '@id': constraint:haiku-evidence
+    kind: evidence-required
+    models:
+      - claude-haiku-5-5
+    reason: Haiku requires an evidenced owner-approved exception.
+    evidence:
+      - evidence:owner-policy
 rules:
-  - "@id": rule:codex-high-risk
+  - '@id': rule:codex-high-risk
     platform: codex
-    priority: 300
-    conditions: [{ type: risk, values: [high] }]
+    priority: 1000
+    conditions:
+      - type: risk
+        values:
+          - high
     model: gpt-6.1-sol
     effort: high
-    reason: Codex security, concurrency, and timing risks use high effort.
-    evidence: [evidence:codex-catalog, evidence:role-stats]
+    reason: High-risk Codex work uses high effort.
+    evidence:
+      - evidence:owner-policy
     confidence: 0.1
-  - "@id": rule:codex-high-roles
+  - '@id': rule:codex-high-roles
     platform: codex
     priority: 200
-    conditions: [{ type: role, values: [plan, impl, review] }, { type: risk, values: [normal] }]
+    conditions:
+      - type: role
+        values:
+          - plan
+          - impl
+          - review
+      - type: risk
+        values:
+          - normal
     model: gpt-6.1-sol
     effort: high
-    reason: Codex planning, implementation, and review use the current high-effort placement.
-    evidence: [evidence:codex-catalog, evidence:role-stats]
+    reason: Codex implementation, planning and review use high effort.
+    evidence:
+      - evidence:owner-policy
     confidence: 0.1
-  - "@id": rule:codex-medium-roles
+  - '@id': rule:codex-medium-roles
     platform: codex
     priority: 200
-    conditions: [{ type: role, values: [research, ship, coordinator] }, { type: risk, values: [normal] }]
+    conditions:
+      - type: role
+        values:
+          - research
+          - ship
+          - coordinator
+      - type: risk
+        values:
+          - normal
     model: gpt-6.1-sol
     effort: medium
-    reason: Codex research, shipping, and coordination use the current medium-effort placement.
-    evidence: [evidence:codex-catalog, evidence:role-stats]
+    reason: Routine Codex research, shipping and coordination use medium effort.
+    evidence:
+      - evidence:owner-policy
     confidence: 0.1
-  - "@id": rule:codex-fallback
+  - '@id': rule:codex-fallback
     platform: codex
     priority: 100
     conditions: []
     model: gpt-6.1-sol
     effort: medium
     reason: Codex work uses the provisional medium-effort fallback.
-    evidence: [evidence:codex-catalog, evidence:role-stats]
+    evidence:
+      - evidence:owner-policy
     confidence: 0.1
-  - "@id": rule:high-risk-opus
-    priority: 200
+  - '@id': rule:high-risk-opus
+    priority: 1000
     conditions:
-      - { type: risk, values: [high] }
+      - type: risk
+        values:
+          - high
     model: claude-opus-5-5
     effort: high
-    reason: Security, concurrency, and timing risks require the higher Opus effort.
-    evidence: [evidence:official-effort, evidence:role-stats, evidence:seed-measurements]
+    reason: Security and high-risk work use Opus high.
+    evidence:
+      - evidence:owner-policy
     confidence: 0.2
-  - "@id": rule:plan-review-opus
-    priority: 190
+  - '@id': rule:design-opus
+    priority: 800
     conditions:
-      - { type: role, values: [plan, review] }
+      - type: role
+        values:
+          - plan
     model: claude-opus-5-5
     effort: high
-    reason: Planning and review use the measured high-effort Opus placement.
-    evidence: [evidence:official-effort, evidence:role-stats]
+    reason: Difficult design uses Opus high.
+    evidence:
+      - evidence:owner-policy
     confidence: 0.2
-  - "@id": rule:default-opus
+  - '@id': rule:default-sonnet
     priority: 100
     conditions: []
+    model: claude-sonnet-5-5
+    effort: high
+    reason: General implementation, documentation and tests use Sonnet high.
+    evidence:
+      - evidence:owner-policy
+    confidence: 0.2
+  - '@id': rule:root-cause-opus
+    priority: 850
+    conditions:
+      - type: analysis
+        values:
+          - 'yes'
     model: claude-opus-5-5
+    effort: high
+    reason: Root-cause analysis and complex investigation use Opus high.
+    evidence:
+      - evidence:owner-policy
+    confidence: 0.2
+  - '@id': rule:large-structure-opus
+    priority: 900
+    conditions:
+      - type: size
+        values:
+          - large
+      - type: novelty
+        values:
+          - new
+    model: claude-opus-5-5
+    effort: xhigh
+    reason: Large structural changes use Opus xhigh.
+    evidence:
+      - evidence:owner-policy
+    confidence: 0.2
+  - '@id': rule:normal-review-sonnet
+    priority: 200
+    conditions:
+      - type: role
+        values:
+          - review
+      - type: risk
+        values:
+          - normal
+    model: claude-sonnet-5-5
+    effort: high
+    reason: General reviews use Sonnet high.
+    evidence:
+      - evidence:owner-policy
+    confidence: 0.2
+  - '@id': rule:small-confirmed-claude
+    priority: 500
+    conditions:
+      - type: role
+        values:
+          - impl
+      - type: size
+        values:
+          - small
+      - type: novelty
+        values:
+          - existing
+      - type: risk
+        values:
+          - normal
+    model: claude-sonnet-5-5
     effort: medium
-    reason: Claude work defaults to Opus 5.5 medium under the owner constraint.
-    evidence: [evidence:official-models, evidence:official-effort]
+    reason: Small confirmed changes use Sonnet medium.
+    evidence:
+      - evidence:owner-policy
+    confidence: 0.2
+  - '@id': rule:small-confirmed-codex
+    platform: codex
+    priority: 500
+    conditions:
+      - type: role
+        values:
+          - impl
+      - type: size
+        values:
+          - small
+      - type: novelty
+        values:
+          - existing
+      - type: risk
+        values:
+          - normal
+    model: gpt-6.1-sol
+    effort: medium
+    reason: Small confirmed Codex changes use medium effort.
+    evidence:
+      - evidence:owner-policy
+    confidence: 0.1
+  - '@id': rule:codex-analysis
+    platform: codex
+    priority: 850
+    conditions:
+      - type: analysis
+        values:
+          - 'yes'
+    model: gpt-6.1-sol
+    effort: high
+    reason: Codex root-cause analysis and large investigation use high effort.
+    evidence:
+      - evidence:owner-policy
+    confidence: 0.1
+  - '@id': rule:cross-review-codex
+    platform: codex
+    priority: 700
+    conditions:
+      - type: role
+        values:
+          - review
+      - type: cross_family
+        values:
+          - claude
+      - type: risk
+        values:
+          - normal
+    model: gpt-6.1-sol
+    effort: high
+    reason: Claude implementations prefer Codex cross-review.
+    evidence:
+      - evidence:owner-policy
+    confidence: 0.1
+  - '@id': rule:cross-review-claude
+    priority: 700
+    conditions:
+      - type: role
+        values:
+          - review
+      - type: cross_family
+        values:
+          - codex
+      - type: risk
+        values:
+          - normal
+    model: claude-sonnet-5-5
+    effort: high
+    reason: Codex implementations prefer Claude cross-review.
+    evidence:
+      - evidence:owner-policy
+    confidence: 0.2
+  - '@id': rule:simple-work-sonnet
+    priority: 200
+    conditions:
+      - type: role
+        values:
+          - research
+          - ship
+          - ops
+          - coordinator
+      - type: risk
+        values:
+          - normal
+    model: claude-sonnet-5-5
+    effort: medium
+    reason: Shipping and simple queries use Sonnet medium.
+    evidence:
+      - evidence:owner-policy
     confidence: 0.2

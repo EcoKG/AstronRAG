@@ -30,7 +30,7 @@
 
 ```mermaid
 flowchart TB
-	Client["MCP 클라이언트"] <-->|"stdio · 도구 9개 / 프롬프트 1개"| Server["AstronRAG"]
+	Client["MCP 클라이언트"] <-->|"stdio · 도구 11개 / 프롬프트 1개"| Server["AstronRAG"]
 	Server --> Memory["기억 관리 · 회상 순위화"]
 	Memory --> Backend{"저장소 선택"}
 	Backend --> SQLite["SQLite · 기본"]
@@ -160,7 +160,7 @@ npm run setup:hook
 
 ## 제공 도구
 
-**항상 등록되는 도구 9개**와 **프롬프트 1개**를 제공합니다. 온톨로지 로드 실패 시에도 `recommend`는 등록되며 호출 결과로 오류를 돌려줍니다.
+**항상 등록되는 도구 11개**와 **프롬프트 1개**를 제공합니다. `recommend`·`model_catalog`·`record_recommendation_feedback`는 온톨로지 로드 실패 시에도 등록되며 호출 결과로 오류를 돌려줍니다. `record_recommendation_feedback`의 저장은 SQLite에서만 지원합니다(`src/index.ts`의 `server.registerTool`의 각 도구 등록).
 
 | 도구 | 역할 | 주요 입력 |
 |---|---|---|
@@ -172,7 +172,11 @@ npm run setup:hook
 | `link` | 기억 사이 양방향 연결 | `source`, `target` |
 | `reflect` | 약화·중복·깨진 링크·공고화 후보 점검 | 없음 |
 | `list_memories` | 유형·상태·프로젝트별 목록 | 선택 `type`·`status`·`project` |
-| `recommend` | 온톨로지 기반 모델·추론 강도 배치 추천 | `description`, `role`, 선택 `platform` |
+| `recommend` | 구조화 신호를 반영한 모델·effort 추천, 정책·카탈로그 버전과 적용된 size·novelty 반환 | `description`, `role`, 선택 `platform`·`size`·`risk`·`novelty`·`cross_review_of` |
+| `model_catalog` | 모델 사양·가격 tier·근거·확인일·제외 및 추천 가능 여부 조회, 미확인 값은 null | 없음 |
+| `record_recommendation_feedback` | 검증된 식별자와 수치형 결과·판정을 SQLite에 기록, 자유 텍스트 거부 | `event_id`, 정책·카탈로그 버전, 규칙·모델·effort·역할·위험도, 토큰·비용·시간·되돌림 수·판정. [전체 입력](docs/tools.md#record_recommendation_feedback) |
+
+추천 입출력은 `src/index.ts`의 `server.registerTool`의 `recommend` 등록과 `src/recommender.ts`의 `recommendModel`, 모델 목록은 `src/ontology.ts`의 `modelCatalog`·`modelCatalogSchema`, 피드백 검증·저장은 `src/recommender.ts`의 `feedbackInputSchema`·`validateFeedback`와 `src/stores/sqlite-store.ts`의 `SqliteStore.recordRecommendationFeedback`을 따릅니다.
 
 `consolidate`는 도구가 아닌 **정리 프롬프트**입니다. Claude Code에서는 `/mcp__astronrag__consolidate`로 불러 후보 비교·교정·연결·재확인 절차를 읽습니다. 자동 병합이나 삭제는 하지 않습니다. [전체 매개변수와 응답 필드](docs/tools.md)
 

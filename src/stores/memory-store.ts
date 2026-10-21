@@ -1,5 +1,26 @@
 import type { MemoryRecord } from "../types.js";
 
+export interface RecommendationFeedback {
+	event_id: string;
+	policy_version: string;
+	catalog_revision: string;
+	rule_id: string;
+	model: string;
+	effort: "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+	role: "research" | "plan" | "impl" | "review" | "ship" | "ops" | "coordinator";
+	size?: "small" | "medium" | "large";
+	risk: "normal" | "high";
+	novelty?: "new" | "existing";
+	cross_review_of?: string;
+	input_tokens: number;
+	output_tokens: number;
+	cost_usd: number | null;
+	duration_ms: number;
+	reverts: number;
+	verdict: "pass" | "fail" | "inconclusive";
+}
+export type RuleStatistics = Record<string, { samples: number; successes: number }>;
+
 /** 파일의 inode·수정 시각·크기 또는 [content, 내용 해시, 순위 신원]을 나타낸다. */
 export type MemoryIdentity = [string, string, string];
 
@@ -49,6 +70,8 @@ export interface MemoryStore {
 	replaceEmbeddings(model: string, rows: StoredEmbedding[]): void;
 	getMeta(key: string): string | null;
 	setMeta(key: string, value: string): void;
+	recordRecommendationFeedback?(event: RecommendationFeedback): { duplicate: boolean };
+	recommendationFeedbackStats?(policyVersion: string, catalogRevision: string): RuleStatistics;
 	close(): void;
 }
 
