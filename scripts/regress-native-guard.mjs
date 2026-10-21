@@ -26,6 +26,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const entry = path.join(root, "dist", "index.js");
 const guard = path.join(here, "session-guard.mjs");
+for (const key of Object.keys(process.env)) {
+	if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key)) delete process.env[key];
+}
 const distUrl = (f) => `file://${path.join(root, "dist", f).replace(/\\/g, "/")}`;
 const { Vault } = await import(distUrl("vault.js"));
 const { MemoryStore } = await import(distUrl("store.js"));
@@ -77,7 +80,7 @@ async function boot(vaultDir, extraEnv = {}) {
     command: process.execPath,
     args: [entry],
     cwd: root,
-    env: { ...process.env, ASTRONRAG_VAULT: vaultDir, ...extraEnv },
+		env: { ...process.env, ASTRONRAG_VAULT: vaultDir, ASTRONRAG_STORE: "file", ASTRONRAG_SQLITE_PATH: path.join(vaultDir, ".bbm", "store.sqlite"), ...extraEnv },
     stderr: "pipe",
   });
   const client = new Client({ name: "regress-native", version: "0.0.1" });
@@ -177,7 +180,7 @@ console.log("5) 훅 주입 블록의 검증 지시");
     encoding: "utf-8",
     timeout: 15000,
     input: JSON.stringify({ hook_event_name: "SessionStart", session_id: "N1", source: "startup" }),
-    env: { ...process.env, ASTRONRAG_STORE: "file" },
+		env: { ...process.env, ASTRONRAG_VAULT: dir, ASTRONRAG_SQLITE_PATH: path.join(dir, ".bbm", "store.sqlite"), ASTRONRAG_STORE: "file" },
   });
   // ★ 패치 전 실패: 주입 블록에 검증 지시가 한 줄도 없었다
   check("시점 관측임을 명시", /point-in-time observations, not live state/.test(out), out.slice(-400));
@@ -199,7 +202,7 @@ console.log("5) 훅 주입 블록의 검증 지시");
     cwd: root,
     encoding: "utf-8",
     timeout: 15000,
-    env: { ...process.env, ASTRONRAG_STALE_DAYS: "0" },
+		env: { ...process.env, ASTRONRAG_VAULT: dir2, ASTRONRAG_SQLITE_PATH: path.join(dir2, ".bbm", "store.sqlite"), ASTRONRAG_STORE: "file", ASTRONRAG_STALE_DAYS: "0" },
   });
   const md2 = fs.readFileSync(path.join(dir2, "MEMORY.md"), "utf-8");
   check("ASTRONRAG_STALE_DAYS=0 이면 0일도 대조 필요", /0일 전, 대조 필요/.test(md2), md2);

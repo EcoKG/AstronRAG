@@ -16,13 +16,14 @@
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // 시험 기본값을 사용자 환경 설정과 격리한다.
 for (const key of Object.keys(process.env)) {
-  if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key) && !key.startsWith("ASTRONRAG_TEST_")) delete process.env[key];
+	if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key)) delete process.env[key];
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -54,7 +55,7 @@ const run = (args, cwd, input, env = {}) => {
       encoding: "utf-8",
       timeout: 15000,
       input,
-      env: { ...process.env, ASTRONRAG_STORE: "file", ...env },
+			env: { ...process.env, ASTRONRAG_VAULT: cwd, ASTRONRAG_SQLITE_PATH: path.join(cwd, ".bbm", "store.sqlite"), ASTRONRAG_STORE: "file", ...env },
     });
   } catch (err) {
     return err.stdout ?? "";
@@ -62,7 +63,7 @@ const run = (args, cwd, input, env = {}) => {
 };
 const startEv = (o = {}) => JSON.stringify({ hook_event_name: "SessionStart", ...o });
 const promptEv = (o = {}) => JSON.stringify({ hook_event_name: "UserPromptSubmit", ...o });
-const marker = (v) => JSON.parse(fs.readFileSync(path.join(v, ".bbm-session-start"), "utf-8"));
+const marker = (v, id) => JSON.parse(fs.readFileSync(path.join(v, ".bbm", "sessions", `${createHash("sha256").update(id).digest("hex")}.json`), "utf-8"));
 
 // ── 1. 정정 어휘가 큐를 유발한다
 console.log("1) 정정 어휘 감지");
@@ -112,7 +113,7 @@ console.log("3) prompt 부재 시 턴 기반 폴백");
   check("임계 턴에 큐 발생", outs[2] !== "", outs[2].slice(0, 200));
   // 기준은 "세션 시작 이후" 가 아니라 "마지막 저장 이후" 다 — 긴 세션에서 그 차이가 전부다
   check("턴 근거를 밝힘", /3 turns since anything was last stored/.test(outs[2]), outs[2].slice(0, 200));
-  check("턴 수가 마커에 누적됨", marker(v).turns === 3, JSON.stringify(marker(v)));
+	check("턴 수가 마커에 누적됨", marker(v, "C4").turns === 3, JSON.stringify(marker(v, "C4")));
 }
 
 // ── 4. 저장은 큐를 **영구히** 끄지 않는다 — 시계를 리셋할 뿐이다
@@ -195,7 +196,7 @@ console.log("6) 무해성");
   // stdin 이 아예 없어도 죽지 않는다
   let code = 0;
   try {
-    execFileSync(process.execPath, [guard, "--prompt", "--vault-force", v], { cwd: root, encoding: "utf-8", timeout: 15000, input: "", env: { ...process.env, ASTRONRAG_STORE: "file" } });
+		execFileSync(process.execPath, [guard, "--prompt", "--vault-force", v], { cwd: root, encoding: "utf-8", timeout: 15000, input: "", env: { ...process.env, ASTRONRAG_VAULT: v, ASTRONRAG_SQLITE_PATH: path.join(v, ".bbm", "store.sqlite"), ASTRONRAG_STORE: "file" } });
   } catch (err) {
     code = err.status ?? -1;
   }
@@ -204,7 +205,7 @@ console.log("6) 무해성");
   // 깨진 stdin 도 마찬가지
   let code2 = 0;
   try {
-    execFileSync(process.execPath, [guard, "--prompt", "--vault-force", v], { cwd: root, encoding: "utf-8", timeout: 15000, input: "JSON 아님{{{", env: { ...process.env, ASTRONRAG_STORE: "file" } });
+		execFileSync(process.execPath, [guard, "--prompt", "--vault-force", v], { cwd: root, encoding: "utf-8", timeout: 15000, input: "JSON 아님{{{", env: { ...process.env, ASTRONRAG_VAULT: v, ASTRONRAG_SQLITE_PATH: path.join(v, ".bbm", "store.sqlite"), ASTRONRAG_STORE: "file" } });
   } catch (err) {
     code2 = err.status ?? -1;
   }
