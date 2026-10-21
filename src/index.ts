@@ -14,8 +14,8 @@ import { logError, logInfo, logWarn } from "./log.js";
 import { type ScopeFilter } from "./retriever.js";
 import type { MemoryRecord, SearchResult } from "./types.js";
 import type { VectorRetriever } from "./vector-retriever.js";
-import { ontologySchema } from "./ontology.js";
-import { recommendModel, type Role } from "./recommender.js";
+import { ontologySchema, modelCatalog, modelCatalogSchema } from "./ontology.js";
+import { recommendModel, feedbackInputSchema, validateFeedback, type Role } from "./recommender.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ontologyOverride = readEnv("ASTRONRAG_ONTOLOGY_PATH", "BBM_ONTOLOGY_PATH")?.trim();
@@ -928,19 +928,78 @@ server.registerTool(
 	"recommend",
 	{
 		title: "Recommend model placement",
-		description: "Recommend a model and effort for an AstronAgent node role from the packaged ontology.",
+		description: "Recommend a model and effort for an AstronAgent node role from the packaged ontology. Return the effective size and novelty for recommendation feedback.",
 		inputSchema: {
 			description: z.string().trim().min(1).max(4000),
 			role: z.enum(["research", "plan", "impl", "review", "ship", "ops", "coordinator"]),
 			platform: z.enum(["claude", "codex"]).optional(),
+			size: z.enum(["small", "medium", "large"]).optional(),
+			risk: z.enum(["normal", "high"]).optional(),
+			novelty: z.enum(["new", "existing"]).optional(),
+			cross_review_of: z.string().trim().min(1).max(100).optional(),
+		},
+		outputSchema: {
+			policy_version: z.string(),
+			catalog_revision: z.string(),
+			rule_id: z.string(),
+			model: z.string(),
+			effort: z.string(),
+			role: z.enum(["research", "plan", "impl", "review", "ship", "ops", "coordinator"]),
+			size: z.enum(["small", "medium", "large"]),
+			novelty: z.enum(["new", "existing"]),
+			classification: z.object({ taskType: z.string(), difficulty: z.enum(["normal", "high"]), risk: z.enum(["normal", "high"]) }),
+			reasons: z.array(z.string()),
+			appliedConstraints: z.array(z.object({ id: z.string(), reason: z.string() })),
+			evidence: z.array(z.string()),
+			candidates: z.array(z.object({ model: z.string(), effort: z.string() })),
+			ruleConfidence: z.number(),
 		},
 	},
-	async ({ description, role, platform }) => {
+	async ({ description, role, platform, size, risk, novelty, cross_review_of }) => {
 		try {
 			const ontology = ontologySchema.parse(JSON.parse(fs.readFileSync(ontologyPath, "utf8")));
-			return ok(recommendModel(ontology, description, role as Role, platform));
+			const stats = vault.recommendationFeedbackStats?.(ontology.policy_version, ontology.catalog_revision) ?? {};
+			const result = recommendModel(ontology, description, role as Role, platform, { size, risk, novelty, cross_review_of }, stats);
+			return { ...ok(result), structuredContent: { ...result } };
 		} catch (error) {
 			return fail(`Recommendation unavailable: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	},
+);
+
+server.registerTool(
+	"model_catalog",
+	{
+		title: "Model catalog",
+		description: "Return catalog specifications and USD per million token price tiers; null means unverified. Excluded models are never recommendable.",
+		inputSchema: {},
+		outputSchema: modelCatalogSchema.shape,
+	},
+	async () => {
+		try {
+			const result = modelCatalog(ontologySchema.parse(JSON.parse(fs.readFileSync(ontologyPath, "utf8"))));
+			return { ...ok(result), structuredContent: result };
+		} catch {
+			return fail("Model catalog unavailable: invalid ontology");
+		}
+	},
+);
+
+server.registerTool(
+	"record_recommendation_feedback",
+	{
+		title: "Record recommendation feedback",
+		description: "Record only validated numeric outcomes and identifiers in SQLite. Free text is rejected; file stores are unsupported.",
+		inputSchema: feedbackInputSchema,
+	},
+	async (input) => {
+		if (!vault.recordRecommendationFeedback) return fail("Recommendation feedback unsupported for file store");
+		try {
+			const ontology = ontologySchema.parse(JSON.parse(fs.readFileSync(ontologyPath, "utf8")));
+			const event = validateFeedback(ontology, input);
+			return ok({ recorded: true, ...vault.recordRecommendationFeedback(event) });
+		} catch {
+			return fail("Invalid recommendation feedback or unavailable SQLite store");
 		}
 	},
 );
