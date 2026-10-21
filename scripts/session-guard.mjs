@@ -19,10 +19,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash, randomBytes } from "node:crypto";
 import { readEnv } from "./lib/env.mjs";
 
-/** 세션 시작 시점의 기억 수를 담는 마커 (볼트 루트, 점 파일이라 Obsidian 에서 숨겨진다) */
-const MARKER = ".bbm-session-start";
+/** 재개 가능한 세션 상태를 마지막 갱신 뒤 7일간 보존한다. */
+const MARKER_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 /** 주입할 MEMORY.md 최대 줄 수 — 볼트가 커져도 컨텍스트 예산을 넘지 않게 하는 안전장치 */
 const MAX_LINES = 200;
 /**
@@ -204,6 +205,12 @@ if (!resolved) process.exit(0);
 const vaultDir = resolved.dir;
 const memoriesDir = path.join(vaultDir, "memories");
 if (!fs.existsSync(vaultDir)) process.exit(0);
+const hookInput = await readHookInput();
+const sessionDirectory = path.join(vaultDir, ".bbm", "sessions");
+const markerPath = hookInput.sessionId
+	? path.join(sessionDirectory, `${createHash("sha256").update(hookInput.sessionId, "utf8").digest("hex")}.json`)
+	: null;
+if (mode === "stop" && !readMarker()) process.exit(0);
 let selectedStore = /** @type {any} */ (JSON.parse("null"));
 try {
 	const emitWarning = process.emitWarning;
@@ -224,7 +231,6 @@ try {
 	process.exit(0);
 }
 process.once("exit", () => selectedStore?.close());
-const markerPath = path.join(vaultDir, MARKER);
 
 /** 활성 기억 파일 수. 볼트가 아직 없으면 0 */
 function countMemories() {
@@ -285,7 +291,7 @@ async function readHookInput() {
   try {
     const o = JSON.parse(String(raw));
     return {
-      sessionId: typeof o?.session_id === "string" ? o.session_id : null,
+			sessionId: !Array.isArray(o) && typeof o?.session_id === "string" && o.session_id.trim() ? o.session_id : null,
       source: typeof o?.source === "string" ? o.source : null,
       transcriptPath: typeof o?.transcript_path === "string" ? o.transcript_path : null,
       // UserPromptSubmit 에만 온다. **문서로 확정되지 않은 필드라, 있으면 쓰고 없으면
@@ -297,51 +303,78 @@ async function readHookInput() {
   }
 }
 
-/**
- * 마커 읽기. 신형은 JSON, 구형은 숫자 하나 — 둘 다 받는다.
- * (구형 마커를 남긴 채 업그레이드해도 경고가 깨지지 않아야 한다)
- */
-function readMarker() {
-  let raw;
-  try {
-    raw = fs.readFileSync(markerPath, "utf-8").replace(/^﻿/, "").trim();
-  } catch {
-    return null;
-  }
-  if (raw === "") return null;
-  try {
-    const o = JSON.parse(raw);
-    if (o && typeof o === "object") {
-      return {
-        sessionId: typeof o.sessionId === "string" ? o.sessionId : null,
-        count: Number.isFinite(o.count) ? o.count : Number.NaN,
-        // 구형 마커에는 없다 — 없으면 손실 검사를 건너뛴다(오경보보다 침묵이 낫다)
-        total: Number.isFinite(o.total) ? o.total : Number.NaN,
-        warned: o.warned === true,
-        /** 무저장 결과를 계측 로그에 남겼는가 (Stop 이 매 턴 발화하므로 1회 제한) */
-        logged: o.logged === true,
-        /** 저장 결과를 남겼는가 — 무저장 기록과 별개다(경고 뒤 저장한 세션을 잡기 위해) */
-        loggedStored: o.loggedStored === true,
-        /** 이 세션에서 부호화 큐를 낸 적이 있는가 (진단용) */
-        cued: o.cued === true,
-        /** 지금까지의 사용자 턴 수 — prompt 를 못 받는 환경의 폴백 기준 */
-        turns: Number.isFinite(o.turns) ? o.turns : 0,
-        /** 마지막 큐를 낸 턴 — 쿨다운 기준 (세션당 1회가 아니다) */
-        lastCueTurn: Number.isFinite(o.lastCueTurn) ? o.lastCueTurn : Number.NaN,
-        /** 마지막 저장 시점의 기억 수·턴 — 큐 판정의 기준선. 저장할 때마다 리셋된다 */
-        cueBaseCount: Number.isFinite(o.cueBaseCount) ? o.cueBaseCount : Number.NaN,
-        cueBaseTurn: Number.isFinite(o.cueBaseTurn) ? o.cueBaseTurn : Number.NaN,
-        /** 이 세션에서 자동 회상으로 이미 주입한 slug */
-        autoSlugs: Array.isArray(o.autoSlugs) ? o.autoSlugs.filter((s) => typeof s === "string") : [],
-      };
-    }
-  } catch {
-    /* 구형 포맷 — 아래에서 숫자로 해석 */
-  }
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n)
-    ? { sessionId: null, count: n, total: Number.NaN, warned: false, logged: false, loggedStored: false, cued: false, turns: 0, autoSlugs: [] }
-    : null;
+/** 링크를 따라가지 않고 세션 디렉터리의 사용 가능 여부를 확인한다. */
+function markerDirectoryReady(create = false) {
+	if (!markerPath) return false;
+	try {
+		for (const dir of [path.join(vaultDir, ".bbm"), sessionDirectory]) {
+			let stat;
+			try { stat = fs.lstatSync(dir); }
+			catch (error) {
+				if (!create || error.code !== "ENOENT") return false;
+				fs.mkdirSync(dir, { recursive: true });
+				stat = fs.lstatSync(dir);
+			}
+			if (stat.isSymbolicLink() || !stat.isDirectory()) return false;
+		}
+		return true;
+	} catch { return false; }
+}
+
+/** 기한이 지난 세션 파일을 정리하고 가장 최근 시작의 손실 기준선을 반환한다. */
+function collectSessionMarkers() {
+	if (!markerDirectoryReady()) return null;
+	let latest = JSON.parse("null");
+	let latestName = "";
+	try {
+		for (const name of fs.readdirSync(sessionDirectory).sort()) {
+			const regular = /^[a-f0-9]{64}\.json$/.test(name);
+			if (!regular && !/^\.[a-f0-9]{64}\.[0-9]+\.[a-f0-9]{16}\.tmp$/.test(name)) continue;
+			const file = path.join(sessionDirectory, name);
+			try {
+				const stat = fs.lstatSync(file);
+				if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) continue;
+				if (Date.now() - stat.mtimeMs > MARKER_RETENTION_MS) { fs.unlinkSync(file); continue; }
+				if (!regular) continue;
+				const candidate = readMarker(file, null);
+				if (!candidate || !Number.isFinite(candidate.startedAt) || !Number.isFinite(candidate.total)) continue;
+				if (!latest || candidate.startedAt > latest.startedAt || (candidate.startedAt === latest.startedAt && name < latestName)) {
+					latest = candidate;
+					latestName = name;
+				}
+			} catch { /* 개별 파일의 권한·잠금 실패는 건너뛴다. */ }
+		}
+	} catch { /* 정리 실패는 다음 start에서 다시 시도한다. */ }
+	return latest;
+}
+
+/** 현재 세션 또는 손실 비교 후보의 신원과 기준선을 검증해 읽는다. */
+function readMarker(file = markerPath, sessionId = hookInput.sessionId) {
+	if (!file || !markerDirectoryReady()) return null;
+	try {
+		const stat = fs.lstatSync(file);
+		if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) return null;
+		const o = JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
+		if (!o || Array.isArray(o) || typeof o !== "object" || typeof o.sessionId !== "string" || !o.sessionId.trim()) return null;
+		if (sessionId !== null && o.sessionId !== sessionId) return null;
+		const name = `${createHash("sha256").update(o.sessionId, "utf8").digest("hex")}.json`;
+		if (path.basename(file) !== name || !Number.isSafeInteger(o.count) || o.count < 0) return null;
+		return {
+			sessionId: o.sessionId,
+			count: o.count,
+			total: Number.isSafeInteger(o.total) && o.total >= 0 ? o.total : Number.NaN,
+			startedAt: Number.isFinite(o.startedAt) && o.startedAt >= 0 ? o.startedAt : Number.NaN,
+			warned: o.warned === true,
+			logged: o.logged === true,
+			loggedStored: o.loggedStored === true,
+			cued: o.cued === true,
+			turns: Number.isFinite(o.turns) ? o.turns : 0,
+			lastCueTurn: Number.isFinite(o.lastCueTurn) ? o.lastCueTurn : Number.NaN,
+			cueBaseCount: Number.isFinite(o.cueBaseCount) ? o.cueBaseCount : Number.NaN,
+			cueBaseTurn: Number.isFinite(o.cueBaseTurn) ? o.cueBaseTurn : Number.NaN,
+			autoSlugs: Array.isArray(o.autoSlugs) ? o.autoSlugs.filter((s) => typeof s === "string").slice(-AUTO_SLUG_KEEP) : [],
+		};
+	} catch { return null; }
 }
 
 /**
@@ -355,6 +388,7 @@ function readMarker() {
  * 내용은 남기지 않는다. 수치와 식별자뿐이다.
  */
 function logUsage(event) {
+	if (!hookInput.sessionId) return;
   if (readEnv("ASTRONRAG_USAGE_LOG", "BIGBRAIN_USAGE_LOG") === "0") return;
   try {
     selectedStore?.appendUsageEvent({ src: "hook", ...event });
@@ -363,12 +397,30 @@ function logUsage(event) {
   }
 }
 
+/** 동일 디렉터리의 임시 JSON을 rename해 최종 파일을 원자적으로 교체한다. */
 function writeMarker(m) {
-  try {
-    fs.writeFileSync(markerPath, JSON.stringify(m), "utf-8");
-  } catch {
-    /* 볼트 미생성 등 — 무시 */
-  }
+	let temporary;
+	try {
+		if (!markerPath || m.sessionId !== hookInput.sessionId || !markerDirectoryReady(true)) return;
+		try {
+			const stat = fs.lstatSync(markerPath);
+			if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) return;
+		} catch (error) { if (error.code !== "ENOENT") return; }
+		fs.mkdirSync(sessionDirectory, { recursive: true });
+		const hash = path.basename(markerPath, ".json");
+		temporary = path.join(sessionDirectory, `.${hash}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`);
+		fs.writeFileSync(temporary, JSON.stringify(m), { encoding: "utf8", flag: "wx" });
+		for (let attempt = 0; ; attempt++) {
+			try { fs.renameSync(temporary, markerPath); break; }
+			catch (error) {
+				if (!["EPERM", "EBUSY", "EACCES"].includes(error.code) || attempt >= 6) throw error;
+				Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(5 * 2 ** attempt, 40));
+			}
+		}
+	} catch { /* 충돌·권한 오류에도 기존 최종 JSON을 보존한다. */ }
+	finally {
+		if (temporary) { try { fs.unlinkSync(temporary); } catch { /* 이미 이동했거나 잠긴 임시 파일은 무시한다. */ } }
+	}
 }
 
 /** ``` 또는 ~~~ 펜스 코드블록을 뺀 텍스트 (닫히지 않은 펜스는 끝까지 뺀다) */
@@ -461,8 +513,6 @@ async function autoRecall(prompt, injected) {
   };
 }
 
-const hookInput = await readHookInput();
-
 // ── prompt: 부호화 큐 (T34)
 //
 // **왜 Stop 이 아니라 여기인가.** 사람은 "이걸 기억해야지" 하고 기억하지 않는다 —
@@ -479,14 +529,13 @@ const hookInput = await readHookInput();
 if (mode === "prompt") {
   const m = readMarker();
   // 기준선이 없거나(세션 시작을 못 봤으면) 다른 세션의 마커면 큐 판단 근거가 없다
-  const tracked =
-    !!m && Number.isFinite(m.count) && !(hookInput.sessionId && m.sessionId && hookInput.sessionId !== m.sessionId);
+	const tracked = !!m;
 
   // 자동 회상 (T44). 이미 주입한 slug 는 같은 세션의 마커가 있을 때만 거르고 기록한다
   const recall = await autoRecall(hookInput.prompt, m && tracked ? m.autoSlugs : []);
   if (recall) {
     // 질의 내용은 남기지 않는다 — 건수와 1위 점수뿐이다
-    logUsage({ tool: "auto_recall", sessionId: hookInput.sessionId, injected: recall.slugs.length, topScore: recall.topScore });
+		if (tracked) logUsage({ tool: "auto_recall", sessionId: hookInput.sessionId, injected: recall.slugs.length, topScore: recall.topScore });
     if (m && tracked && recall.slugs.length > 0) m.autoSlugs = [...m.autoSlugs, ...recall.slugs].slice(-AUTO_SLUG_KEEP);
   }
   /**
@@ -580,29 +629,15 @@ if (mode === "prompt") {
 if (mode === "start") {
   const count = countMemories();
 
-  // 1) 비교 기준 기록.
-  //
-  // **매번 덮어쓰면 안 된다.** SessionStart 는 세션당 한 번이 아니라 startup/resume/
-  // clear/compact 네 경우에 각각 발화한다. 종전처럼 무조건 현재 건수를 써버리면,
-  // 세션 중간에 컨텍스트가 압축될 때 기준선이 "그때까지 저장한 만큼" 으로 리셋되고,
-  // 그 전에 성실히 저장한 기억이 통째로 없던 일이 된다 → 종료 시 오탐 경고.
-  // 재현: startup(0) → 2건 저장 → compact(기준선 2) → 종료 시 "0건" 경고.
-  // 그래서 session_id 가 같으면 기존 기준선을 **보존**한다.
+	// 같은 ID의 재발화는 최초 기준선을 보존하고 정리 시각만 갱신한다.
+	const latest = collectSessionMarkers();
   const prev = readMarker();
   const total = countTotal();
-  const sameSession =
-    hookInput.sessionId && prev?.sessionId
-      ? hookInput.sessionId === prev.sessionId
-      : // session_id 를 못 받았을 때의 차선책 — 재개/압축은 이어지는 세션으로 본다
-        !!prev && (hookInput.source === "resume" || hookInput.source === "compact");
-
-  // 2) 손실 감지. 총량(활성+아카이브)은 정상 경로로 줄어들 수 없다 —
-  // forget 은 이동이지 삭제가 아니기 때문이다. 줄었다면 볼트 밖에서 파일이 없어진 것이다.
-  // 새 세션에서만 본다(같은 세션 안의 재개·압축에서 반복 경고하지 않도록).
-  const lost = !sameSession && prev && Number.isFinite(prev.total) && prev.total > total ? prev.total - total : 0;
+	const sameSession = !!prev;
+	const lost = !sameSession && latest && latest.total > total ? latest.total - total : 0;
 
   if (!sameSession) {
-    writeMarker({ sessionId: hookInput.sessionId, count, total, warned: false });
+		writeMarker({ sessionId: hookInput.sessionId, count, total, startedAt: Date.now(), warned: false, logged: false, loggedStored: false, cued: false, turns: 0, autoSlugs: [] });
     // 새 세션의 시작만 기록한다 — resume/compact 재발화까지 세면 분모가 부풀어
     // 저장률이 실제보다 낮게 나온다
     logUsage({
@@ -613,9 +648,8 @@ if (mode === "start") {
       total,
       ...(lost > 0 ? { lost } : {}),
     });
-  } else if (prev && hookInput.source === "compact" && prev.autoSlugs.length > 0) {
-    // 압축으로 앞서 주입한 자동 회상 블록이 컨텍스트에서 빠졌을 수 있다 — 다시 주입할 수 있게 비운다
-    writeMarker({ ...prev, autoSlugs: [] });
+	} else {
+		writeMarker({ ...prev, ...(hookInput.source === "compact" ? { autoSlugs: [] } : {}) });
   }
 
   // 볼트 디렉터리 자체가 없으면 침묵한다. 이건 콜드 스타트가 아니라 **설정이 어긋난**
@@ -721,10 +755,6 @@ const m = readMarker();
 
 // 비교 기준이 없으면 침묵한다 — 근거 없는 경고는 노이즈일 뿐이다
 if (!m || !Number.isFinite(m.count)) process.exit(0);
-
-// 마커를 남긴 세션과 지금 끝나는 세션이 다르면 비교가 성립하지 않는다.
-// (여러 세션이 한 볼트를 공유하면 마커는 마지막 SessionStart 것이다)
-if (hookInput.sessionId && m.sessionId && hookInput.sessionId !== m.sessionId) process.exit(0);
 
 // 도구 호출 수는 "실제로 작업한 세션인가" 의 근사다 — 계측의 분모를 가르는 값이라
 // 경고 게이트보다 먼저 재둔다(못 재면 null).

@@ -1,603 +1,209 @@
-# AstronRAG 🧠
+<p align="center">
+	<img src="docs/assets/banner.svg" alt="AstronRAG — 세션을 넘어 기억하고, 근거를 확인하며 회상하는 MCP 서버" width="960">
+</p>
 
-**Claude Code + Obsidian에서 영감을 받은, 사람처럼 기억하는 MCP 서버**
+<p align="center">
+	<img src="https://img.shields.io/badge/Node.js-%5E22.13.0%20%7C%7C%20%3E%3D23.4.0-237a48" alt="Node.js 엔진: ^22.13.0 또는 23.4.0 이상">
+	<img src="https://img.shields.io/badge/TypeScript-3178c6" alt="TypeScript">
+	<img src="https://img.shields.io/badge/MCP-stdio-7057d9" alt="MCP stdio 서버">
+	<img src="https://img.shields.io/badge/Storage-SQLite%20%7C%20Markdown-247a82" alt="기본 SQLite, 선택형 Markdown 저장소">
+</p>
 
-Claude Code가 세션을 넘어 기억하고, 회상하고, 잘못된 기억을 교정하며, 기억 사이를 연상으로 오갈 수 있게 하는 영속 기억(persistent memory) MCP 서버입니다. 모든 기억은 **Obsidian에서 그대로 열리는 마크다운 볼트**에 저장됩니다.
+**AI가 세션을 넘어 기억을 저장·회상·교정하고, 출처와 연결 관계를 함께 확인하는 MCP 서버입니다.**
 
-> **회상은 자동이 아닙니다.** MCP 서버에는 도구를 강제로 호출하는 장치가 없어서, `recall`은 모델이 스스로 부를 때만 실행됩니다. 그래서 "볼트에 무엇이 있는지"를 세션 컨텍스트에 노출하는 3중 채널을 씁니다 — [회상 트리거](#회상-트리거--무엇이-저장돼-있는지-알리기) 참조. 이게 이 프로젝트에서 가장 중요한 설정입니다.
+<table>
+	<tr>
+		<td><strong>🧠 오래 가는 기억</strong><br>사건·지식·절차·선호를 구분하고 진실성과 인출강도를 분리합니다.</td>
+		<td><strong>🔎 표현을 넘는 회상</strong><br>한↔영 동의어, 다중 질의, 활성도와 연상 링크를 함께 씁니다.</td>
+		<td><strong>🛡️ 확인 가능한 교정</strong><br>출처·검토일·구본을 보존하고 망각은 보관 처리합니다.</td>
+		<td><strong>🌌 연결을 보는 뷰어</strong><br>Markdown 볼트의 목록·상세·관계를 읽기 전용으로 탐색합니다.</td>
+	</tr>
+</table>
 
-## 이론적 기반
+기본 저장소는 **SQLite**이며, `ASTRONRAG_STORE=file`로 **Obsidian 호환 Markdown 볼트**를 선택할 수 있습니다. 임베딩과 자동 회상 훅은 **기본 꺼짐**입니다.
 
-인간 기억·행동 연구(ACT-R, Bjork 신불용 이론, 재공고화, 간섭 이론, 인출유도망각, 오기억 등)를 조사해 **모순·과장·부적합을 걸러낸** 정제 리포트를 먼저 작성하고([docs/memory-model-report.md](docs/memory-model-report.md)), 그 원칙(P1~P8)에 따라 설계했습니다. 핵심은 **"인간 기억을 그대로 복제하지 않는다"** — 강점(적응적 망각·강화·연상)은 취하고 약점(오기억·출처혼동·왜곡)은 의도적으로 배제합니다.
+## 목차
 
-이후 [교차검증 감사](docs/native-parity-audit.md)에서 47건의 결함이 확인돼 구현이 크게 바뀌었습니다(활성 수식, 간격 게이트, 검색, 파일 안전성). **리포트는 원칙 문서이고, 아래 표와 코드가 현행 동작입니다.** 진행 이력은 [GOAL.md](GOAL.md)에 있습니다.
+[구조](#구조) · [회상 흐름](#회상-흐름) · [웹 뷰어](#웹-뷰어) · [회상 품질](#회상-품질) · [빠른 시작](#빠른-시작) · [제공 도구](#제공-도구) · [설정](#설정) · [운영 안내](#운영-안내)
 
-## 핵심 개념 — 사람의 기억처럼, 그러나 더 낫게
+## 구조
 
-| 인간의 기억 | AstronRAG 구현 | 근거 |
-|---|---|---|
-| 기억 유형 | `episodic` · `semantic` · `procedural` · `preference` | 다중기억체계 |
-| **3축 분리** | ① `confidence` 진실성(revise로만 변경) ② `storage_strength` 저장강도(단조 증가) ③ 인출강도(저장하지 않고 질의 때 계산) — 자주 안 떠올라도 신뢰할 수 있고 그 반대도 성립 | Bjork 저장강도 ≠ 인출강도 |
-| 거듭제곱 망각 | 기저활성 `B = ln( (n−1)·L^−d/(1−d) + t_last^−d )` — n=저장강도, L=생성 후 경과[시], t_last=**마지막 강화 후** 경과[시], d=0.5. 마지막 1회를 정확항으로 분리해 **빈도와 최근성이 함께** 반영된다 | ACT-R (지수식·에빙하우스 수치는 배제) |
-| 회상 순위 | 키워드 점수 × 진실성 가중 `0.5+0.5·confidence` × 활성 가중 `0.55+0.9·σ(B)` | — |
-| 간격효과 강화 | 필요 간격이 **확장**된다: `max(10분, α · 기억의 나이 / n)` (α 기본 0.1). 오래된 기억일수록 다음 강화까지 더 긴 간격을 요구한다 | 간격효과·검사효과 |
-| 바람직한 어려움 | **능동 회상**(`recall`)이고 활성이 낮을 때만 +0.5 보너스. 최근 강화된 기억은 활성이 높아 자동으로 제외된다 | Bjork desirable difficulties |
-| 적응적 망각 | 경쟁 유사 기억은 회상 순위에서 억제되고 **그 회상에서 강화도 받지 않는다**(저장된 값은 깎지 않음) | 인출유도망각(RIF) |
-| 연상 작용 | `[[위키링크]]` 양방향. 확산은 상위 3건을 시드로 1-hop, 최대 `ceil(limit/2)`건. 연상으로 딸려온 기억은 강화하지 않는다 | 확산활성 |
-| 재공고화 | `revise` — 덮어쓰기 **전에 구본을 스냅샷**(최근 3세대), 이력 보존. 강화는 간격 게이트를 지키고, 내용·확신도가 안 바뀐 편집은 강화하지 않는다 | 재공고화의 안전한 절반 |
-| 망각 | `forget` — 삭제가 아닌 `archive/` 이동, 복원 가능 | 가역적 망각 |
-| **인간 약점 역보완** | verbatim 저장 + `source` 출처 필드 + 파괴적 자동병합 금지 | 오기억/출처혼동 배제 |
-| 메타인지 | `reflect` — 약해진 기억(유예 72h + 활성 하위 20% **동시 충족**)·망각 후보·중복·고립 점검. 제안만 하고 자동삭제 없음 | — |
-
-## 저장 구조 (Obsidian 볼트)
-
-```
-vault/
-├── MEMORY.md              # 자동 생성 인덱스 (Obsidian 허브 노트)
-├── .bigbrain-vault        # 볼트 마커 — 경로 오타 감지에 쓰임
-├── memories/              # 활성 기억 — 기억 1건 = 마크다운 1개
-│   └── 사용자는-typescript-strict-모드를-선호한다.md
-├── archive/               # 망각된 기억 (사유 기록, 복원 가능)
-│   └── revisions/         # revise 직전 구본 (기억당 최근 3세대) — 필요할 때 생성
-└── quarantine/            # 손상 감지된 파일 (원본 바이트 보존) — 필요할 때 생성
-```
-
-`memories/`와 `archive/`는 첫 실행에 만들어지고, `revisions/`·`quarantine/`은 해당 상황이 생겨야 만들어집니다.
-
-실제로 생성되는 노트:
-
-```markdown
----
-id: mem-mrqiibrg9btj
-title: 사용자는 TypeScript strict 모드를 선호한다
-description: '코드 리뷰에서 항상 strict: true 설정을 요구했다.'
-type: preference
-tags:
-  - typescript
-  - 코딩스타일
-confidence: 0.75
-storage_strength: 1
-status: active
-created: '2026-07-18T15:19:01.899Z'
-updated: '2026-07-18T15:19:01.933Z'
-last_accessed: '2026-07-18T15:19:01.899Z'
-last_reinforced: '2026-07-18T15:19:01.899Z'
-access_count: 0
-links:
-  - bigbrainmemory-프로젝트-구조
-history:
-  - '2026-07-18: created (source: 코드 리뷰 대화)'
-source: 코드 리뷰 대화
----
-
-사용자는 기본적으로 strict: true를 선호하지만, 레거시 프로젝트에서는 예외를 허용한다.
-
-## 연관 기억
-- [[bigbrainmemory-프로젝트-구조]] — 같은 프로젝트 맥락
+```mermaid
+flowchart TB
+	Client["MCP 클라이언트"] <-->|"stdio · 도구 9개 / 프롬프트 1개"| Server["AstronRAG"]
+	Server --> Memory["기억 관리 · 회상 순위화"]
+	Memory --> Backend{"저장소 선택"}
+	Backend --> SQLite["SQLite · 기본"]
+	Backend --> Files["Markdown · FileStore"]
+	Files --> Obsidian["Obsidian"]
+	Files --> Export["viewer:export"]
+	Export --> Viewer["웹 뷰어 · 읽기 전용"]
+	Server --> Ontology["온톨로지 · 모델 배치 추천"]
+	Hooks["Claude Code 훅 · 선택 설치"] --> Context["세션 인덱스 / 부호화 큐"]
+	Memory -.->|"영속 어휘 색인"| Auto["자동 회상 훅 · 기본 꺼짐"]
+	Auto --> Context
 ```
 
-조건부로만 붙는 키: `source`(출처), `project`(스코프), `supersedes`/`superseded_by`(대체 관계), `archive_reason`(망각 사유).
+SQLite와 Markdown은 저장소 선택지입니다. **뷰어 내보내기는 Markdown 파일을 읽으므로**, SQLite의 기억은 먼저 [Markdown으로 내보내야](docs/operations.md#sqlite에서-markdown으로-내보내기) 합니다.
 
-`vault/`를 Obsidian 볼트로 열면 `memories/`의 연상 네트워크를 그래프 뷰로 볼 수 있습니다. `archive/`·`quarantine/`의 노트도 함께 보이므로, 활성 기억만 보려면 그래프 필터에서 제외하세요.
+## 회상 흐름
 
-## 볼트를 직접 편집할 때
-
-**편집해도 됩니다** — 그게 마크다운으로 저장하는 이유입니다. 다만 몇 가지를 알아두세요.
-
-- **인용부호 없는 날짜는 안전합니다.** `created: 2025-01-01` 처럼 써도 보존됩니다.
-- **알려진 키만 읽습니다.** 직접 추가한 임의 frontmatter 키(예: Obsidian 플러그인이 넣는 `cssclass`)는 다음 쓰기 때 사라집니다. 보존이 필요한 정보는 본문에 두세요.
-- **`MEMORY.md`는 손대지 마세요.** 쓰기 연산마다 전량 재생성됩니다.
-- **손상되면 자동 격리됩니다.** 빈 파일, 닫는 `---`가 없는 파일(쓰기 도중 절단), frontmatter 파싱 실패 — 세 경우에 해당 파일이 `quarantine/<slug>.<타임스탬프>.md`로 **이동**합니다. 원본 바이트는 그대로 보존되고, 나머지 기억과 서버는 정상 동작합니다. 서버 기동 로그에 `quarantined=N(!)`으로 알립니다. 고친 뒤 `memories/`로 되돌리면 다시 읽힙니다.
-
-### 잘못된 교정 되돌리기
-
-`revise`는 본문을 즉시 덮어씁니다. 모델이 옳은 기억을 잘못 "정정"할 수 있으므로 **덮어쓰기 직전 원본을 스냅샷**으로 남깁니다.
-
-- 위치: `vault/archive/revisions/<slug>.<타임스탬프>.md` (파일명 사전순 = 시간순)
-- 보관: **기억당 최근 3세대**. 4번째 교정이 들어오면 가장 오래된 것이 지워집니다
-- 본문이 실제로 바뀔 때만 남깁니다 — 확신도만 조정하는 재확인은 스냅샷을 만들지 않습니다
-- 되돌리려면 원하는 세대를 `memories/<slug>.md`로 복사하면 됩니다
-
-> **백업 권고** — 볼트는 순수 파일이므로 `git init` 후 주기적으로 커밋해 두면 어떤 교정도 되돌릴 수 있습니다. `archive/revisions/`는 3세대짜리 안전망이지 백업이 아닙니다.
-
-## 제공 도구 (8개)
-
-기억을 반환하는 **모든 응답**에 공통으로 실리는 필드: `id` · `slug` · `title` · `description` · `type` · `tags` · `confidence` · `storage_strength` · `status` · `access_count` · `source` · `project` · `links` · `updated` · **`age_days`** · 설정했으면 `review_after` · 그리고 타입별 임계(episodic 14일, semantic·procedural 60일, preference 180일) 이상 갱신되지 않았거나 검토일(`review_after`)이 지났으면 **`stale_hint`**(현재 코드와 대조하라는 경고).
-
-| 도구 | 파라미터 | 비고 |
-|---|---|---|
-| `remember` | `title` `content` `type` / `description` `tags` `links` `confidence` `source` `project` `supersedes` `review_after`(YYYY-MM-DD) | 유사 기억이 있으면 `similar_existing_memories`로 알려 중복 대신 `revise`를 유도. 유사 기억과 숫자·버전(양쪽에 서로 다른 값이 있을 때, 날짜 제외)·부정어가 갈리면 `possible_contradiction`(사유 `number`/`negation`)으로 알려 `revise`나 `supersedes`를 유도합니다(자동 병합·삭제 없음). 제목·설명·본문에 API 키(`sk-ant-`·`sk-`·`ghp_`·`AKIA`)·개인키 헤더·`password=`(`DB_PASSWORD=` 같은 접두 포함) 값이 있으면 **저장을 거부**하고 값 대신 위치(예: `.env`의 키 이름)를 저장하라고 답합니다. 본문이 1,500자를 넘으면 저장은 하되 사실 단위로 나눠 링크하라고 `hint`로 경고합니다. 본문의 `[[위키링크]]`가 없는 슬러그를 가리키면 `broken_links`로 알립니다(**차단하지 않음** — 선행 참조는 정상). **`project`를 생략하면 전역 기억**이 됩니다(서버 스코프를 자동으로 씌우지 않음) |
-| `recall` | `query` / `type` `limit`(1~20, 기본 5) `include_linked`(기본 true) `project` | 응답에 `total_matched`(컷오프 전 총 건수)와 잘렸을 때 `truncated` 안내. 결과별로 `score` `activation` `inhibited` `snippet`. 0건이면 재질의를 유도하는 `note` |
-| `read_memory` | `id` (슬러그 또는 id) | 전문(`body`)과 `history`까지. 읽으면 강화되지만 능동 회상보다 약합니다 |
-| `revise` | `id` `reason` / `content` `title` `description` `tags` `confidence` `source` `project` `type` `review_after` | 사유 필수(이력에 기록). `project: ""`로 전역으로, `review_after: ""`로 검토일 해제. 비밀정보 차단과 1,500자 경고는 `remember`와 같습니다 |
-| `forget` | `id` `reason` | `archive/`로 이동, 사유 기록 |
-| `link` | `source` `target` / `relation` | 양방향 위키링크. `relation`은 본문 `## 연관 기억`에 라벨로 남습니다 |
-| `reflect` | (없음) | `weakened_hard_to_recall` · `forget_candidates` · **`trusted_but_faded`**(약해졌지만 확신도가 높아 후보에서 제외된 건수) · `low_confidence` · `possible_duplicates` · `orphans_without_links` · **`broken_links`**(없는 슬러그를 가리키는 위키링크) |
-| `list_memories` | `type` `status`(active/superseded/archived) `project` | 최근 갱신순 |
-
-> **`review_after` 하위 호환 주의** — 이 필드를 모르는 이전 버전 서버가 기억 파일을 다시 쓰면(`revise`, 재확인, 강화가 일어난 `read_memory`·`recall`, `link`) 필드가 조용히 사라집니다. 이전 버전으로 되돌리거나 두 버전을 한 볼트에 섞어 쓰면 검토일을 `revise`로 다시 넣어야 합니다.
-
-서버 `instructions`에는 행동 수칙(recall 먼저 → remember → 모순되면 revise/forget → 주기적 reflect)에 더해 **기억 인덱스**, 프로젝트 스코프 안내, 나이 해석 지침이 함께 실립니다.
-
-### 정리 프롬프트
-
-`reflect`는 후보만 내놓습니다. 실제 정리(중복 병합·낡은 사실 교정·고아 연결)까지 이어가려면 Claude Code에서 슬래시 커맨드를 부르세요:
-
-```
-/mcp__astronrag__consolidate
+```mermaid
+flowchart TB
+	Query["query + alt_queries 최대 3개"] --> Tokens["토큰화 · 한↔영 동의어 확장"]
+	Tokens --> Lexical["어휘 후보 · legacy 기본 / BM25F 선택"]
+	Lexical --> Fusion["질의별 가중 최대값 융합"]
+	Vector["벡터 후보 · 선택형, 기본 꺼짐"] -.-> Fusion
+	Fusion --> Rank["진실성 × 기저활성 · 경쟁 기억 순위 억제"]
+	Rank --> Links["상위 결과 + 1-hop 연상"]
+	Links --> Result["점수 · 출처 · 나이 · 낡음 경고"]
+	Result --> Gate["간격 게이트에 따른 강화"]
 ```
 
-`reflect`의 모든 출력 항목에 대한 처리 절차가 로드됩니다 — 중복 쌍을 양쪽 다 읽고 비교해 병합, 망각 후보를 현재 사실과 대조, 고아를 연결, 마지막에 재확인. 파괴적 조치에는 안전장치가 걸려 있습니다(애매하면 `forget` 대신 `revise`로 확신도를 낮추도록).
+- **동의어 24개 그룹**과 조사·접두 흡수로 한↔영 혼용을 보완합니다. 팀 용어는 설정으로 추가합니다.
+- `alt_queries`는 원 질의와 다른 표현을 함께 검색합니다. 원 질의 가중치는 1, 변형은 기본 0.7이며 같은 기억은 한 호출에서 한 번만 강화됩니다.
+- `confidence`는 진실성, `storage_strength`는 저장강도입니다. 인출강도는 빈도와 최근성을 바탕으로 질의 때 계산합니다.
+- `stale_hint`와 `review_after`는 현재 자료와 대조할 시점을 알립니다. 오래된 기억을 현재 사실로 단정하지 않습니다.
+
+수식·강화·공고화의 계약은 [기억 모델과 검색](docs/memory-guide.md)에 있습니다. 설계 원칙은 [기억 이론 리포트](docs/memory-model-report.md), 검토 자료는 [별도 검토 문서](docs/native-parity-audit.md)에서 확인할 수 있습니다. 현재 동작의 기준은 코드와 이 안내입니다.
+
+## 웹 뷰어
+
+<p align="center">
+	<img src="docs/assets/viewer.png" alt="픽스처 기억 160건을 불러온 AstronRAG 웹 뷰어: 기억 목록, 관계 그래프와 선택한 기억의 상세" width="960">
+</p>
+
+**실제 화면 · 공개 픽스처만 사용.** 목록 검색, type·status·project 필터, 본문과 위키링크·대체·파생 관계를 탐색합니다. 뷰어는 고정 다크 테마입니다.
+
+```bash
+npm run viewer:export
+```
+
+Markdown 볼트의 `memories/`·`archive/`를 `viewer/data.js`로 내보낸 뒤 [viewer/index.html](viewer/index.html)을 브라우저로 엽니다. 데이터 파일이 없으면 **볼트 폴더 열기**를 사용할 수 있습니다. 3D 장면과 글꼴은 CDN 연결이 필요하며 목록·상세는 오프라인에서도 동작합니다. 내보낸 파일에는 기억 원문이 담기므로 공유 전에 확인하십시오. [자세한 사용법](docs/operations.md#웹-뷰어)
 
 ## 회상 품질
 
-검색은 임베딩 없는 토큰 매칭입니다. 그 한계를 메우는 장치가 넷 있습니다 — 그리고 임베딩을 쓰지 않는 것은 실측에 근거한 선택입니다.
+<p align="center">
+	<img src="docs/assets/retrieval.svg" alt="픽스처 평가의 legacy와 BM25F 비교: exact·crosslang·paraphrase 전체 분할의 Recall@1, Recall@5, MRR" width="960">
+</p>
 
-**한↔영 동의어 자동 확장** — 내장 24개 그룹(배포↔deploy↔release↔출시, 설정↔config, 빌드↔build …)으로 질의 토큰을 넓힙니다. "배포"로 저장한 기억을 `deploy`로 찾아도 나옵니다. 조사가 붙어도 됩니다 — "배포를 하려면"도 어간으로 사전을 탑니다. 동의어로만 맞은 토큰은 0.6배 가중이라, 같은 조건이면 정확히 일치한 기억이 위로 옵니다. 팀·회사 고유 용어는 `ASTRONRAG_SYNONYMS`로 덧붙이세요.
+**2026-10-21 실행 · Windows 11 (10.0.26200), Node v24.13.0 · `eval/golden.jsonl` 120질의 · `eval/fixture-vault` 기억 160건.** 실행 명령은 `npm run eval:retrieval -- --scorer legacy --out ./eval-legacy.json` 및 `npm run eval:retrieval -- --scorer bm25f --out ./eval-bm25f.json`입니다. 그래프는 정답이 있는 각 30질의의 `all` 분할을 사용하며 백분율은 소수 첫째 자리, MRR은 소수 셋째 자리로 반올림합니다.
 
-**조사·복합어 흡수** — "모드를"은 "모드"에, "릴리스노트"는 "릴리스"에 붙습니다(짧은 쪽 3자 이상 + 길이차 2 이하). 단어 경계는 지키므로 "서버리스"가 "서버"를, "인증서"가 "인증"을 끌어오지는 않습니다. 그래도 0건이면 응답의 `note`가 **재질의를 유도**합니다(remember를 곧장 권하지 않습니다 — 표현만 어긋난 기억을 중복 저장하게 되니까요).
+정확한 표현에 비해 언어 전환·의역 회상은 약합니다. 이 픽스처 결과를 일반적인 정확도나 성능 보장으로 해석하지 않습니다. 기본 점수 방식은 `legacy`이며 BM25F는 선택 설정입니다. 벡터 계층과 자동 회상 훅은 [전환 판단 기준](docs/evaluation.md#전환-판단-기준) 미충족으로 기본 꺼짐을 유지합니다. **벡터 결과는 이 차트에 포함하지 않았습니다.** [원자료·측정 조건·한계](docs/evaluation.md)
 
-**recall 다중 질의** — alt_queries(최대 3개, 넘으면 앞 3개만 쓰고 응답에 알림)로 같은 요청을 다른 표현으로 함께 보낼 수 있다. 한국어 질의에는 영어 표현을, 영어 질의에는 한국어 표현을 넣는다(동의어·상위 개념 포함). 질의별 후보를 기억마다 가장 높은 가중 점수(원 질의 1.0, 변형 0.7)로 합친 뒤 기존 순위화(신뢰도·활성도·RIF·연상)를 적용한다. 한 번 호출에서 같은 기억은 한 번만 강화된다. alt_queries 를 주지 않으면 결과는 이전과 같다.
+## 빠른 시작
 
-**낡음 표시** — 모든 결과에 `age_days`가 붙고, 타입별 임계(episodic 14일, semantic·procedural 60일, preference 180일, `ASTRONRAG_STALE_DAYS`를 설정하면 전 타입 단일값) 이상 갱신되지 않았거나 `review_after` 검토일이 지났으면(나이와 무관) `stale_hint`가 "현재 코드와 대조 후 사용하라"고 알립니다. 기억은 시점 관측이지 현재 상태가 아니기 때문입니다.
-
-**임베딩은 기본으로 쓰지 않습니다.** 켜고 끄는 선택형 벡터 계층은 아래 [선택형 벡터 계층](#선택형-벡터-계층--기본-꺼짐) 절에 있습니다. 2026-09-28 픽스처 평가에서 전환 조건을 채우지 못해 옵션으로만 남겼습니다. 2026-07-19 에 로컬 임베딩 도입을 실측 평가한 결과, 남은 검색 실패 중 임베딩이라야 잡히는 "순수 의미 격차"는 17건 중 3건뿐인 반면 비용은 설치 512MB·세션당 +1초였습니다(MCP 서버는 세션마다 새로 뜨므로 콜드스타트가 곧 체감 지연입니다). 작은 영어 모델로 가볍게 시작하는 절충안은 한국어에서 오작동해 봉쇄됩니다 — 한↔영 정답 쌍 10건이 전부 무관 쌍보다 낮게 나왔습니다. 근거와 재평가 조건은 [GOAL.md](GOAL.md) T22 참조.
-
-**점수 방식 — 기본 legacy, BM25F 는 플래그** — 기본 키워드 점수는 필드 가중 고정 점수(legacy: 제목 5·태그 4·설명 3·본문 최대 3)입니다. `ASTRONRAG_SCORER=bm25f`이면 같은 필드 가중의 BM25F(제목 5·태그 4·설명 3·본문 1, k1 1.2, 길이 정규화 b 제목·태그·설명 0.3·본문 0.75, IDF는 볼트 전체 문서 빈도)로 바꿉니다. 동의어 0.6배와 조사·접두 흡수는 같고, 영속 역색인 형식도 같아 바꿔도 인덱스를 다시 만들지 않습니다. 점수 척도가 달라서 자동 회상 하한(`ASTRONRAG_AUTO_MIN_SCORE`)은 따로 정해야 합니다. 픽스처 평가에서 정답 질의 홀드아웃 MRR은 0.438 → 0.474였지만 McNemar 검정에서 유의하지 않아(홀드아웃 R@1 p=1) 기본값은 legacy입니다([GOAL.md](GOAL.md) T46).
-
-**그림자 로그** — legacy로 회상할 때마다 bm25f 순위도 함께 계산해, 두 방식 상위 5건(limit가 5보다 작으면 limit건) slug의 일치율만 사용 로그 recall 이벤트의 `shadowTop5`(0~1)로 남깁니다. 질의·slug·내용은 남기지 않고, 회상 결과와 강화도 바꾸지 않습니다. 후보가 0건이면 남기지 않습니다. 추가 지연은 픽스처 160건 in-process 측정에서 p50 +0.4ms, p95 +4.3ms였습니다. `ASTRONRAG_SHADOW=0`이면 끕니다.
-
-### 선택형 벡터 계층 — 기본 꺼짐
-
-`ASTRONRAG_VECTOR=1`일 때만 서버가 벡터 모듈을 불러옵니다. 다국어 임베딩 모델(`Xenova/multilingual-e5-small`, 8비트 양자화 ONNX)을 [transformers.js](https://github.com/huggingface/transformers.js)로 서버 프로세스 안에서 돌립니다. 끄면 벡터 코드는 로드되지 않고, 결과는 켜기 전과 바이트 단위로 같습니다.
-
-**켜는 법**
-
-`npm ci`가 선택 의존성인 `@huggingface/transformers`를 함께 설치합니다. 설치에 실패해도 어휘 검색으로 동작합니다.
-
-MCP 서버 환경에 `ASTRONRAG_VECTOR=1`을 넣고 서버를 다시 시작합니다. 패키지가 없으면 recall 응답에 `vector: "unavailable"`과 설치 안내(`vector_note`)가 붙고, 어휘 검색으로 그대로 동작합니다.
-
-**동작**
-- **지연 로드** — 서버는 모델을 기다리지 않고 바로 뜹니다. 모델 로드와 첫 임베딩이 끝나기 전의 recall은 어휘 결과만 내고 응답에 `vector: "warming"`을 붙입니다. 준비되면 `vector: "ready"`입니다.
-- **융합** — 어휘 후보의 점수와 순서는 그대로 둡니다. 벡터 검색(코사인 0.90 이상, 상위 10건)으로만 들어온 기억만 `1 × 코사인` 점수로 덧붙인 뒤 기존 순위화를 적용합니다. 이런 결과에는 `via: "vector"`가 붙습니다.
-- **강화** — `via: "vector"` 결과는 recall에서 강화하지 않습니다. `read_memory`로 열 때만 기존 규칙대로 강화합니다. 어휘로도 잡힌 기억은 기존대로 강화합니다.
-- **자동 회상 훅은 벡터를 쓰지 않습니다** — 훅은 벡터 모듈과 transformers를 불러오지 않습니다(`regress-vector.mjs` 7절이 고정).
-- **저장** — 임베딩은 볼트의 `.bbm-index/vectors.v1.bin`(Float32 행렬)과 `vectors.v1.meta.json`(모델 ID, 항목 키, 임베딩 대상 텍스트 해시)에 둡니다. 임베딩 대상은 제목·설명·태그·본문 앞 1,000자이고, 해시가 바뀐 기억만 다시 계산합니다. 모델이 바뀌거나 파일이 손상되면 전부 다시 계산합니다. 구버전 서버는 이 파일을 무시합니다.
-
-**네트워크와 개인정보** — 모델 파일(약 129MB)은 처음 켤 때 Hugging Face Hub에서 한 번 내려받아 `%TEMP%/bigbrainmemory-models`(OS 임시 디렉터리)에 둡니다. 저장소나 볼트에는 두지 않습니다. 임베딩은 로컬에서 계산하므로 기억 내용은 외부로 나가지 않습니다.
-
-**측정치** (2026-09-28, 이 PC, 1회 측정)
-
-| 항목 | 값 |
-|---|---|
-| 모델 로드(캐시에서) | 2.0초 |
-| 서버와 같은 모듈을 올린 프로세스의 RSS 증가 | +488MB(모델 로드 +369MB, 950건 임베딩 뒤 +119MB) |
-| 합성 950건 첫 임베딩 | 7.2초 |
-| 저장 파일에서 다시 적재 | 10ms |
-| 질의당 추가 지연(sync+질의 임베딩+전수 코사인) | p50 5.7ms · p95 8.1ms |
-
-픽스처 평가에서 exact·none 지표는 그대로였고 paraphrase R@5도 오르지 않았습니다(holdout 0.778 → 0.778). 한↔영 정답 쌍 판별 AUC는 0.826으로 기준 0.9에 못 미쳤습니다. 그래서 기본값으로는 켜지 않습니다([GOAL.md](GOAL.md) T51).
-
-## 설치 및 실행
+Node.js **`^22.13.0 || >=23.4.0`**와 npm이 필요합니다. 이 저장소 루트에서 실행합니다.
 
 ```bash
-npm install
+npm ci
 npm run build
-npm test          # 스모크 1종 + 회귀 14종 (총 363개 단언)
+npm start
 ```
 
-런타임은 `ontology/ontology.json`을 읽으며, 개발 의존성 `js-yaml`을 사용하는 빌드가 YAML에서 JSON을 다시 생성하므로 생성 JSON도 추적합니다.
+`npm start`는 **stdio MCP 서버**를 실행합니다. MCP 클라이언트가 이 프로세스와 통신합니다.
 
-SQLite에서 파일 저장소로 복귀할 때는 DB를 읽기 전용으로 열어 새 Markdown vault로 내보냅니다.
-
-```bash
-node scripts/export-store-to-vault.mjs --store-path ./data/store.sqlite --dry-run
-node scripts/export-store-to-vault.mjs --store-path ./data/store.sqlite --out ./vault-export
-```
-
-`--out`을 생략하면 현재 작업 폴더 아래 고유한 새 폴더를 사용합니다. 출력은 작업 폴더 안의 빈 폴더만 허용하며 운영 vault, 원본 DB 디렉터리와 겹치는 경로 및 링크는 거부합니다. `--dry-run`은 전체 검증과 예상 건수만 출력하고 파일을 만들지 않습니다. 기억·보관 기억·수정 이력·사용 이벤트·벡터를 보존하며 손상 행이나 기존 vault 형식으로 손실 없이 표현할 수 없는 값은 쓰기 전에 실패합니다. 벡터는 단일 모델·동일 차원만 지원합니다. 내보낸 폴더를 확인한 뒤 파일 저장소 경로로 사용하십시오.
-
-owner-exception의 `approvedBy: p1`에서 `p1`은 주인님을 가리키는 고정 식별자이며 이메일 등 개인정보가 아닙니다.
-
-`npm test`는 실제 stdio MCP 서버를 띄우고 임시 볼트에 파일을 쓰므로 수십 초 걸립니다. 개별 실행:
-
-```bash
-npm run test:smoke        # 전체 기억 사이클
-npm run test:hook         # 세션 훅 볼트 해석·무저장 감지
-npm run test:config       # .mcp.json 스폰 계약
-npm run test:corruption   # 손상 파일 내성
-npm run test:concurrency  # 다중 프로세스 경합
-npm run test:edit         # 손편집·revise 스냅샷
-npm run test:trigger      # 회상 트리거·볼트 경고
-npm run test:scoping      # 프로젝트 스코핑
-npm run test:staleness    # 나이 노출
-npm run test:quiet        # 조회 부작용
-npm run test:activation   # 기저활성·임계
-npm run test:spacing      # 확장 간격·강화
-npm run test:search       # 동의어·조사 흡수·정밀도
-npm run test:prompt       # consolidate 프롬프트
-npm run test:import       # 네이티브 이관
-npm run test:perf         # id 캐시·이력 상한·예약명
-```
-
-## 웹 뷰어(읽기 전용)
-
-`npm run viewer:export`로 볼트(`ASTRONRAG_VAULT`, 없으면 `./vault`)의 `memories/`·`archive/` 원문을 `viewer/data.js`로 내보낸 뒤 `viewer/index.html`을 더블클릭해 여십시오. 서버나 빌드는 필요 없습니다. 전체 목록, 검색(title·description·tags·본문), type·status·project 필터, 본문 렌더, 위키링크·links·supersedes·derived_from 이동을 볼 수 있고 편집 기능은 없습니다. `data.js`가 없으면 범례의 "볼트 폴더 열기"로 볼트 폴더를 골라 같은 파서로 읽습니다. 3D 장면과 글꼴은 CDN에서 받으므로 오프라인에서는 빠지지만 목록과 상세는 그대로 동작합니다. `viewer/data.js`에는 개인 기억이 들어 있으므로 `.gitignore`로 커밋에서 제외합니다.
-
-## 네이티브 메모리에서 이관
-
-Claude Code의 프로젝트별 메모리(`~/.claude/projects/<슬러그>/memory/*.md`)를 볼트로 옮깁니다.
-
-```bash
-npm run import:native              # 미리보기 — 아무것도 쓰지 않습니다
-npm run import:native -- --apply   # 실제 이관
-```
-
-- 타입 매핑: `user`→preference, `feedback`→procedural(실행 지침이 있으면)/preference, `project`→episodic(시점·사건)/semantic, `reference`→procedural. **왜 그 타입이 됐는지 항상 출력**하므로 확인하고 `revise`로 고칠 수 있습니다.
-- 프로젝트 슬러그가 `project` 스코프로 들어갑니다.
-- `source`에 원본 경로를 남겨 **멱등**합니다 — 여러 번 돌려도 중복되지 않습니다.
-- 제목은 원본 `name`을 그대로 써서 본문의 `[[위키링크]]`가 유지됩니다.
-- 경로 지정: `--projects-dir <경로>` `--vault <경로>`
-
-이관 후 원본은 지우지 말고 아카이브해 두고, 네이티브 `memory/MEMORY.md`는 "`recall`로 조회" 안내로 바꿔 [브리지](#회상-트리거--무엇이-저장돼-있는지-알리기)로 남기는 것을 권합니다.
-
-## Claude Code에 등록
-
-**이 프로젝트에서만** — 저장소의 [.mcp.json](.mcp.json)이 자동 적용됩니다.
-
-**모든 프로젝트에서 (권장)** — 기억은 프로젝트를 넘나들 때 가치가 커집니다. `<저장소경로>`는 클론한 실제 경로로 바꾸세요:
-
-```bash
-claude mcp add --scope user astronrag -- node <저장소경로>/dist/index.js
-```
-
-**볼트 위치 변경** — 기존 Obsidian 볼트를 쓰려면 `ASTRONRAG_VAULT`를 지정합니다. 지정하지 않으면 `<저장소경로>/vault`가 기본값입니다:
-
-```bash
-claude mcp add --scope user -e ASTRONRAG_VAULT="C:/Users/me/MyObsidianVault/AstronRAG" astronrag -- node <저장소경로>/dist/index.js
-```
-
-> 새 경로를 처음 지정하면 볼트가 비어 있으므로 **첫 실행에 경고가 뜹니다** — 정상입니다. 기억을 하나 저장하면 사라집니다. 이 경고는 경로 오타나 드라이브 이동으로 기억이 조용히 "사라진" 것처럼 보이는 상황을 잡기 위한 것입니다(stderr와 모델 컨텍스트 양쪽에 표시되고, "확인 전까지 중복 저장하지 말라"고 지시합니다). 볼트를 옮길 때는 **디렉터리 전체를 함께 옮기세요** — `MEMORY.md`와 마커 파일도 볼트 안에 있습니다.
-
-## 프로젝트 스코핑 — 격리와 공유를 함께
-
-기억은 하나의 볼트에 모이지만, 프로젝트별로 갈라 볼 수 있습니다.
-
-- **`project` 없는 기억 = 전역** — 어느 프로젝트에서도 회상됩니다. 사용자 선호, 일반 워크플로처럼 따라다녀야 할 지식에 씁니다.
-- **`project` 있는 기억 = 해당 프로젝트 전용** — 다른 프로젝트의 회상을 오염시키지 않습니다.
-- `recall`·`list_memories`는 **그 프로젝트 기억 + 전역 기억**을 반환합니다. 나머지 도구(`read_memory`·`revise`·`forget`·`link`·`reflect`)는 슬러그·id로 직접 지정하거나 볼트 전체를 보므로 스코프를 적용하지 않습니다.
-
-프로젝트별 `.mcp.json`에 기본 스코프를 지정합니다:
+이 저장소를 지원하는 클라이언트로 열면 [.mcp.json](.mcp.json)의 `node ./dist/index.js` 설정을 사용할 수 있습니다. 다른 작업 폴더에서는 실행 파일의 **절대 경로**를 지정합니다.
 
 ```json
 {
-  "mcpServers": {
-    "astronrag": {
-      "command": "node",
-      "args": ["<저장소경로>/dist/index.js"],
-      "env": { "ASTRONRAG_PROJECT": "my-app" }
-    }
-  }
+	"mcpServers": {
+		"astronrag": {
+			"command": "node",
+			"args": ["<설치 경로>/dist/index.js"]
+		}
+	}
 }
 ```
 
-- 스코프가 지정되면 서버 instructions에 현재 스코프와 저장 지침이 함께 실립니다.
-- **`remember`는 예외입니다** — `project`를 생략하면 서버 스코프가 자동으로 붙지 **않고** 전역 기억이 됩니다. 이 프로젝트 전용 사실이면 모델이 `project`를 명시해야 합니다. 반대로 하면(자동으로 씌우면) 사용자 선호 같은 범용 지식이 한 프로젝트에 갇혀 다른 곳에서 조용히 회상되지 않습니다.
-- 전체 프로젝트를 뒤지려면 `recall`·`list_memories`에 `project: ""`를 넘깁니다.
-- `ASTRONRAG_PROJECT`를 지정하지 않으면 전체가 조회됩니다.
+<details>
+<summary>Claude Code 등록과 회상 트리거</summary>
 
-볼트를 프로젝트마다 따로 두는 방법(`ASTRONRAG_VAULT` 분리)도 있지만, 그러면 교차 프로젝트 지식을 공유할 수 없습니다 — 그게 이 서버를 쓰는 이유이므로 권장하지 않습니다.
-
-## 회상 트리거 — "무엇이 저장돼 있는지" 알리기
-
-저장해도 **꺼내 쓰지 않으면 없는 것과 같습니다.** `recall`은 모델이 스스로 부를 때만 실행되므로, 볼트 내용을 세션 컨텍스트에 노출하는 3중 채널을 씁니다. 하나만 써도 되지만 병행할수록 확실합니다.
-
-**① 서버 instructions (자동, 설정 불필요)**
-서버가 기동할 때 기억 인덱스(제목 + 한 줄 설명 + 타입)를 instructions 끝에 붙여 보냅니다. `ASTRONRAG_INDEX_LIMIT`(기본 40)으로 건수를 조절하고, `0`이면 목록을 생략합니다(스코프 안내는 유지). 스코프가 설정돼 있으면 그 프로젝트 기억과 전역 기억만 실립니다.
-한계 ①: **서버 기동 시점 스냅샷**이라 그 뒤에 저장한 기억은 재시작 전까지 인덱스에 없습니다(단, `recall`로는 즉시 조회됩니다).
-
-한계 ②: **클라이언트가 MCP instructions를 2048자에서 말없이 자릅니다.** 실측으로 확인된 값입니다(전달 블록 2079 = 헤더 18 + 본문 2048 + `… [truncated]` 13). 예전에는 서버가 3268자를 내보내면서 인덱스를 배열 맨 끝에 붙여 놓아, **인덱스가 항상 100% 잘려나갔습니다** — E1이 설계 이래 한 번도 모델에 도달하지 못했다는 뜻입니다. 지금은 서버가 예산을 알고 우선순위대로 스스로 줄입니다:
-
-1. 볼트 경고 → 2. 행동수칙 1~5 → 3. 볼트 상태(COLD START/스코프) → 4. 기억 인덱스(남는 만큼만)
-
-인덱스가 가장 먼저 양보하는 이유는 **채널 ②(SessionStart 훅)가 길이 제한 없이 같은 역할을 하기 때문**입니다. 정적 설명(확신도 축 구분, 나이 해석 등)은 도구 `description`으로 옮겼습니다 — 도구 스키마는 이 예산과 별개로 전달됩니다. `ASTRONRAG_INSTRUCTIONS_BUDGET`으로 조정할 수 있습니다.
-
-3번(볼트 상태)은 **블록 단위로 전문 → 축약 순서로** 싣습니다. 종전에는 all-or-nothing이라, 예산이 30자 모자라면 272자짜리 COLD START가 통째로 사라졌습니다 — 그것도 조용히(최종 길이는 예산 미달이라 초과 경고가 울리지 않음). 하필 **빈 볼트 + 볼트 경고 + 훅 경고**가 겹친 최악 구성에서만 발생해서, "콜드 스타트 침묵" 수정이 그 조건에서만 되살아나 있었습니다(실측: 1818자인데 COLD START 탈락). 지금은 축약형으로라도 반드시 남고, **무엇을 줄였는지 stderr로 보고**합니다. 예산 안에 들어왔더라도 버린 게 있으면 말합니다 — 그 침묵이 회귀를 숨겼기 때문입니다.
-
-> 줄 단위 부분 적재로는 이 문제가 안 풀립니다. COLD START는 한 줄짜리 262자 블록이라, 남은 230자에 "일부만" 실을 방법이 없습니다. 그래서 블록마다 축약형을 따로 둡니다.
-
-볼트가 비어 있으면(콜드 스타트) 인덱스로 노출할 것이 없으므로, 그 자리를 **행동 지시로 대체**합니다 — "빈 `recall` 결과는 기억이 불필요하다는 증거가 아니다", "트리거가 걸리면 세션 끝까지 미루지 말고 그 즉시 저장하라". 종전에는 이 상황에서 한 문장만 나가고 스코프 안내마저 빠졌는데, 설득이 가장 필요한 시점에 가장 약하게 말하는 역전이었습니다.
-
-**② 세션 훅 (항상 최신 + 무저장 감지) — 명령 한 번으로 설치**
-
-> **이 채널이 선택 사항이 아니라 주 메커니즘입니다.** 헤드리스 대조 실험 60회에서 저장률이 **훅 ON 29/30(97%) vs 훅 OFF 17/30(57%)** 로 갈렸습니다(라운드 3개 층화검정 CMH χ²=11.16, 단측 p=0.00042). 채널 ①(`instructions`)만으로는 부족합니다 — 잘리지 않고 온전히 전달된 회차에서도 행동이 나오지 않았습니다. 훅 출력은 **대화 컨텍스트**에 블록으로 들어가고 `instructions`는 서버 메타데이터로 들어가는데, 그 차이가 실제 행동 차이를 만듭니다. MCP에는 대화 컨텍스트에 자동 주입되는 채널이 없습니다(`prompts`·`resources`는 호출해야 합니다). 그래서 훅이 없으면 서버가 `instructions` 첫머리에 **미설치 경고를 띄웁니다**(`ASTRONRAG_HOOK_CHECK=0`으로 끔).
->
-> 한계: 전부 헤드리스(`claude -p`) · 단일 과제 기준이며, 라운드 사이에 다른 커밋이 섞여 있어 완전한 단일 변수 비교는 아닙니다. 대화형에서 같은 크기의 효과가 나오는지는 미측정입니다.
+`<설치 경로>`를 실제 설치 위치로 바꿉니다.
 
 ```bash
-npm run setup:hook                    # 설치 (백업 후 적용)
-npm run setup:hook -- --dry-run       # 무엇이 바뀌는지만 확인
-npm run setup:hook -- --remove        # 제거
-npm run setup:hook -- --vault <경로>     # 볼트 경로 직접 지정
-npm run setup:hook -- --settings <경로>  # 대상 settings.json 지정(프로젝트 스코프 등)
+claude mcp add --scope user astronrag -- node "<설치 경로>/dist/index.js"
+npm run setup:hook -- --dry-run
+npm run setup:hook
 ```
 
-훅 **세 개**를 한 벌로 등록합니다.
+`setup:hook`은 로컬 Claude 설정에 SessionStart·UserPromptSubmit·Stop 훅을 설치합니다. 적용 전 미리보기를 확인하십시오. MCP 도구 호출은 모델이 선택하므로, 서버 instructions·세션 훅·네이티브 메모리 브리지로 기억의 존재를 알려 줍니다. **훅 설치와 자동 회상 활성화는 별개**입니다. [설치·제거·빈 볼트·훅 설정](docs/recall-triggers.md)
 
-| 훅 | 역할 |
-|---|---|
-| `SessionStart` | 매 세션 시작 시 `MEMORY.md`를 주입합니다. 채널 ①이 기동 시점 스냅샷인 반면 이쪽은 **항상 최신**입니다. 볼트가 비어 있어도 침묵하지 않습니다(아래). |
-| `UserPromptSubmit` | [부호화 큐](#부호화-큐--기억할-순간에-말을-겁니다)를 냅니다. `ASTRONRAG_AUTO_RECALL=1`이면 매 턴 프롬프트와 관련된 기억을 [자동 회상](#자동-회상--프롬프트마다-관련-기억을-붙입니다)으로 붙입니다(기본 끔). |
-| `Stop` | 세션 동안 **새로 저장된 기억이 0건이면 경고**합니다. 무저장 세션이 조용히 지나가지 않게 하는 안전망입니다. |
+설치 후 Claude를 재시작하면 세 훅이 같은 `session_id`의 세션별 마커로 상태를 공유합니다. 빈 id는 추적하지 않으며, 마커가 없는 프롬프트에서도 활성화된 자동 회상은 동작할 수 있습니다(`scripts/setup-hook.mjs`의 `buildCommands`·`results`, `scripts/session-guard.mjs`의 `markerPath`·`readMarker`·`autoRecall`).
 
-**Stop 훅이 중요한 이유:** 채널 ①②③은 전부 *회상* 쪽 대책이라, "저장돼 있는 걸 알아보게" 할 뿐 **저장을 일으키지는 않습니다.** 저장 쪽에는 강제 수단이 instructions 산문뿐이라, 실제로 durable한 결정을 여러 건 확정하고도 `remember`를 한 번도 부르지 않는 세션이 발생합니다. Stop 훅은 호스트가 강제 실행하므로 이를 잡아내는 **유일한 수단**입니다.
+</details>
 
-세 훅의 본체는 [`scripts/session-guard.mjs`](scripts/session-guard.mjs) 하나이며, 훅은 이 파일을 호출만 합니다. 셸 문법을 쓰지 않으므로 **OS 분기도, 따옴표 이스케이프도, `$` 치환 사고도 없습니다.** (`node`는 PATH 대신 절대 경로를 박습니다 — 호스트가 훅을 띄울 때 PATH가 비어 있을 수 있습니다.)
+<details>
+<summary>Markdown 볼트가 이미 있거나 Obsidian을 함께 쓴다면</summary>
 
-판정 기준은 **기억 파일 수의 증가**입니다. mtime 비교를 쓰면 `recall`의 강화 쓰기까지 "저장됨"으로 잡혀 정작 잡아야 할 무저장 세션이 통과합니다.
+기본 SQLite 서버가 Markdown 기억을 발견하면 이관을 요구할 수 있습니다. 운영 MCP를 멈추고 [이관·백업 절차](docs/operations.md#markdown에서-sqlite로-이관)를 따르거나, 클라이언트의 서버 환경에 `ASTRONRAG_STORE=file`을 지정하십시오. 네이티브 memory 디렉터리를 볼트로 직접 지정하지 않습니다.
 
-**두 훅의 발화 빈도를 실제 계약에 맞춰야 합니다.** 이름만 보고 "세션당 한 번"이라고 가정하면 둘 다 틀립니다.
+```json
+{
+	"mcpServers": {
+		"astronrag": {
+			"command": "node",
+			"args": ["<설치 경로>/dist/index.js"],
+			"env": {
+				"ASTRONRAG_STORE": "file",
+				"ASTRONRAG_VAULT": "./vault",
+				"ASTRONRAG_PROJECT": "my-app"
+			}
+		}
+	}
+}
+```
 
-| 훅 | 실제 발화 | 잘못된 가정이 낳는 결과 |
+`recall`·`list_memories`는 지정 프로젝트와 전역 기억을 조회합니다. **`remember`는 `project` 생략 시 전역 저장**이므로 프로젝트 전용 사실에는 값을 명시합니다. [프로젝트 스코핑](docs/configuration.md#프로젝트-스코핑)
+
+</details>
+
+## 제공 도구
+
+**항상 등록되는 도구 9개**와 **프롬프트 1개**를 제공합니다. 온톨로지 로드 실패 시에도 `recommend`는 등록되며 호출 결과로 오류를 돌려줍니다.
+
+| 도구 | 역할 | 주요 입력 |
 |---|---|---|
-| `SessionStart` | `startup` / `resume` / `clear` / `compact` **각각** | 매번 기준선을 덮어쓰면 세션 중간의 압축이 기준선을 리셋 → 그전에 저장한 기억이 없던 일이 됨 → **오탐 경고** |
-| `Stop` | Claude가 응답을 마칠 때마다 = **매 턴** | 저장 전까지 모든 응답에 같은 경고가 붙음 → 경보 피로로 정작 봐야 할 신호가 묻힘 |
+| `remember` | 새 기억 저장, 중복·모순 후보 안내 | `title`, `content`, `type` |
+| `recall` | 키워드·변형 질의로 회상 | `query`, 선택 `alt_queries`·`limit`·`project` |
+| `read_memory` | 기억 전문 읽기 | `id` 또는 슬러그 |
+| `revise` | 기억 교정·재확인 | `id`, `reason` |
+| `forget` | 삭제 대신 보관 | `id`, `reason` |
+| `link` | 기억 사이 양방향 연결 | `source`, `target` |
+| `reflect` | 약화·중복·깨진 링크·공고화 후보 점검 | 없음 |
+| `list_memories` | 유형·상태·프로젝트별 목록 | 선택 `type`·`status`·`project` |
+| `recommend` | 온톨로지 기반 모델·추론 강도 배치 추천 | `description`, `role`, 선택 `platform` |
 
-실측 재현: `startup`(기준선 0) → 2건 저장 → `compact`(기준선 2로 리셋) → 종료 시 "0건 저장" 경고. 그리고 5턴을 돌리면 경고도 5회 나왔습니다.
+`consolidate`는 도구가 아닌 **정리 프롬프트**입니다. Claude Code에서는 `/mcp__astronrag__consolidate`로 불러 후보 비교·교정·연결·재확인 절차를 읽습니다. 자동 병합이나 삭제는 하지 않습니다. [전체 매개변수와 응답 필드](docs/tools.md)
 
-그래서 마커를 숫자 하나에서 `{ sessionId, count, warned }` JSON으로 바꿨습니다. 훅은 stdin으로 오는 이벤트 JSON에서 `session_id`·`source`·`transcript_path`를 읽어
+## 설정
 
-- **같은 `session_id`면 기준선을 보존**합니다 — `compact`/`resume`가 세션 중간에 끼어들어도 기준선이 살아남습니다. `session_id`를 못 받으면 `source`가 `resume`/`compact`인지로 차선 판정합니다.
-- **경고는 세션당 한 번**만 내보내고 `warned`를 기록합니다.
-- **짧은 대화에서는 침묵**합니다(`transcript_path` 줄 수 < 25). 한두 마디 묻고 끝나는 대화에는 애초에 남길 durable한 사실이 없습니다. 길이를 못 재면 종전대로 경고합니다 — 모른다고 침묵하면 안전망 자체가 사라집니다.
-- 구버전 마커(숫자만)도 그대로 해석해, 업그레이드 직후 세션에서 경고가 깨지지 않습니다.
+서버 환경은 MCP 등록의 `env`에 지정합니다. **훅 환경은 별도 프로세스에 전달**해야 합니다.
 
-stdin은 **250ms 타임아웃**으로 읽습니다. Stop은 매 턴 실행되므로 한 번의 지연이 대화 전체에 곱해지고, stdin이 닫히지 않는 파이프로 상속될 수 있기 때문입니다. 타임아웃되면 입력이 없는 셈 치고 종전 동작으로 퇴화합니다.
-
-경고 문구도 고쳤습니다. 종전 `0건입니다 (2건 그대로)`는 0과 2가 나란히 나와 모순처럼 읽혔습니다 — 앞은 "새로 저장된 건수", 뒤는 "볼트 총량"이라는 뜻이었습니다.
-
-**볼트를 실행 시점에 다시 해석합니다 — 중요한 부분입니다.** 훅에 설치 시점 경로를 박아두면, 프로젝트마다 `ASTRONRAG_VAULT`로 볼트를 나누는 순간 **훅만 옛 볼트를 계속 봅니다.** 그러면 한 세션 안에서
-
-- 훅: "볼트에 이런 기억들이 있다" (볼트 B 내용)
-- 서버: "COLD START — this vault is EMPTY" (볼트 A 기준)
-
-라는 **정면으로 모순된 두 신호**가 동시에 주입되고, 모델은 인덱스에 내용이 보이면 "메모리는 이미 잘 돌고 있다"고 판단해 저장을 건너뜁니다. 실제로 이 분열이 관측돼(훅은 실제 볼트 3건, 서버는 빈 테스트 볼트) 콜드 스타트 실험이 통째로 무효화된 적이 있습니다.
-
-그래서 훅은 매 실행마다 서버와 **같은 근거를 같은 우선순위로** 다시 읽습니다: `ASTRONRAG_VAULT` 환경변수 → 프로젝트 `.mcp.json` → `~/.claude.json`(이 프로젝트 → 전역) → 설치 시점 폴백. `--vault`로 **명시**해 설치했다면 그 의도가 자동 탐지를 이깁니다.
-
-또한 주입 블록이 **출처를 스스로 밝힙니다** — `<astronrag-index vault="..." memories="3">`. 서버가 다른 볼트를 보고 있으면 모순이 눈에 보이므로, 조용히 넘어가지 않습니다.
-
-**콜드 스타트에도 반드시 주입합니다.** 종전에는 `MEMORY.md` 본문이 비면 아무것도 내보내지 않았는데, 그 침묵이 자기강화 루프를 만들었습니다:
-
-> 볼트가 빔 → 주입할 인덱스가 없음 → 모델이 메모리의 존재를 인지하지 못함 → 저장 0건 → **다음 세션도 빔**
-
-단일 변수 대조 실험으로 확인됐습니다. 코드·프롬프트가 동일하고 훅이 무엇을 주입했는가만 달랐는데, 주입이 있던 쪽은 `recall`/`remember`를 호출했고 침묵한 쪽은 **도구 탐색 자체를 하지 않았습니다.** 서버 `instructions`의 COLD START 문구는 양쪽 모두 1842자로 온전히 도착했으므로, **채널 ①만으로는 행동이 생기지 않는다**는 것이 실증된 셈입니다. 저장 여부를 판단하고 안 한 게 아니라 메모리 시스템이 행동 반경에 들어오지 않은 것이므로, 이는 판단 실패가 아니라 **인지 실패**입니다.
-
-그래서 콜드 스타트 블록은 `mcp__<서버키>__remember` / `__recall`처럼 **도구 이름을 그대로 박아 넣습니다.** 클라이언트가 MCP 도구를 지연 로드(deferred)하면 스키마가 컨텍스트에 없어, 모델은 쓸지 말지 판단하기 전에 먼저 이름으로 지목해 불러와야 하기 때문입니다. "기억하세요"라고만 쓰면 무엇을 로드해야 하는지 알 수 없습니다. 서버키는 설정에 등록된 실제 이름을 찾아 씁니다(사용자마다 다릅니다).
-
-같은 이유로 **기억이 있는데 `MEMORY.md`를 못 읽는 경우에도 침묵하지 않고** 건수만이라도 알립니다 — 여기서 침묵하면 "기억이 있는 볼트"가 "빈 볼트"와 구분되지 않습니다. 다만 볼트 **디렉터리 자체가 없으면** 침묵합니다. 그건 콜드 스타트가 아니라 설정이 어긋난 상태이고, 매 세션 떠들면 노이즈이기 때문입니다.
-
-설치 스크립트가 처리하는 것:
-
-- **볼트 경로 감지** — 등록된 MCP 서버 설정에서 실제 `ASTRONRAG_VAULT`를 읽어 폴백값으로 심습니다(위 실행 시점 해석이 우선).
-- **기존 설정 병합** — 다른 훅을 쓰고 있어도 덮어쓰지 않고 항목만 더합니다. 재실행해도 중복되지 않습니다(멱등). 구버전 셸 훅도 인식해 깨끗이 교체합니다.
-- **안전장치** — 쓰기 전에 두 명령을 실제로 실행해 검증하고, 타임스탬프 백업을 남기며, 쓴 뒤 JSON을 재파싱해 깨졌으면 백업에서 복구합니다. `settings.json`에 BOM이 있어도(메모장·PowerShell 편집 시 흔함) 정상 처리합니다.
-- **세션을 절대 막지 않음** — 훅 본체는 어떤 실패에서도 종료 코드 0으로 끝납니다. Stop 훅이 0이 아니면 세션 종료를 막을 수 있기 때문입니다.
-
-`postinstall`로 자동 실행하지 않는 이유: 전역 설정을 몰래 고치는 것은 나쁜 관행이고, Claude Code를 쓰지 않는 사용자나 CI에서도 실행되어 버립니다.
-
-`UserPromptSubmit`이 아니라 `SessionStart`를 쓰는 이유: 전자는 매 턴 중복 주입돼 컨텍스트를 낭비합니다. 주입은 최대 200줄로 잘라 볼트가 커져도 예산을 넘지 않게 합니다 — **잘렸으면 잘렸다고 블록 끝에 명시합니다**(총 건수 + "나머지는 recall로만 도달"). 말없이 자르면 모델은 주입된 것이 볼트 전부라고 읽고, 안 보이는 기억을 아예 찾지 않습니다.
-
-Stop 훅의 무저장 경고는 실제로 작업한 세션에만 나갑니다(도구 호출 3회 이상, `ASTRONRAG_STOP_MIN_TOOLS`로 조정). **서브에이전트에 위임한 세션은 예외로 통과시킵니다** — 실제 작업이 별도 컨텍스트에서 벌어져 부모 트랜스크립트에는 호출 흔적이 거의 없기 때문입니다. 위임이 저장을 억제하는지는 아직 측정된 바 없지만, 여기서 침묵하면 그 측정 자체가 불가능해집니다.
-
-**③ 네이티브 메모리 브리지**
-Claude Code의 프로젝트별 메모리(`~/.claude/projects/<프로젝트>/memory/MEMORY.md`)는 매 세션 자동 주입됩니다. 이 파일에 "장기 기억은 astronrag의 `recall`로 조회"라는 안내와 핵심 항목 목록을 남겨두면 네이티브의 자동 주입에 편승할 수 있습니다. 훅이 없는 환경(데스크톱 일반 채팅, 다른 MCP 클라이언트)에서는 **이 채널이 유일한 자동 주입 경로**입니다.
-
-### 주입되는 인덱스는 "출발점"이지 사실이 아닙니다
-
-주입 채널의 각 줄에는 확신도와 함께 **나이**가 실립니다 — `(확신도 0.95 · 3일 전)`, 오래된 것은 `· 90일 전, 대조 필요`(기본 타입별 14/60/60/180일, `ASTRONRAG_STALE_DAYS` 설정 시 단일값, `review_after`가 지나면 나이와 무관). 훅 블록도 "시점 관측이지 현재 상태가 아니다 / 단정 전 현재 소스를 읽어라 / 어긋나면 `revise` 하라"를 함께 내보냅니다.
-
-이유는 관측된 사고입니다. 주입된 한 줄을 근거로, 저장소를 열어보기도 전에 "이 프로젝트는 X로 되어 있으므로"라고 단정한 사례가 있었습니다. 확신도만 표기하면 **권위만 전달되고 불확실성은 전달되지 않습니다.** 네이티브 메모리도 파일을 읽을 때마다 "N일 전 관측 — 현재 코드와 대조하라"를 자동으로 붙여 같은 위험을 막고 있습니다.
-
-### ⚠ 네이티브 memory 디렉터리를 볼트로 지정하지 마세요
-
-`ASTRONRAG_VAULT`를 `~/.claude/projects/<프로젝트>/memory`로 지정하는 것은 자연스러워 보이지만 **틀린 방법입니다.** 레이아웃이 다릅니다 — 네이티브는 노트를 디렉터리 바로 아래 두고, AstronRAG는 `memories/` 하위에 둡니다. 그래서 기억이 0건으로 보입니다.
-
-서버가 이를 **내용으로 감지해 거부**합니다(노트 frontmatter의 `node_type: memory`/`originSessionId`). 감지되면 네이티브 `MEMORY.md`와 볼트 마커를 일절 건드리지 않고, 경고에 실제 상황과 조치를 함께 띄웁니다. 이 방어가 없던 시절에는 네이티브 인덱스가 덮어써졌고, 1회차에 심긴 마커 때문에 **2회차부터 경고까지 사라졌습니다.**
-
-올바른 이관 절차:
-
-```bash
-npm run import:native                 # 미리보기 — 아무것도 쓰지 않습니다
-npm run import:native -- --apply      # 실제 이관 (동일 source 는 건너뜀, 멱등)
-```
-
-이관 시 두 가지를 복원합니다.
-
-- **사람이 읽는 제목** — 노트의 `name:` 필드는 슬러그(`toast-notify-deliverable`)이고 진짜 제목(`ToastNotify deliverable`)은 네이티브 `MEMORY.md` 인덱스에만 있습니다. 인덱스를 파싱해 되살립니다. 제목이 바뀌면 슬러그도 바뀌므로, 노트끼리 걸어둔 `[[위키링크]]`를 **실제 확정된 슬러그**로 치환하는 후처리가 함께 돕니다(이관 직후 깨진 링크 수를 스스로 보고합니다).
-- **프로젝트명** — `project=C--Users-ruinp-OneDrive-------Discord-CLI-bot` 같은 뭉개진 경로 슬러그 대신 실제 디렉터리명(`Discord CLI bot`)을 씁니다. `~/.claude.json`의 실제 경로와 대조하는 역매핑이라 추정이 아닙니다. 실패하면 슬러그를 유지하고 이유를 출력하며, `--project-map <슬러그>=<이름>`으로 직접 지정할 수 있습니다.
-
-이관 후에도 네이티브 노트 원본은 그대로 남습니다. `ASTRONRAG_VAULT`는 **별도 디렉터리**를 가리키게 두세요.
-
-## 공고화 — 일화가 지식이 됩니다
-
-사람의 뇌는 휴식·수면 중에 해마의 개별 에피소드를 재생해 신피질의 **의미기억으로 추상화**합니다. 여러 번 겪은 일에서 규칙이 만들어집니다.
-
-`reflect`가 **공고화 후보**를 알려줍니다 — 한 주제(태그) 아래 아직 추상화되지 않은 일화가 3건 이상 모인 경우입니다. 규칙이 진짜로 성립하면 `remember`에 `derived_from`으로 근거 슬러그들을 지정해 저장합니다.
-
-**서버는 후보만 내고 추상화하지 않습니다.** 세 건이 겹친다고 규칙이 참인 것은 아니고, 어느 것이 진짜 패턴인지는 본문을 읽어야 압니다.
-
-### 공고화 3조 — 추상화가 원본을 대체하지 않게
-
-인간 기억의 버그는 원본 에피소드가 소실되고 스키마만 남아 없던 세부를 재생성하는 것입니다(허위기억). **추상화 자체는 P8 위반이 아닙니다. 추상화가 원본을 대체하는 것이 위반입니다.** 이를 코드 계약으로 못박았습니다.
-
-1. **바이트 불변** — 파생물 생성이 기존 파일을 단 1바이트도 바꾸지 않습니다. 회귀가 근거 파일만이 아니라 **볼트 전체의 경로→SHA-256 맵**을 비교합니다(간접 쓰기까지 잡아야 성립합니다).
-2. **출처 영속** — `derived_from`은 frontmatter에 있습니다. 본문에만 적으면 `revise` 한 번에 사라져 손으로 쓴 단정문과 구별되지 않습니다.
-3. **인출면 우선순위** — 파생물이 자기 근거를 RIF로 누르지 않습니다. 그대로 두면 저장 상태는 멀쩡한데 **모델이 보는 것이 원본 대신 요지**가 됩니다.
-
-`revise`로 `type`을 바꿀 수 있습니다. 종전에는 생성 시 정해진 뒤 바뀔 길이 없어 오분류조차 고칠 수 없었습니다.
-
-## 부호화 큐 — 기억할 순간에 말을 겁니다
-
-사람은 "이걸 기억해야지" 하고 기억하지 않습니다. 정정·놀라움 같은 계기가 그 자리에서 부호화를 유발합니다. AstronRAG의 부호화 경로는 명시적 `remember` 호출뿐이었고, 유일한 넛지는 **세션이 끝날 때** 나왔습니다 — 그때는 이미 늦습니다. 맥락이 압축됐다면 요약에서 재구성해 저장하게 되는데, 그건 P8이 금지하는 요지 기반 재구성입니다.
-
-`UserPromptSubmit` 훅이 **턴 시작 시점**에 큐를 냅니다. 원문이 아직 살아 있는 때입니다.
-
-**자동으로 저장하지 않습니다.** 훅은 큐만 내고 판단은 모델이 합니다 — `forget`이 자동 삭제하지 않는 것과 같은 원칙입니다. 큐는 스스로 정규식 추측임을 밝히고 출처·타입을 지정하지 않습니다(출처 혼동 방지). 세션당 한 번만 나옵니다.
-
-`ASTRONRAG_CUE_TURNS`(기본 8)로 폴백 임계를 조정합니다.
-
-## 자동 회상 — 프롬프트마다 관련 기억을 붙입니다
-
-같은 `UserPromptSubmit` 훅(`session-guard.mjs --prompt`)이 사용자 프롬프트로 볼트를 검색해, 관련 기억의 **요약 한 줄**을 컨텍스트에 붙입니다. 모델이 `recall`을 부르기 전에도 "이런 기억이 있다"는 단서가 턴 시작 시점에 들어갑니다.
-
-**기본은 꺼져 있습니다.** 켜려면 훅 프로세스가 받는 환경(Claude Code를 띄우는 셸의 환경변수 등)에 `ASTRONRAG_AUTO_RECALL=1`을 지정합니다. `1`이 아닌 값이나 미지정은 모두 끔이고, 꺼져 있어도 부호화 큐는 그대로 나옵니다.
-
-```powershell
-$env:ASTRONRAG_AUTO_RECALL = "1"; claude     # 이 셸에서 띄운 세션만
-setx ASTRONRAG_AUTO_RECALL 1                  # 사용자 환경변수로 고정(새 셸부터 적용)
-```
-
-끈 이유는 현재 측정치가 목표에 못 미쳐서입니다. 새 질의 none 오탐률은 25%(5/20, 목표 10% 이하)이고 exact R@1은 0.9입니다. 훅 끝단 p95는 469건 볼트에서 214ms, 950건 볼트에서 257ms입니다(목표 200ms). 자세한 수치는 아래 **측정** 표에 있습니다.
-
-```
-<astronrag-auto-recall matched="2" note="자동 검색 결과. 관련 없으면 무시. 전문은 read_memory">
-- [node-version-pin] Services run Node 20 LTS pinned via .nvmrc (semantic, conf 0.6, 189일 전, 대조 필요)
-- [perf-profile-node] Run with --cpu-prof and open the profile in Chrome DevTools (procedural, conf 0.95, 120일 전, 대조 필요)
-</astronrag-auto-recall>
-```
-
-- **검색 대상**: 8자 미만이거나 `/`로 시작하는 프롬프트는 건너뜁니다. 코드블록(```` ``` ````·`~~~` 펜스)을 뺀 앞 500자만 질의로 씁니다.
-- **선택**: 활성(active) 기억 가운데 같은 세션에서 아직 넣지 않은 것만 남긴 뒤, 점수가 절대 임계(`ASTRONRAG_AUTO_MIN_SCORE`, 기본 9) 이상이면서 1위의 50% 이상인 결과를 최대 3건 넣습니다. 1위는 이미 넣은 것을 포함한 활성 결과의 최고점입니다. 대체(superseded)·보관 기억이나 이미 넣은 기억이 상위를 차지해도 그 뒤의 새 후보가 자리를 채웁니다. 0건이면 아무것도 넣지 않습니다.
-- **형식**: 본문 없이 slug·설명·타입·확신도·나이만 싣습니다. 블록 전체가 `ASTRONRAG_AUTO_BUDGET`(기본 1,500자)을 넘지 않게 줄 단위로 자릅니다. `대조 필요`는 recall의 `stale_hint`와 같은 기준입니다(타입별 낡음 임계 또는 `review_after` 경과).
-- **중복**: 같은 세션에서 이미 주입한 slug는 다시 넣지 않습니다(세션 마커의 `autoSlugs`). 컨텍스트 압축(`compact`) 뒤에는 목록을 비워 다시 넣을 수 있게 합니다. SessionStart 인덱스에 이미 있는 기억이라도 자동 회상은 그대로 넣습니다.
-- **출력 경로**: `hookSpecificOutput.additionalContext`(`hookEventName: "UserPromptSubmit"`) JSON 하나로 냅니다. 부호화 큐가 같은 턴에 나오면 같은 `additionalContext` 안에서 회상 블록 뒤에 붙입니다. 최상위 `additionalContext`는 Claude Code가 무시하고, 평문과 JSON을 섞어 내면 JSON으로 해석되지 않기 때문입니다.
-- **읽기 전용**: 서버가 유지하는 영속 역색인(`.bbm-index/lexical.v1.json`)만 읽고, 반환 후보(처음 6건, 기준을 넘는 후보가 더 있을 때만 늘림)만 `stat`해 바뀌었거나 없어진 파일은 버립니다. 인덱스를 만들거나 고쳐 쓰지 않고, 인덱스가 없거나 깨졌으면 아무것도 내지 않습니다. gray-matter 같은 무거운 모듈을 불러오지 않습니다(`npm run test:autorecall`이 import 목록을 고정합니다).
-- **강화하지 않습니다.** 모델이 고른 회상이 아니므로 `storage_strength`·`last_accessed`를 바꾸지 않습니다. 사용 로그에는 `{"tool":"auto_recall","injected":건수,"topScore":1위점수}`만 남고 프롬프트 내용은 남지 않습니다.
-
-훅이 읽는 환경변수입니다. MCP 서버의 `env`가 아니라 **훅 프로세스가 받는 환경**에서 지정하고, 매 프롬프트마다 다시 읽습니다. 빈 값이나 숫자가 아닌 값은 기본값으로 돌아갑니다.
-
-| 변수 | 기본값 | 설명 |
+| 변수 | 기본값 | 용도 |
 |---|---|---|
-| `ASTRONRAG_AUTO_RECALL` | 끔 | `1`일 때만 자동 회상을 켭니다. 그 밖의 값·미지정은 끔(부호화 큐는 그대로) |
-| `ASTRONRAG_AUTO_MIN_SCORE` | `9` | 주입할 최소 절대 점수(legacy 척도) |
-| `ASTRONRAG_SCORER` | `legacy` | 훅 검색의 점수 방식. `bm25f`는 점수 척도가 달라 `ASTRONRAG_AUTO_MIN_SCORE`를 함께 정해야 합니다 |
-| `ASTRONRAG_AUTO_BUDGET` | `1500` | 주입 블록 전체(태그 포함) 최대 문자 수 |
-| `ASTRONRAG_PROJECT` | (없음) | 검색 범위. 훅 환경에 없으면 서버와 같은 순서(프로젝트 `.mcp.json` → `~/.claude.json`의 이 프로젝트 → 전역)로 등록된 서버의 값을 따릅니다 |
+| `ASTRONRAG_STORE` | `sqlite` | `file`로 Markdown 선택 |
+| `ASTRONRAG_VAULT` | `<저장소>/vault` | 저장소 루트 |
+| `ASTRONRAG_SQLITE_PATH` | `<볼트>/.bbm/store.sqlite` | SQLite DB 경로 |
+| `ASTRONRAG_PROJECT` | 설정 없음 | 조회 기본 스코프 |
+| `ASTRONRAG_SCORER` | `legacy` | `bm25f` 선택 가능 |
+| `ASTRONRAG_SYNONYMS` | 추가 없음 | 팀 용어 동의어 확장 |
+| `ASTRONRAG_VECTOR` | 꺼짐 | `1`일 때만 벡터 모듈 로드 |
+| `ASTRONRAG_AUTO_RECALL` | 꺼짐 | 훅 환경의 `1`일 때만 자동 회상 |
 
-`대조 필요` 판정은 훅 환경의 `ASTRONRAG_STALE_DAYS`를 씁니다. 이 값을 서버 `env`에만 두면 훅은 타입별 기본 임계를 씁니다.
+[전체 환경변수·기본값·숫자 파싱](docs/configuration.md) · [회상 트리거·자동 회상](docs/recall-triggers.md)
 
-**한계**
+## 운영 안내
 
-- 서버가 꺼진 동안 손으로 새로 만든 기억은 서버가 다시 뜰 때까지 자동 회상에 잡히지 않습니다. 훅은 인덱스를 고치지 않으므로, 인덱스에 없는 파일은 보이지 않고 손으로 고친 파일은 신원이 달라져 버려집니다.
-- 서버를 한 번도 띄우지 않은 볼트에는 인덱스가 없어 자동 회상이 동작하지 않습니다.
-- 픽스처(`eval/fixture-vault`, 160건)에서 새로 쓴 질의로 잰 결과, 기본 임계 9의 무관 질의 오탐률이 목표(10% 이하)를 넘습니다(아래 표). 흔한 영어 단어가 본문과 맞아 점수가 오르는 경우입니다.
-- 하한을 다시 골라도 목표에 닿지 않았습니다. 튜닝에 썼던 기존 질의(golden none·exact 전체와 fresh)로 legacy T=10, bm25f T=3.5를 후보로 정했습니다. 그다음 점수를 보기 전에 고정한 새 판정 질의(`eval/autorecall-judge.jsonl`, none 30·exact 15)로 한 번씩만 쟀습니다. 두 후보 모두 기준(none ≤10%, exact R@1 ≥0.8)에 못 미쳐 기본값 후보는 없습니다(아래 표).
-- 훅 끝단 지연(프로세스 기동 포함) p95가 200ms를 넘습니다(아래 표). 절반가량이 빈 `node` 기동 시간이고, 상주 프로세스 없이 매 프롬프트 새 프로세스를 띄우는 구조의 한계라 허용 범위로 둡니다([GOAL.md](GOAL.md) R5 기록).
+<details>
+<summary>교정 복구·직접 편집·동시 사용·계측·시험</summary>
 
-**측정** (`npm run eval:autorecall`, `npm run bench:autorecall -- --count <N>`; Windows 11, Node 24.13.0, 2026-09-28. '확인'은 이 저장소에서 실측, '추정'은 기존 holdout 기반)
+- **기억 안전성:** `revise`는 본문 교정 전 구본을 최근 3세대 보관합니다. `forget`은 보관 처리합니다. 중요한 저장소는 별도 백업합니다.
+- **직접 편집:** Markdown 저장소에서는 원문을 편집할 수 있습니다. 알려지지 않은 frontmatter 키는 다음 쓰기에 보존되지 않으며 `MEMORY.md`는 자동 생성물입니다.
+- **동시 사용:** SQLite는 트랜잭션과 재시도를 사용합니다. 파일 저장소는 원자적 쓰기와 배타적 생성을 사용하지만 모든 경합을 제거하는 잠금은 아닙니다.
+- **계측:** 도구 사용 이벤트는 기본적으로 질의·본문·제목을 남기지 않습니다. 강화 실패 이벤트 `reinforcement_unapplied`에는 기억 slug(제목에서 만든 값)와 원문 오류 메시지가 남습니다(`src/store.ts`의 `MemoryService.reinforce`의 강화 실패 분기, `src/vault.ts`의 `Vault.makeSlug`). 조회가 간격 게이트를 통과하면 강화 쓰기가 발생할 수 있습니다.
+- **시험:** `npm test`는 임시 저장소와 실제 stdio 서버를 사용합니다. 개별 시험과 이관 명령은 [운영 문서](docs/operations.md)에 있습니다.
 
-| 항목 | 값 | 구분 |
-|---|---|---|
-| 새 질의(`eval/autorecall-fresh.jsonl`) none 20건 오탐률, T=9 | 25% (5/20) | 확인 |
-| 새 질의 exact 10건 R@1, T=9 | 0.9 (9/10) | 확인 |
-| 기존 golden holdout none 9건 오탐률 / exact 9건 R@1, T=9 | 11% (1/9) / 0.78 (7/9) | 추정 |
-| 주입 크기(주입이 일어난 턴 평균 / 최대) | 294자 / 475자, 평균 1.67건 | 확인 |
-| 주입 slug 중 SessionStart 인덱스(200줄)에도 있는 비율 | 100% (25/25) — 픽스처는 160건이라 인덱스가 전부 들어감 | 확인 |
-| 같은 비율 — 합성 469건(bench 질의 4 + 시드 고정 기억 제목 30, T=9·10 legacy, T=3.5 bm25f) | 50% (15/30), 세 조건 같음 | 확인 |
-| 새 판정 질의(`eval/autorecall-judge.jsonl`) — legacy T=10 | none 13.3% (4/30), exact R@1 0.20 (3/15) → 미달 | 확인 |
-| 새 판정 질의 — bm25f T=3.5 | none 16.7% (5/30), exact R@1 0.27 (4/15) → 미달 | 확인 |
-| 훅 끝단 p95 — 합성 469건 (주입 / 비주입) | 214.3ms / 180.2ms (기준 200ms 미달) | 확인 |
-| 훅 끝단 p95 — 합성 950건 (주입 / 비주입) | 257.4ms / 238.9ms (기준 200ms 미달) | 확인 |
-| 빈 `node -e ""` 기동 p95 (469건 측정 / 950건 측정) | 112.6ms / 108.8ms | 확인 |
-| 단계별 p95, 주입 질의 (469건 / 950건) | 기동 47.1 / 39.7, import 43.2 / 40.7, 인덱스 적재 28.4 / 48.9, 검색 11.6 / 7.9, stat 3.2 / 4.3 (ms) | 확인 |
+</details>
 
-**클라이언트별 동작**
-
-| 클라이언트 | 자동 회상 주입 | 비고 |
-|---|---|---|
-| Claude Code CLI | 미실측 | 훅 스크립트 단독 출력 형식은 회귀 시험으로 확인 |
-| 데스크톱 앱 Code 탭 | 미실측 | |
-| VS Code 확장 | 미실측 | `UserPromptSubmit` 주입이 누락된다는 보고가 있음(이슈 #49063) |
-
-## 사용 계측
-
-저장률과 회상률을 재는 수단입니다. **없으면 개선이 효과를 냈는지 판정할 수 없습니다** — 실제로 실사용 기저선을 알아내는 데 트랜스크립트 1,492개를 전수 검색해야 했습니다.
-
-```bash
-npm run usage:report                  # 사람이 읽는 요약
-npm run usage:report -- --json        # 기계 판독용
-npm run usage:report -- --since 2026-07-01
-```
-
-`vault/.bbm-usage.jsonl`에 append-only로 쌓입니다(점 파일이라 Obsidian에서 숨겨지고, 설명 대상인 볼트와 함께 이동합니다). 서버는 도구 호출을, **훅은 세션 단위 결과**를 기록합니다 — 저장률의 분모인 "세션"을 아는 것은 훅뿐입니다(stdio 서버에는 세션 개념이 없습니다).
-
-**내용은 기록하지 않습니다.** 질의문·본문·제목은 남지 않고 수치만 남습니다. 골든 질의셋을 만들 때처럼 질의문이 필요하면 `ASTRONRAG_LOG_QUERIES=1`로 명시적으로 켜고, 전체를 끄려면 `ASTRONRAG_USAGE_LOG=0`입니다. recall 이벤트의 `shadowTop5`는 [그림자 로그](#회상-품질)의 두 점수 방식 상위 5건 일치율입니다.
-
-`access_count`로는 대신할 수 없습니다. 간격 게이트가 닫혀 있으면 강화 쓰기를 생략하므로, 디스크의 값은 "조회 횟수"가 아니라 **"게이트가 열린 채 조회된 횟수"**입니다. 성능을 위한 의도된 절충이지만 그래서 계측 지표로는 못 씁니다.
-
-> **A/B에 쓸 때 천장효과 주의.** SessionStart 훅 ON 조건의 저장률은 실측 29/30(97%)입니다. 그 조건에서 "세션당 저장>0"을 1차 지표로 쓰면 팔당 30회로는 어떤 개선도 탐지할 수 없습니다. 연속량(트리거 발생 → 저장까지 걸린 턴 수)을 쓰거나 양팔 훅 OFF로 고정하세요.
-
-## 동시 사용 안전성
-
-여러 Claude Code 세션(또는 데스크톱 앱과 CLI)이 **같은 볼트를 동시에 써도 됩니다.**
-
-- 모든 쓰기가 원자적입니다(임시 파일 → `rename`). 다른 프로세스가 "반쯤 쓰인 파일"을 보는 창이 없습니다.
-- 신규 기억은 배타적으로 생성됩니다. 두 세션이 같은 제목을 동시에 저장하면 한쪽이 `-2` 접미를 받고 **둘 다 살아남습니다**.
-- 강화 기록은 쓰기 직전 파일을 다시 읽어 증분만 적용합니다. 그 사이 다른 세션이 한 `revise`·`forget`을 되돌리지 않습니다. 2 프로세스 × 300회 동시 회상에서 강화 소실 0건을 실측했습니다.
-- 다만 read-modify-write 자체는 락이 아니라 **창을 좁힌** 것이라, 이론적 경합 가능성은 남습니다. 중요한 볼트는 git으로 관리하세요.
-
-## 저장소와 이관
-
-기본 저장소는 SQLite이며 `ASTRONRAG_STORE=file`로 기존 Markdown `FileStore`를 계속 사용할 수 있습니다. SQLite 전환 전에는 운영 MCP를 멈춘 뒤 `npm run migrate:vault -- --vault <vault> --store-path <db>`를 실행해야 합니다. 문제가 있으면 `ASTRONRAG_STORE=file`로 되돌리면 원본 vault를 그대로 사용합니다. DB→Markdown export와 실제 운영 전환 절차는 D4 범위입니다.
-
-이관 도구는 원본을 읽기 전용으로 다루며, 이관 전에 vault 폴더 사본과 파일별 SHA-256 manifest를 저장소·vault 밖에 만듭니다. 기본 백업 위치는 `%LOCALAPPDATA%/AstronRAG/backups/<UTC 시각>`이고 `--backup-dir`로 정확한 목적지를 지정할 수 있습니다. 사본 hash 검증이 실패하면 DB를 열지 않으며, 검증된 백업은 자동 삭제하지 않습니다.
-
-SQLite는 WAL 대신 rollback journal(`DELETE`)과 `busy_timeout=5000`을 사용합니다. 현재 런타임 SQLite 3.50.4는 [WAL-Reset Bug](https://www.sqlite.org/wal.html)의 영향 범위(3.7.0~3.51.2)에 있고 MCP 세션마다 별도 프로세스가 같은 파일을 쓰기 때문입니다. 런타임이 3.51.3 이상 또는 3.50.7 백포트로 올라가면 WAL을 재검토합니다.
-
-강화 갱신과 간격 게이트는 `updateRecord` 콜백 안에서 최신 레코드를 기준으로 다시 계산합니다. SQLite에서는 이 콜백이 `BEGIN IMMEDIATE` 트랜잭션 안에서 실행됩니다. `FLUSH_EVERY_ACCESS=false`일 때 게이트가 닫히면 접근 횟수도 저장하지 않으며 순위에는 사용하지 않습니다. `BEGIN IMMEDIATE`의 `SQLITE_BUSY` 재시도는 CPU 부하 병행 10회에서 소진 0회였던 최대 3회입니다. 끝내 반영하지 못하면 stderr 한 줄과 `reinforcement_unapplied` 사용 이벤트(`busy_exhausted` 또는 `exception_swallowed`)를 남깁니다. 사용 이벤트는 입력에 `ts: undefined`가 있어도 객체 전개 뒤 ISO 기본 시각을 확정해 유지합니다.
-
-## 환경변수
-
-환경 설정을 바꾸면 MCP 서버를 재시작하십시오. 같은 설정의 새 이름과 옛 이름이 모두 정의되어 있으면 새 이름을 사용합니다. 새 값이 빈 문자열이거나 잘못된 값이어도 옛 값으로 되돌아가지 않고 해당 설정의 기존 기본값·오류 규칙을 적용합니다.
-
-| 변수 | 기본값 | 설명 |
-|---|---|---|
-| `ASTRONRAG_VAULT` | `<저장소>/vault` | 볼트 디렉터리. 지정한 곳이 비어 있고 마커도 없으면 경고 |
-| `ASTRONRAG_STORE` | `sqlite` | 저장소 종류. `file`로 기존 Markdown 저장소 선택 |
-| `ASTRONRAG_SQLITE_PATH` | `<볼트>/.bbm/store.sqlite` | SQLite 파일 경로. 기존 기본 경로 유지 |
-| `ASTRONRAG_ONTOLOGY_PATH` | 내장 ontology | 온톨로지 파일 경로. 빈 값은 내장 설정 사용 |
-| `ASTRONRAG_PROJECT` | (없음) | 이 서버의 기본 프로젝트 스코프. 미지정이면 전체 조회 |
-| `ASTRONRAG_SYNONYMS` | (없음) | 동의어 사전 추가. `대표어=동의어1,동의어2;대표어2=동의어3` — 그룹은 `;`, 항목은 `,`. 내장 사전과 합쳐지고 양방향으로 전개됩니다. 예: `크로스넷=crossnet,사내망;웹메일=webmail` |
-| `ASTRONRAG_INDEX_LIMIT` | `40` | instructions에 실을 기억 인덱스 최대 건수. `0`이면 목록 생략 |
-| `ASTRONRAG_STALE_DAYS` | (없음 = 타입별 episodic 14 · semantic 60 · procedural 60 · preference 180) | 설정하면 전 타입에 이 일수를 단일 임계로 씀. 임계 이상 갱신되지 않으면 `stale_hint`·인덱스 `대조 필요`를 붙임(`review_after`가 지난 기억은 임계와 무관하게 붙음). 숫자가 아니거나 음수면 타입별 기본값 |
-| `ASTRONRAG_SPACING_MS` | `600000` (10분) | 강화 사이 최소 간격의 **바닥값** |
-| `ASTRONRAG_SPACING_ALPHA` | `0.1` | 확장 간격 계수. 필요 간격 = `max(바닥값, α·나이/n)`. `0`이면 고정 창 |
-| `ASTRONRAG_WEAKENED_GRACE_H` | `72` (**시간** 단위) | 이보다 어린 기억은 reflect의 weakened에서 제외 |
-| `ASTRONRAG_WEAKENED_RATIO` | `0.2` | weakened로 제시할 상한 비율(활성 하위). `0`이면 기능 끔. 0~1 밖이면 기본값 |
-| `ASTRONRAG_FLUSH_EVERY_ACCESS` | `0` | `1`이면 간격 게이트에 막힌 조회도 매번 디스크에 기록 |
-| `ASTRONRAG_SCORER` | `legacy` | 키워드 점수 방식. `bm25f`일 때만 BM25F, 그 밖의 값은 legacy |
-| `ASTRONRAG_SHADOW` | 켬 | `0`이면 그림자 로그(`shadowTop5`)를 끕니다. `ASTRONRAG_SCORER=bm25f`이면 늘 꺼집니다 |
-| `ASTRONRAG_ALT_WEIGHT` | `0.7` | 평가용. alt_queries 변형 가중. 0 초과 1 이하가 아니면 기본값 |
-| `ASTRONRAG_VECTOR` | 끔 | `1`일 때만 [선택형 벡터 계층](#선택형-벡터-계층--기본-꺼짐)을 켭니다. `@huggingface/transformers` 설치가 필요합니다 |
-
-> **빈 문자열은 기본값이 아니라 `0`입니다.** 숫자형 변수는 `Number(값)`으로 파싱하는데 빈 문자열과 공백은 `0`으로 해석되어 그대로 적용됩니다. 기본값을 쓰려면 변수를 **아예 지정하지 마세요** — `.mcp.json`의 `env`에 빈 값으로 남겨두면 안 됩니다. 숫자가 아닌 값이나 음수는 무시되고 기본값으로 돌아갑니다.
-
-### 조회의 디스크 부작용
-
-`recall`·`read_memory`는 기억을 강화하므로 **간격 게이트가 열려 있으면 파일을 씁니다.** 게이트가 닫혀 있는 동안(기본 10분 이내 재조회, 확장 간격 적용 시 더 길게)은 쓰지 않으므로 연속 검색이 git working tree를 어지럽히지는 않습니다. `MEMORY.md`도 내용이 실제로 달라졌을 때만 다시 씁니다. `list_memories`와 `reflect`는 부작용이 전혀 없습니다.
-
-## 기술 스택
-
-- [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) v1.x — `McpServer` + `StdioServerTransport`
-- `gray-matter` — YAML frontmatter 파싱/직렬화 (Obsidian 호환)
-- `zod` — 도구 입력 스키마
-- 저장소는 SQLite가 기본이며 `ASTRONRAG_STORE=file`로 사람이 읽을 수 있는 Markdown 저장소를 선택할 수 있음
-
-## 이전 이름
-
-이전 이름: BigBrainMemory. 옛 BIGBRAIN_*·BBM_* 변수는 호환 기간 동안 계속 받는다
-
-`BIGBRAIN_<X>`는 `ASTRONRAG_<X>`로, `BBM_STORE`·`BBM_SQLITE_PATH`·`BBM_ONTOLOGY_PATH`는 각각 `ASTRONRAG_STORE`·`ASTRONRAG_SQLITE_PATH`·`ASTRONRAG_ONTOLOGY_PATH`로 전환합니다. 옛 이름을 실제 대체값으로 사용하면 프로세스 전체에서 한 번 stderr에 `BIGBRAIN_VAULT 대신 ASTRONRAG_VAULT 를 쓰십시오` 형식으로 안내합니다. MCP stdout에는 경고를 쓰지 않습니다.
-
-기존 기억의 project·슬러그·본문, `.bigbrain-vault` 표식, `.bbm` 데이터 디렉터리, 사용 로그 파일명과 모델 캐시 경로는 그대로 유지합니다.
+문서 길잡이: [운영·이관](docs/operations.md) · [기억 모델](docs/memory-guide.md) · [도구](docs/tools.md) · [평가](docs/evaluation.md)

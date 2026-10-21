@@ -1,13 +1,13 @@
 // 환경 이름 호환과 실제 서버·훅의 이름 전환 계약을 검증한다.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-fs.mkdirSync(path.join(root, ".astron-logs"), { recursive: true });
-const scratch = fs.mkdtempSync(path.join(root, ".astron-logs", "env-compat-"));
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "bbm-env-compat-"));
 const moduleUrl = (file) => pathToFileURL(path.join(root, file)).href;
 const helpers = [moduleUrl("dist/env.js"), moduleUrl("scripts/lib/env.mjs")];
 const storeUrl = moduleUrl("dist/stores/index.js");
@@ -315,7 +315,7 @@ try {
 		catch (error) { failed++; console.error(`FAIL ${test.name}`, error); }
 	}
 } finally {
-	assert.ok(scratch.startsWith(path.join(root, ".astron-logs") + path.sep));
+	assert.ok(path.resolve(scratch).startsWith(path.resolve(os.tmpdir()) + path.sep));
 	fs.rmSync(scratch, { recursive: true, force: true });
 }
 console.log(`${tests.length - failed}/${tests.length} passed`);

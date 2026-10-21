@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="710" viewBox="0 0 1200 710" role="img" aria-labelledby="title desc">
+	<title id="title">어휘 회상 품질: legacy와 BM25F</title>
+	<desc id="desc">2026-10-21 Windows 11, Node v24.13.0. 픽스처 160건, golden 120질의. exact·crosslang·paraphrase 각 30질의 all 분할, 다중 질의와 벡터 끔. Recall은 백분율 소수 첫째 자리, MRR은 소수 셋째 자리 반올림.</desc>
+	<rect width="1200" height="710" rx="22" fill="#101d30"/>
+	<g font-family="Segoe UI, Noto Sans KR, Malgun Gothic, sans-serif">
+		<text x="40" y="49" fill="#f1f7fc" font-size="28" font-weight="700">얼마나 잘 떠올릴까요?</text>
+		<text x="40" y="80" fill="#b2c4d7" font-size="17">어휘 검색 · 전체 분할(all) · 유형별 정답 질의 30개</text>
+		<rect x="862" y="33" width="14" height="14" rx="3" fill="#63dbc2"/><text x="886" y="46" fill="#e3eef6" font-size="16">legacy</text>
+		<rect x="1005" y="33" width="14" height="14" rx="3" fill="#9fafff"/><text x="1029" y="46" fill="#e3eef6" font-size="16">BM25F</text>
+		<rect x="40" y="114" width="368" height="470" rx="14" fill="#192b43"/><text x="62" y="152" fill="#f1f7fc" font-size="22" font-weight="700">Recall@1</text>
+		<text x="62" y="191" fill="#c6d5e4" font-size="16">정확한 표현 · exact</text>
+		<rect x="62" y="206" width="252" height="16" rx="4" fill="#293f59"/><rect x="62" y="206" width="235.200" height="16" rx="4" fill="#63dbc2"/><text x="325" y="220" fill="#eff6fc" font-size="15">93.3%</text>
+		<rect x="62" y="234" width="252" height="16" rx="4" fill="#293f59"/><rect x="62" y="234" width="226.800" height="16" rx="4" fill="#9fafff"/><text x="325" y="248" fill="#eff6fc" font-size="15">90.0%</text>
+		<text x="62" y="318" fill="#c6d5e4" font-size="16">언어 전환 · crosslang</text>
+		<rect x="62" y="333" width="252" height="16" rx="4" fill="#293f59"/><rect x="62" y="333" width="33.600" height="16" rx="4" fill="#63dbc2"/><text x="325" y="347" fill="#eff6fc" font-size="15">13.3%</text>
+		<rect x="62" y="361" width="252" height="16" rx="4" fill="#293f59"/><rect x="62" y="361" width="25.200" height="16" rx="4" fill="#9fafff"/><text x="325" y="375" fill="#eff6fc" font-size="15">10.0%</text>
+		<text x="62" y="445" fill="#c6d5e4" font-size="16">의역 · paraphrase</text>
+		<rect x="62" y="460" width="252" height="16" rx="4" fill="#293f59"/><rect x="62" y="460" width="71.400" height="16" rx="4" fill="#63dbc2"/><text x="325" y="474" fill="#eff6fc" font-size="15">28.3%</text>
+		<rect x="62" y="488" width="252" height="16" rx="4" fill="#293f59"/><rect x="62" y="488" width="92.400" height="16" rx="4" fill="#9fafff"/><text x="325" y="502" fill="#eff6fc" font-size="15">36.7%</text>
+		<rect x="428" y="114" width="368" height="470" rx="14" fill="#192b43"/><text x="450" y="152" fill="#f1f7fc" font-size="22" font-weight="700">Recall@5</text>
+		<text x="450" y="191" fill="#c6d5e4" font-size="16">정확한 표현 · exact</text>
+		<rect x="450" y="206" width="252" height="16" rx="4" fill="#293f59"/><rect x="450" y="206" width="252.000" height="16" rx="4" fill="#63dbc2"/><text x="713" y="220" fill="#eff6fc" font-size="15">100.0%</text>
+		<rect x="450" y="234" width="252" height="16" rx="4" fill="#293f59"/><rect x="450" y="234" width="252.000" height="16" rx="4" fill="#9fafff"/><text x="713" y="248" fill="#eff6fc" font-size="15">100.0%</text>
+		<text x="450" y="318" fill="#c6d5e4" font-size="16">언어 전환 · crosslang</text>
+		<rect x="450" y="333" width="252" height="16" rx="4" fill="#293f59"/><rect x="450" y="333" width="84.000" height="16" rx="4" fill="#63dbc2"/><text x="713" y="347" fill="#eff6fc" font-size="15">33.3%</text>
+		<rect x="450" y="361" width="252" height="16" rx="4" fill="#293f59"/><rect x="450" y="361" width="75.600" height="16" rx="4" fill="#9fafff"/><text x="713" y="375" fill="#eff6fc" font-size="15">30.0%</text>
+		<text x="450" y="445" fill="#c6d5e4" font-size="16">의역 · paraphrase</text>
+		<rect x="450" y="460" width="252" height="16" rx="4" fill="#293f59"/><rect x="450" y="460" width="163.800" height="16" rx="4" fill="#63dbc2"/><text x="713" y="474" fill="#eff6fc" font-size="15">65.0%</text>
+		<rect x="450" y="488" width="252" height="16" rx="4" fill="#293f59"/><rect x="450" y="488" width="193.200" height="16" rx="4" fill="#9fafff"/><text x="713" y="502" fill="#eff6fc" font-size="15">76.7%</text>
+		<rect x="816" y="114" width="368" height="470" rx="14" fill="#192b43"/><text x="838" y="152" fill="#f1f7fc" font-size="22" font-weight="700">MRR</text>
+		<text x="838" y="191" fill="#c6d5e4" font-size="16">정확한 표현 · exact</text>
+		<rect x="838" y="206" width="252" height="16" rx="4" fill="#293f59"/><rect x="838" y="206" width="243.600" height="16" rx="4" fill="#63dbc2"/><text x="1101" y="220" fill="#eff6fc" font-size="15">0.967</text>
+		<rect x="838" y="234" width="252" height="16" rx="4" fill="#293f59"/><rect x="838" y="234" width="239.400" height="16" rx="4" fill="#9fafff"/><text x="1101" y="248" fill="#eff6fc" font-size="15">0.950</text>
+		<text x="838" y="318" fill="#c6d5e4" font-size="16">언어 전환 · crosslang</text>
+		<rect x="838" y="333" width="252" height="16" rx="4" fill="#293f59"/><rect x="838" y="333" width="50.130" height="16" rx="4" fill="#63dbc2"/><text x="1101" y="347" fill="#eff6fc" font-size="15">0.199</text>
+		<rect x="838" y="361" width="252" height="16" rx="4" fill="#293f59"/><rect x="838" y="361" width="45.504" height="16" rx="4" fill="#9fafff"/><text x="1101" y="375" fill="#eff6fc" font-size="15">0.181</text>
+		<text x="838" y="445" fill="#c6d5e4" font-size="16">의역 · paraphrase</text>
+		<rect x="838" y="460" width="252" height="16" rx="4" fill="#293f59"/><rect x="838" y="460" width="117.149" height="16" rx="4" fill="#63dbc2"/><text x="1101" y="474" fill="#eff6fc" font-size="15">0.465</text>
+		<rect x="838" y="488" width="252" height="16" rx="4" fill="#293f59"/><rect x="838" y="488" width="134.604" height="16" rx="4" fill="#9fafff"/><text x="1101" y="502" fill="#eff6fc" font-size="15">0.534</text>
+		<text x="40" y="624" fill="#d4e2ef" font-size="17">golden 120질의 · fixture 160건 · 2026-10-21 · Windows 11 · Node v24.13.0</text>
+		<text x="40" y="654" fill="#afc2d6" font-size="15">벡터·다중 질의 제외. none 30질의는 정답 회상 지표에서 제외. 원자료·명령: docs/evaluation.md</text>
+		<text x="40" y="680" fill="#afc2d6" font-size="15">실행: npm run eval:retrieval -- --scorer legacy 또는 bm25f --out &lt;결과 JSON&gt;</text>
+	</g>
+</svg>

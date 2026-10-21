@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="title desc">
+	<title id="title">AstronRAG</title>
+	<desc id="desc">세션을 넘어 기억하고, 근거를 확인하며 회상하는 MCP 서버</desc>
+	<defs>
+		<linearGradient id="bg" x2="1" y2="1"><stop stop-color="#111d35"/><stop offset="1" stop-color="#122d35"/></linearGradient>
+		<radialGradient id="halo"><stop stop-color="#39c9b7" stop-opacity=".2"/><stop offset="1" stop-color="#39c9b7" stop-opacity="0"/></radialGradient>
+	</defs>
+	<rect width="1200" height="300" rx="24" fill="url(#bg)"/>
+	<circle cx="1010" cy="145" r="210" fill="url(#halo)"/>
+	<g fill="none" stroke="#4c7e89" stroke-width="1.5" opacity=".5">
+		<path d="M880 70 990 110 1090 50M990 110 1110 180 1005 245 900 200 880 70M900 200 990 110 1005 245"/>
+		<circle cx="990" cy="110" r="56" stroke-dasharray="3 8"/>
+	</g>
+	<g fill="#7ce2cc"><circle cx="880" cy="70" r="5"/><circle cx="1090" cy="50" r="4"/><circle cx="1110" cy="180" r="6"/><circle cx="1005" cy="245" r="4"/><circle cx="900" cy="200" r="5"/><circle cx="990" cy="110" r="9"/></g>
+	<g transform="translate(54 64)">
+		<rect width="100" height="100" rx="27" fill="#70e0c6"/>
+		<path d="m23 73 27-49 27 49M33 57h34" fill="none" stroke="#112c35" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+		<circle cx="76" cy="25" r="5" fill="#112c35"/>
+	</g>
+	<g font-family="Segoe UI, Noto Sans KR, Malgun Gothic, sans-serif">
+		<text x="182" y="92" fill="#8fdccc" font-size="13" font-weight="700" letter-spacing="3">PERSISTENT MEMORY · MCP</text>
+		<text x="178" y="156" fill="#f3fafb" font-size="65" font-weight="750" letter-spacing="-2">AstronRAG</text>
+		<text x="57" y="224" fill="#dae8ed" font-size="25">세션을 넘어 기억하고, 근거를 확인하며 회상합니다.</text>
+		<text x="58" y="261" fill="#a1bac5" font-size="15">저장 · 회상 · 교정 · 연결</text>
+	</g>
+</svg>
