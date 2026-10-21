@@ -6,13 +6,13 @@
 //   node scripts/eval-retrieval.mjs --baseline <기준 dist 디렉터리> [--multi] [--out <path>]
 //   node scripts/eval-retrieval.mjs --min-exact-r1 <하한>
 //   node scripts/eval-retrieval.mjs --multi [--alt-weight <w>] [--alt-control [--seed N]] [--out <path>]
-//   node scripts/eval-retrieval.mjs --multi --vector [--fusion add|rrf] [--vector-weight <w>] [--min-cos <τ>] [--out <path>]
-//   node scripts/eval-retrieval.mjs --multi --vector --grid
+//   node scripts/eval-retrieval.mjs --vector [--multi] [--fusion add|rrf] [--vector-weight <w>] [--min-cos <τ>] [--out <path>]
+//   node scripts/eval-retrieval.mjs --vector --grid [--model <model>] [--queries <jsonl>] [--corpus <path>]
 //   node scripts/eval-retrieval.mjs --multi --vector --auc [--seed N]
 //
 // --vector 는 실제 임베딩 모델(@huggingface/transformers, 선택 의존성)로 픽스처와 질의를 임베딩해 벡터 결과를 함께 쓴다.
-// add 는 어휘 후보에 없는 벡터 결과만 w×코사인 점수로 덧붙이고(서버와 같은 경로), rrf 는 어휘 순위와 벡터 순위를 RRF(k=60)로 합친 뒤 순위화하는 대조군이다.
-// --grid 는 tune 분할만으로 rrf 1개와 add 격자(w × τ)를 재고 미리 정한 규칙으로 하나를 고른다. holdout 은 보지 않는다.
+// add와 가중 RRF(k=60)는 실제 MemoryStore의 결합 경로를 공유한다.
+// --grid는 88개 tune 조합을 측정한다. 세 세트를 통합해 하나를 고르고 그 조합만 holdout으로 판정한다.
 // --auc 는 crosslang 질의·정답 쌍(양성)과 시드 고정 무작위 비정답 쌍(음성)의 코사인으로 AUC 를 낸다.
 //
 // --scorer 는 import 전에 ASTRONRAG_SCORER 로 넘긴다. --alt-weight 는 변형 질의 가중(ASTRONRAG_ALT_WEIGHT, 0 초과 1 이하)이다.
@@ -21,17 +21,18 @@
 // --baseline 은 골든 전 질의의 searchDetailed 출력 JSON 을 기준 dist 와 바이트 비교해 불일치가 있으면 1 로 끝난다(legacy 만). --multi 를 주면 변형도 함께 넘긴다.
 // --min-exact-r1 은 exact 분할 전체 Recall@1 만 재서 하한 미만이면 1 로 끝난다.
 //
-// 픽스처는 %TEMP% 사본에서만 연다 — 회상 강화 쓰기가 eval/fixture-vault 를 바꾸지 않게 한다.
+// 픽스처는 운영체제 임시 폴더의 독립 사본에서만 검색한다.
 // 지표 측정 중에는 시계를 FROZEN_NOW 로 고정하고 강화를 꺼서 실행 시각·질의 순서와 무관한 결정적 결과를 낸다.
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import os from "node:os";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { runMigration } from "./migrate-vault-to-store.mjs";
 import { readEnv } from "./lib/env.mjs";
+import crypto from "node:crypto";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -43,7 +44,6 @@ const FROZEN_NOW = Date.parse("2026-07-01T00:00:00.000Z");
 const SPLITS = ["exact", "crosslang", "paraphrase", "none"];
 const POSITIVE = ["exact", "crosslang", "paraphrase"];
 const SCORERS = ["legacy", "bm25f"];
-const MIN_PER_SPLIT = 25;
 const FPR_TARGET = 0.1;
 const REL_RATIO = 0.5;
 const THRESHOLDS = Array.from({ length: 41 }, (_, i) => i * 0.5);
@@ -57,24 +57,20 @@ const DIFF_CONFIGS = [
 ];
 const DIFF_SAMPLES = 5;
 const FUSIONS = ["add", "rrf"];
-/** RRF 상수와 벡터 목록 깊이 */
-const RRF_K = 60;
-const RRF_DEPTH = 20;
-/** add 융합 격자 — 벡터 가중 × 코사인 하한 0.80~0.90 */
+/** 두 결합에서 측정할 벡터 가중치를 정의한다. */
 const GRID_W = [1, 2, 3, 5];
-const GRID_TAU = Array.from({ length: 11 }, (_, i) => Math.round((0.8 + i * 0.01) * 100) / 100);
+const GRID_TAU = Array.from({ length: 11 }, (_, i) => (70 + i * 2) / 100);
 /** none 오탐 판정 임계(자동 회상 하한과 같다) */
 const NONE_T = 9;
 /** AUC 음성 쌍 — 질의마다 뽑는 비정답 기억 수 */
 const AUC_NEG = 5;
 
 function die(msg, code = 1) {
-	console.error(`eval-retrieval: ${msg}`);
-	process.exit(code);
+	throw Object.assign(new Error(msg), { exitCode: code });
 }
 
 /** argv 를 옵션 객체로 해석한다 */
-function readArgs(argv) {
+export function readArgs(argv) {
 	let parsed;
 	try {
 		parsed = parseArgs({
@@ -97,6 +93,17 @@ function readArgs(argv) {
 				"min-cos": { type: "string" },
 				grid: { type: "boolean", default: false },
 				auc: { type: "boolean", default: false },
+				queries: { type: "string" },
+				corpus: { type: "string" },
+				"corpus-kind": { type: "string", default: "file" },
+				alts: { type: "string" },
+				"query-mode": { type: "string", default: "original" },
+				model: { type: "string", default: "Xenova/multilingual-e5-small" },
+				dtype: { type: "string", default: "q8" },
+				"top-k": { type: "string", default: "10" },
+				"details-out": { type: "string" },
+				"private-root": { type: "string" },
+				"snapshot-hash": { type: "string" },
 			},
 		});
 	} catch (e) {
@@ -125,7 +132,6 @@ function readArgs(argv) {
 	const vectorOnly = ["grid", "auc"].filter((k) => values[k]).concat(["vector-weight", "min-cos"].filter((k) => values[k] !== undefined));
 	if (values.fusion !== "add") vectorOnly.push("fusion");
 	if (!values.vector && vectorOnly.length > 0) die(`--${vectorOnly.join(", --")} 는 --vector 와 함께 써야 한다`, 2);
-	if (values.vector && !values.multi) die("--vector 는 --multi 와 함께 써야 한다", 2);
 	if (values.vector && (values.baseline !== undefined || minExactR1 !== undefined)) die("--vector 는 --baseline·--min-exact-r1 과 함께 쓸 수 없다", 2);
 	if (!FUSIONS.includes(values.fusion)) die(`--fusion 은 ${FUSIONS.join("|")} 중 하나여야 한다`, 2);
 	if (values.grid && (values.auc || values["vector-weight"] !== undefined || values["min-cos"] !== undefined || values.fusion !== "add")) {
@@ -148,7 +154,21 @@ function readArgs(argv) {
 			if (!fs.existsSync(path.join(baseline, f))) die(`--baseline 디렉터리에 ${f} 가 없다: ${baseline}`, 2);
 		}
 	}
+	const topK = Number(values["top-k"]);
+	if (!Number.isSafeInteger(topK) || topK < 1) die("invalid top-k", 2);
+	if (!SCORERS.includes(values.scorer) || !["original", "alts"].includes(values["query-mode"]) || !["file", "sqlite"].includes(values["corpus-kind"])) die("invalid evaluation mode", 2);
+	if ((values.queries !== undefined && !values.queries.trim()) || (values.corpus !== undefined && !values.corpus.trim())) die("empty input", 2);
+	const publicQueries = values.queries === undefined || [GOLDEN, path.join(root, "eval/paraphrase-fixture.jsonl")].includes(path.resolve(values.queries));
+	const publicCorpus = values.corpus === undefined || path.resolve(values.corpus) === FIXTURE;
+	const privateInput = !(publicQueries && publicCorpus);
+	if (privateInput && (!values.queries || !values.corpus)) die("external inputs require queries and corpus", 2);
+	if (privateInput && (values.compare || values.baseline || values.auc || values["permute-control"])) die("unsupported private mode", 2);
+	if (values.dtype !== "q8" || !["Xenova/multilingual-e5-small", "Xenova/multilingual-e5-base", "Xenova/paraphrase-multilingual-MiniLM-L12-v2"].includes(values.model)) die("unsupported model configuration", 2);
 	return {
+		queries: values.queries, corpus: values.corpus, corpusKind: values["corpus-kind"], alts: values.alts,
+		queryMode: values["query-mode"], model: values.model, dtype: values.dtype, topK,
+		detailsOut: values["details-out"], privateRoot: values["private-root"],
+		privateInput, snapshotHash: values["snapshot-hash"],
 		scorer: values.scorer,
 		out: values.out,
 		compare: values.compare ? positionals : null,
@@ -200,40 +220,53 @@ function mcnemarExact(b, c) {
 }
 
 /** 골든셋을 읽고 형식·분할 크기·slug 존재를 검사한다 */
-function loadGolden(slugs) {
-	const lines = fs.readFileSync(GOLDEN, "utf8").split(/\r?\n/).filter((l) => l.trim() !== "");
-	const seen = new Set();
-	const rows = lines.map((line, i) => {
-		let r;
-		try {
-			r = JSON.parse(line);
-		} catch {
-			die(`golden.jsonl ${i + 1}행 JSON 파싱 실패`);
+export function loadGolden(slugs, file = GOLDEN, options = {}) {
+	let rows;
+	try { rows = fs.readFileSync(file, "utf8").split(/\r?\n/).filter((l) => l.trim()).map((l) => JSON.parse(l)); }
+	catch { die("invalid query dataset"); }
+	return validateDataset(rows, slugs, { enforceGroups: path.resolve(file) !== GOLDEN, ...options });
+}
+
+/** 문항 형식과 정답 출처, 정답 단위 분할을 검증한다. */
+export function validateDataset(rows, slugs, options = Object.create(null)) {
+	if (!Array.isArray(rows) || !rows.length || !slugs.size) die("empty evaluation input");
+	const seen = new Set(); const groups = new Map();
+	const sensitive = new Set((options.sourceRecords ?? []).filter(sensitiveRecord).map((r) => r.slug));
+	for (const r of rows) {
+		if (!r || typeof r.query !== "string" || !r.query.trim() || !SPLITS.includes(r.split) || typeof r.holdout !== "boolean" || !Array.isArray(r.expected)) die("invalid query schema");
+		if ((r.split === "none") !== (r.expected.length === 0) || new Set(r.expected).size !== r.expected.length) die("invalid answer class");
+		if (r.expected.some((s) => typeof s !== "string" || !slugs.has(s) || sensitive.has(s))) die("invalid answer source");
+		if (options.publicOnly && r.source !== undefined && r.source !== "fixture") die("invalid public provenance");
+		if (seen.has(r.query)) die("duplicate query"); seen.add(r.query);
+		for (const s of r.expected) {
+			if (options.enforceGroups !== false && groups.has(s) && groups.get(s) !== r.holdout) die("answer split leakage");
+			groups.set(s, r.holdout);
 		}
-		const where = `golden.jsonl ${i + 1}행`;
-		if (typeof r.query !== "string" || r.query.trim() === "") die(`${where}: query 없음`);
-		if (!SPLITS.includes(r.split)) die(`${where}: split 이 ${SPLITS.join("/")} 가 아님`);
-		if (typeof r.holdout !== "boolean") die(`${where}: holdout 이 boolean 이 아님`);
-		if (!Array.isArray(r.expected)) die(`${where}: expected 가 배열이 아님`);
-		if (r.split === "none" && r.expected.length !== 0) die(`${where}: none 의 expected 는 빈 배열이어야 한다`);
-		if (r.split !== "none" && r.expected.length === 0) die(`${where}: 정답 분할의 expected 가 비었다`);
-		for (const s of r.expected) if (!slugs.has(s)) die(`${where}: 픽스처에 없는 slug ${s}`);
-		const key = `${r.split}\u0000${r.query}`;
-		if (seen.has(key)) die(`${where}: 같은 split·query 중복`);
-		seen.add(key);
-		return { query: r.query, expected: r.expected, split: r.split, holdout: r.holdout };
-	});
-	for (const s of SPLITS) {
-		const n = rows.filter((r) => r.split === s).length;
-		if (n < MIN_PER_SPLIT) die(`split ${s} 가 ${n}건으로 최소 ${MIN_PER_SPLIT}건 미만`);
+		if (r.alts !== undefined && (!Array.isArray(r.alts) || r.alts.some((a) => typeof a !== "string" || !a.trim()))) die("invalid alternate queries");
 	}
 	return rows;
 }
 
+/** 질의 출처에서 제외할 민감 정보 패턴을 판정한다. */
+export function sensitiveRecord(record) {
+	const text = JSON.stringify(record);
+	return /[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b(?:\d{1,3}\.){3}\d{1,3}\b|\b(?:[0-9a-f]{1,4}:){3,}[0-9a-f:]*\b|\b[0-9a-f]{1,4}::[0-9a-f:]+\b|(?:password|passwd|secret|token|api[_ -]?key|비밀번호|패스워드|토큰|인증키|계정|고객|주민번호|전화번호)|\b\d{6}[- ]?[1-4]\d{6}\b|\b01[016789][- .]?\d{3,4}[- .]?\d{4}\b|[a-z]:\\/i.test(text);
+}
+
+/** 대체 문장을 독립 질의로 펼치고 원문의 정답과 분할을 유지한다. */
+export function expandAlts(rows, alts, mode = "original", multi = false) {
+	return rows.flatMap((row) => {
+		const alternatives = [...new Set(alts?.get(`${row.split}\u0000${row.query}`) ?? row.alts ?? [])].filter((q) => q !== row.query).slice(0, MAX_ALTS);
+		if (mode === "original") return [{ ...row, alts: multi ? alternatives : undefined }];
+		if (!alternatives.length) die("alternate queries missing");
+		return alternatives.map((query) => ({ ...row, query, alts: multi ? alternatives.filter((q) => q !== query) : undefined }));
+	});
+}
+
 /** 고정 변형 파일을 읽어 골든 행마다 변형 1~3개가 정확히 한 묶음 있는지 검사하고 split·query → 변형 Map 을 돌려준다 */
-function loadAlts(rows) {
+function loadAlts(rows, file = ALTS) {
 	const want = new Set(rows.map((r) => `${r.split}\u0000${r.query}`));
-	const lines = fs.readFileSync(ALTS, "utf8").split(/\r?\n/).filter((l) => l.trim() !== "");
+	const lines = fs.readFileSync(file, "utf8").split(/\r?\n/).filter((l) => l.trim() !== "");
 	const map = new Map();
 	lines.forEach((line, i) => {
 		const where = `alt-queries.jsonl ${i + 1}행`;
@@ -268,7 +301,7 @@ function derangeAlts(rows, alts, seed) {
 	return out;
 }
 
-/** 픽스처를 %TEMP% 에 복사한 새 디렉터리 경로를 돌려준다 */
+/** 운영체제 임시 폴더에 픽스처 사본을 만든다. */
 function copyFixture(tag) {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), `bbm-eval-${tag}-`));
 	fs.cpSync(FIXTURE, dir, { recursive: true });
@@ -276,7 +309,7 @@ function copyFixture(tag) {
 }
 
 /** 순위 목록에서 질의 하나의 판정값을 계산한다 */
-function judge(row, ranked) {
+export function judge(row, ranked) {
 	const exp = new Set(row.expected);
 	const idx = ranked.findIndex((r) => exp.has(r.slug));
 	const inTop = (k) => ranked.slice(0, k).filter((r) => exp.has(r.slug)).length;
@@ -294,9 +327,158 @@ function summarize(items) {
 	if (n === 0) return { n: 0 };
 	const mean = (f) => items.reduce((s, x) => s + f(x), 0) / n;
 	if (items[0].row.split === "none") {
-		return { n, anyResultRate: mean((x) => (x.ranked.length > 0 ? 1 : 0)), meanCandidates: mean((x) => x.ranked.length) };
+		return { n, anyResultRate: mean((x) => (x.ranked.length > 0 ? 1 : 0)), meanCandidates: mean((x) => x.ranked.totalMatched ?? x.ranked.length) };
 	}
 	return { n, recall1: mean((x) => x.j.recall1), recall5: mean((x) => x.j.recall5), mrr: mean((x) => x.j.rr) };
+}
+
+/** 양성 재현율과 none 결과 반환 비율을 독립 분모로 집계한다. */
+export function metrics(items) {
+	const positives = items.filter((x) => x.row.expected.length); const negatives = items.filter((x) => !x.row.expected.length);
+	const mean = (xs, fn) => xs.length ? xs.reduce((s, x) => s + fn(x), 0) / xs.length : null;
+	return { n: items.length, recall1: mean(positives, (x) => judge(x.row, x.ranked).recall1), recall5: mean(positives, (x) => judge(x.row, x.ranked).recall5), mrr: mean(positives, (x) => judge(x.row, x.ranked).rr), noneFpr: mean(negatives, (x) => x.ranked.some((r) => r.score >= NONE_T) ? 1 : 0), noneAny: mean(negatives, (x) => x.ranked.length ? 1 : 0) };
+}
+
+/** 요청한 두 결합과 모든 하한·가중치 조합을 생성한다. */
+export function grid() {
+	return FUSIONS.flatMap((fusion) => GRID_W.flatMap((w) => GRID_TAU.map((tau) => ({ fusion, w, tau, topK: 10 }))));
+}
+
+/** 세 결정 조건을 만족한 tune 후보 중 단순한 조합을 선택한다. */
+export function selectCandidate(candidates, baseline, currentModel = "Xenova/multilingual-e5-small") {
+	const qualifies = (m) => {
+		const keys = ["exactR1", "noneAny", "publicR5", "publicMrr", "opsR5", "opsMrr"];
+		if (!m || keys.some((k) => !Number.isFinite(m[k]) || !Number.isFinite(baseline[k]))) return false;
+		if (m.exactR1 < baseline.exactR1 || m.noneAny > baseline.noneAny + 0.02 + 1e-12) return false;
+		if (baseline.exactRates && (!m.exactRates || baseline.exactRates.some((v, i) => !Number.isFinite(m.exactRates[i]) || m.exactRates[i] < v))) return false;
+		if (m.noneFpr !== undefined && (!Number.isFinite(m.noneFpr) || m.noneFpr > baseline.noneFpr + 0.02 + 1e-12)) return false;
+		if (baseline.noneRates && (!m.noneRates || baseline.noneRates.some((v, i) => !Number.isFinite(m.noneRates[i]) || m.noneRates[i] > v + 0.02 + 1e-12))) return false;
+		return ["public", "ops"].every((k) => m[`${k}R5`] + 1e-12 >= baseline[`${k}R5`] + 0.05 && m[`${k}Mrr`] + 1e-12 >= baseline[`${k}Mrr`] + 0.03);
+	};
+	const complexity = (c) => c.model !== currentModel ? 2 : c.fusion === "add" && c.w === 1 && (c.topK ?? 10) === 10 ? 0 : 1;
+	const gain = (c) => c.tune.publicR5 + c.tune.opsR5 + c.tune.publicMrr + c.tune.opsMrr;
+	return candidates.filter((c) => qualifies(c.tune)).sort((a, b) => complexity(a) - complexity(b) || gain(b) - gain(a) || b.tau - a.tau || a.w - b.w || a.model.localeCompare(b.model) || a.fusion.localeCompare(b.fusion))[0] ?? null;
+}
+
+/** tune에서 고른 하나만 holdout으로 판정하고 실패하면 기본값을 유지한다. */
+export function decideCandidate(candidates, baseline, currentModel) {
+	const selected = selectCandidate(candidates, baseline.tune, currentModel);
+	const accepted = selected && selectCandidate([{ ...selected, tune: selected.holdout }], baseline.holdout, currentModel) ? selected : null;
+	return { selected, accepted, keepDefaults: !accepted };
+}
+
+/** 결과의 스냅샷 출처가 현재 입력과 같은지 검사한다. */
+export function validateProvenance(value, hash) {
+	if (!hash || value.snapshotHash !== hash) die("snapshot provenance mismatch");
+}
+
+/** 평가 프로세스에 필요한 운영체제 환경만 복사한다. */
+export function evaluationEnv(source, opts) {
+	const allowed = /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|TEMP|TMP|COMSPEC|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|NODE_NO_WARNINGS)$/i;
+	return Object.fromEntries([...Object.entries(source).filter(([k]) => allowed.test(k)), ["ASTRONRAG_SCORER", opts.scorer ?? "legacy"], ["ASTRONRAG_SHADOW", "0"], ...(opts.altWeight === undefined ? [] : [["ASTRONRAG_ALT_WEIGHT", String(opts.altWeight)]])]);
+}
+
+/** 원본 보존 검사에 필요한 전체 기억 식별 집합만 읽는다. */
+export function corpusIdentity(backend) {
+	const load = backend.loadAll;
+	return (typeof load === "function" ? load.call(backend, true) : backend.listSlugs(true)).map((r) => r.slug).sort();
+}
+
+/** 심볼릭 링크와 저장소 내부를 거부하고 명시한 비공개 루트 안의 상세 경로를 검증한다. */
+export function privatePath(input, opts = Object.create(null)) {
+	const target = path.resolve(input);
+	const under = (base, value) => { const rel = path.relative(base.toLowerCase(), value.toLowerCase()); return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel); };
+	if (input.split(/[\\/]/).includes("..")) die("invalid detail destination");
+	if (!opts.privateRoot) die("private output requires explicit root");
+	const base = path.resolve(opts.privateRoot);
+	if (base.toLowerCase() === root.toLowerCase() || under(root, base) || target.toLowerCase() === root.toLowerCase() || under(root, target) || !under(base, target)) die("invalid detail destination");
+	let current = path.parse(target).root;
+	for (const part of target.slice(current.length).split(path.sep)) {
+		current = path.join(current, part);
+		if (fs.lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink()) die("linked detail destination");
+	}
+	return target;
+}
+
+/** 외부 출력에는 건수와 집계 지표만 남긴다. */
+export function aggregateOutput(value) {
+	const numbers = new Set(["n", "count", "recall1", "recall5", "mrr", "noneFpr", "noneAny", "anyResultRate", "meanCandidates", "p50", "p95"]);
+	const containers = new Set(["fixture", "golden", "splits", "positive", ...SPLITS, "tune", "holdout", "all", "latencyMs"]);
+	const clean = (obj) => Object.fromEntries(Object.entries(obj ?? {}).flatMap(([k, v]) => numbers.has(k) && (Number.isFinite(v) || v === null) ? [[k, v]] : containers.has(k) && v && typeof v === "object" && !Array.isArray(v) ? [[k, clean(v)]] : []));
+	return clean(value);
+}
+
+/** 모델 실행 실패를 성능 결과와 구별하고 예외 원문을 버린다. */
+export async function runModel(model, execute) {
+	try { return { model: model.id, available: true, ...await execute() }; }
+	catch { return { model: model.id, available: false, reason: "availability check failed" }; }
+}
+
+/** 질의 임베딩과 결합을 포함한 검색을 매번 실행한다. */
+export async function measureLatency(store, vec, rows, altsOf, cfg, rounds = LATENCY_ROUNDS) {
+	const once = async (row) => {
+		const t0 = performance.now();
+		if (vec) {
+			await vec.vr.sync(store.retriever.entries());
+			const qv = await vec.vr.embedQuery(row.query);
+			rankRow(store, { ...vec, qv: new Map([[row, qv]]) }, row, altsOf(row), cfg, 5);
+		} else rankRow(store, null, row, altsOf(row), null, 5);
+		return performance.now() - t0;
+	};
+	for (const row of rows) await once(row);
+	const times = new Array();
+	for (let i = 0; i < rounds; i++) for (const row of rows) times.push(await once(row));
+	times.sort((a, b) => a - b);
+	return { p50: percentile(times, 0.5), p95: percentile(times, 0.95), n: times.length };
+}
+
+/** 성공과 예외에 관계없이 평가 자원을 해제한다. */
+export async function withEvaluationBackend(session, execute) {
+	try { return await execute(session.backend); } finally { await session.cleanup(); }
+}
+
+/** 입력 코퍼스의 독립 사본을 열고 종료할 때 원본 해시를 검증한다. */
+export async function openEvaluationBackend(opts = Object.create(null)) {
+	const url = (f) => pathToFileURL(path.join(root, "dist", f)).href;
+	const { FileStore } = await import(url("stores/file-store.js"));
+	const { SqliteStore } = await import(url("stores/sqlite-store.js"));
+	const corpus = path.resolve(opts.corpus ?? FIXTURE);
+	const privateInput = opts.privateInput ?? corpus !== FIXTURE;
+	if (privateInput && !opts.privateRoot) die("private workspace required");
+	if (privateInput) privatePath(path.join(opts.privateRoot, "runs", "placeholder"), opts);
+	const parent = os.tmpdir();
+	const dir = fs.mkdtempSync(path.join(parent, "bbm-eval-run-")); let backend; let hash; let identity;
+	const sha = () => crypto.createHash("sha256").update(fs.readFileSync(corpus)).digest("hex");
+	let databasePath = path.join(dir, "store.sqlite"); let closed = false;
+	const cleanup = async () => {
+		if (closed) return; closed = true;
+		try {
+			if (backend && identity && JSON.stringify(corpusIdentity(backend)) !== JSON.stringify(identity)) die("corpus identity changed");
+		} finally {
+			backend?.close();
+			if (path.dirname(path.resolve(dir)) !== path.resolve(parent)) die("invalid cleanup target");
+			fs.rmSync(dir, { recursive: true, force: true });
+			fs.rmSync(`${dir}-backup`, { recursive: true, force: true });
+			if (hash && sha() !== hash) die("source snapshot changed");
+		}
+	};
+	try {
+		if (opts.corpusKind === "sqlite") {
+			hash = sha(); if (opts.snapshotHash) validateProvenance({ snapshotHash: hash }, opts.snapshotHash);
+			fs.copyFileSync(corpus, databasePath);
+			backend = new SqliteStore(dir, databasePath, { readOnly: true });
+		} else {
+			fs.cpSync(corpus, dir, { recursive: true, filter: (src) => ![".bbm", ".git", ".astron-logs"].includes(path.basename(src)) });
+			if (opts.storeKind === "sqlite") {
+				databasePath = path.join(dir, ".bbm/evaluation.sqlite");
+				runMigration({ vault: dir, storePath: databasePath, backupPath: `${dir}-backup`, dryRun: false, merge: false, verify: false });
+				backend = new SqliteStore(dir, databasePath);
+			} else backend = new FileStore(dir);
+		}
+		identity = corpusIdentity(backend);
+		if (!identity.length && !opts.allowEmpty) die("empty corpus");
+		return { backend, dir, databasePath, snapshotHash: hash, identity, cleanup };
+	} catch (error) { await cleanup(); throw error; }
 }
 
 /** split × {tune, holdout, all} 지표표와 정답 분할 전체 합계를 만든다 */
@@ -411,7 +593,19 @@ function compare(basePath, candPath) {
 }
 
 /** 결과를 파일 또는 stdout 으로 낸다 */
-function emit(result, out, summaryKeys) {
+/** 지정한 출력 정책에 따라 JSON을 기록한다. */
+export function emit(result, out, summaryKeys = new Array(), opts = Object.create(null)) {
+	if (opts.detailsOut) {
+		const dest = opts.privateInput ? privatePath(opts.detailsOut, opts) : path.resolve(opts.detailsOut);
+		fs.mkdirSync(path.dirname(dest), { recursive: true });
+		if (opts.privateInput) privatePath(dest, opts);
+		fs.writeFileSync(dest, JSON.stringify(result, null, 2) + "\n", "utf8");
+	}
+	if (opts.privateInput) {
+		const text = JSON.stringify(aggregateOutput(result), null, 2) + "\n";
+		if (out) { fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true }); fs.writeFileSync(out, text, "utf8"); }
+		process.stdout.write(text); return;
+	}
 	const text = JSON.stringify(result, null, 2) + "\n";
 	if (!out) {
 		process.stdout.write(text);
@@ -470,69 +664,53 @@ async function diffBaseline(baseDist, rows, current, dirs, altsOf) {
 }
 
 
-/** 벡터 평가 준비 — 실제 모델로 픽스처 항목과 골든 질의를 한 번씩 임베딩한다 */
-async function prepareVector(store, vault, rows) {
+/** 모델별 색인을 준비하고 질의를 임베딩하며 자원 사용량을 기록한다. */
+export async function prepareVector(store, vault, rows, opts = Object.create(null)) {
 	const url = (f) => pathToFileURL(path.join(root, "dist", f)).href;
 	const mod = await import(url("vector-retriever.js"));
-	const { parseQuery, SCORER } = await import(url("store.js"));
-	const { fuseWeightedMax } = await import(url("retriever.js"));
-	const { rank } = await import(url("ranker.js"));
 	store.retriever.sync(vault);
-	const vr = new mod.VectorRetriever(null);
 	const t0 = performance.now();
+	const model = opts.model ?? mod.MODEL_ID; const dtype = opts.dtype ?? mod.DTYPE;
+	const embed = await mod.loadEmbedder(model, dtype);
+	const loadMs = performance.now() - t0;
+	const vr = new mod.VectorRetriever(opts.privateInput ? vault : null, embed, `${model}@${dtype}`);
+	const startEmbed = performance.now();
 	await vr.warm(() => store.retriever.entries());
-	if (vr.state !== "ready") throw new Error(`벡터 계층을 올리지 못했다: ${vr.reason}`);
+	if (vr.state !== "ready") throw new Error("model unavailable");
+	const corpusEmbedMs = performance.now() - startEmbed;
 	const qv = new Map();
+	const queryStart = performance.now();
 	for (const row of rows) qv.set(row, await vr.embedQuery(row.query));
-	const weight = readEnv("ASTRONRAG_ALT_WEIGHT", "BIGBRAIN_ALT_WEIGHT");
-	const altWeight = weight ? Number(weight) : 0.7;
 	const keys = store.retriever.entries().map((e) => e.key);
-	return { mod, vr, qv, keys, parseQuery, scorer: SCORER, altWeight, fuseWeightedMax, rank, embedMs: Math.round(performance.now() - t0) };
+	const queryEmbedMs = performance.now() - queryStart;
+	const modelCache = path.join(mod.MODEL_CACHE_DIR, ...model.split("/"));
+	let cacheBytes = 0;
+	const pending = fs.existsSync(modelCache) ? [modelCache] : [];
+	while (pending.length) {
+		const directory = pending.pop(); if (!directory) break;
+		for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+			const file = path.join(directory, entry.name);
+			if (entry.isDirectory()) pending.push(file);
+			else if (entry.isFile()) cacheBytes += fs.statSync(file).size;
+		}
+	}
+	return { mod, vr, qv, keys, model, dtype, loadMs, corpusEmbedMs, queryEmbedMs, cacheBytes, prefix: /multilingual-e5-/.test(model) ? "query: /passage: " : "none", dimension: qv.values().next().value?.length ?? 0, maxRssMB: process.resourceUsage().maxRSS / 1024, embedMs: Math.round(performance.now() - t0) };
 }
 
-/** 행 하나의 전체 순위 — cfg 가 없으면 어휘만, add 는 서버와 같은 vectorHits 경로, rrf 는 RRF 대조군 */
-function rankRow(store, vec, row, alts, cfg) {
-	const base = { limit: FULL_LIMIT, includeLinked: false, altQueries: alts };
-	let results;
-	if (!cfg) results = store.searchDetailed(row.query, base).results;
-	else if (cfg.fusion === "add") {
-		const vectorHits = vec.vr.nearest(vec.qv.get(row), {}, vec.mod.VECTOR_TOP_K, cfg.tau).map((h) => ({ key: h.key, score: cfg.w * h.cos }));
-		results = store.searchDetailed(row.query, { ...base, vectorHits }).results;
-	} else results = rrfRank(store, vec, row, alts);
-	return results.map((r) => (r.via ? { slug: r.record.slug, score: r.score, via: r.via } : { slug: r.record.slug, score: r.score }));
-}
-
-/** RRF 대조군 — 어휘 융합 후보의 점수 순위와 벡터 코사인 순위(상위 RRF_DEPTH)를 Σ 1/(k+순위)로 합쳐 순위화한다 */
-function rrfRank(store, vec, row, alts) {
-	const q = vec.parseQuery(row.query);
-	if (q.tokens.length === 0) return [];
-	const seen = new Set([q.tokens.join(" ")]);
-	const altQs = (alts ?? [])
-		.slice(0, MAX_ALTS)
-		.map(vec.parseQuery)
-		.filter((a) => {
-			const key = a.tokens.join(" ");
-			if (a.tokens.length === 0 || seen.has(key)) return false;
-			seen.add(key);
-			return true;
-		});
-	const queries = [q, ...altQs];
-	const lists = queries.map((pq) => store.retriever.search(pq, Infinity, {}, vec.scorer));
-	const lex = altQs.length === 0 ? lists[0] : vec.fuseWeightedMax(lists, queries.map((_, i) => (i === 0 ? 1 : vec.altWeight)));
-	const fused = new Map();
-	lex
-		.map((c, i) => ({ c, i }))
-		.sort((a, b) => b.c.score - a.c.score || a.i - b.i)
-		.forEach(({ c }, r) => fused.set(c.titleDescTokens, { ...c, score: 1 / (RRF_K + r + 1) }));
-	vec.vr.nearest(vec.qv.get(row), {}, RRF_DEPTH, -1).forEach((h, r) => {
-		const c = store.retriever.candidate(h.key, {});
-		if (!c) return;
-		const s = 1 / (RRF_K + r + 1);
-		const prev = fused.get(c.titleDescTokens);
-		if (prev) prev.score += s;
-		else fused.set(c.titleDescTokens, { ...c, score: s, via: "vector" });
-	});
-	return vec.rank([...fused.values()], q, { limit: FULL_LIMIT, now: FROZEN_NOW, includeLinked: false }).results;
+/** 실제 결합 경로에서 상위 5건과 첫 정답 순위를 정확히 구한다. */
+export function rankRow(store, vec, row, alts, cfg, requestedLimit = Number.NaN) {
+	const fixedLimit = Number.isFinite(requestedLimit);
+	const base = { limit: fixedLimit ? requestedLimit : (Array.isArray(row.expected) ? 5 : FULL_LIMIT), includeLinked: false, altQueries: alts };
+	const vectorHits = cfg ? vec.vr.nearest(vec.qv.get(row), {}, cfg.topK ?? vec.mod.VECTOR_TOP_K, cfg.tau).map((h) => ({ key: h.key, score: cfg.w * h.cos })) : undefined;
+	const options = { ...base, vectorHits, vectorFusion: cfg?.fusion, vectorWeight: cfg?.w };
+	let outcome = store.searchDetailed(row.query, options);
+	while (!fixedLimit && row.expected?.length && !outcome.results.some((r) => row.expected.includes(r.record.slug)) && options.limit < outcome.totalMatched) {
+		options.limit = Math.min(outcome.totalMatched, options.limit * 2);
+		outcome = store.searchDetailed(row.query, options);
+	}
+	const ranked = outcome.results.map((r) => (r.via ? { slug: r.record.slug, score: r.score, via: r.via } : { slug: r.record.slug, score: r.score }));
+	Object.defineProperty(ranked, "totalMatched", { value: outcome.totalMatched });
+	return ranked;
 }
 
 /** none 질의 가운데 상위 5건에 벡터 전용 결과가 하나라도 있는 비율 */
@@ -541,11 +719,8 @@ function vectorTop5Rate(items) {
 	return items.filter((x) => x.ranked.slice(0, 5).some((r) => r.via)).length / items.length;
 }
 
-/**
- * tune 분할만으로 기준(어휘+변형)·rrf·add 격자를 재고 하나를 고른다.
- * 규칙: exact R@1 이 기준 이상이고 none fpr(T=9)이 기준 이하인 설정 가운데 paraphrase R@5 최대, 동률이면 τ 가 큰 쪽, 그다음 w 가 작은 쪽(rrf 는 τ·w 없음으로 가장 뒤).
- */
-function runGrid(rows, rankFn) {
+/** tune 분할의 모든 격자 조합을 측정하고 통합 선택에 필요한 지표를 반환한다. */
+export function runGrid(rows, rankFn) {
 	const tune = rows.filter((r) => !r.holdout);
 	const measure = (cfg) => {
 		const items = tune.map((row) => {
@@ -557,27 +732,49 @@ function runGrid(rows, rankFn) {
 			exactR1: summarize(of("exact")).recall1 ?? Number.NaN,
 			crosslangR5: summarize(of("crosslang")).recall5 ?? Number.NaN,
 			paraphraseR5: summarize(of("paraphrase")).recall5 ?? Number.NaN,
+			paraphraseMrr: summarize(of("paraphrase")).mrr ?? Number.NaN,
+			positive: metrics(items),
 			noneFprT9: curvePoint(items, NONE_T).fpr ?? Number.NaN,
-			noneAnyResult: summarize(of("none")).anyResultRate,
+			noneAnyResult: summarize(of("none")).anyResultRate ?? Number.NaN,
 			noneVectorTop5: vectorTop5Rate(of("none")),
 		};
 	};
 	const base = measure(null);
-	const rrf = { fusion: "rrf", w: null, tau: null, tune: measure({ fusion: "rrf" }) };
-	const add = GRID_W.flatMap((w) => GRID_TAU.map((tau) => ({ fusion: "add", w, tau, tune: measure({ fusion: "add", w, tau }) })));
-	const ok = [rrf, ...add].filter((c) => c.tune.exactR1 >= base.exactR1 && c.tune.noneFprT9 <= base.noneFprT9);
-	const tauOf = (c) => c.tau ?? -2;
-	const wOf = (c) => c.w ?? Number.MAX_VALUE;
-	ok.sort((a, b) => b.tune.paraphraseR5 - a.tune.paraphraseR5 || tauOf(b) - tauOf(a) || wOf(a) - wOf(b));
+	const configs = grid().map((cfg) => ({ ...cfg, tune: measure(cfg) }));
+	const rrf = configs.filter((c) => c.fusion === "rrf");
+	const add = configs.filter((c) => c.fusion === "add");
 	return {
-		rule: "tune: exact R@1 >= 기준 且 none fpr(T=9) <= 기준 인 설정 중 paraphrase R@5 최대, 동률이면 τ 큰 쪽, 다음 w 작은 쪽",
+		rule: "tune only; final selection requires exact recall, both paraphrase gains and each none result rate",
 		split: "tune",
 		base,
 		rrf,
 		add,
-		eligible: ok.length,
-		pick: ok[0] ?? null,
+		configs,
+		pick: null,
+		decision: "Select across golden, public and operational tune results, then validate the selected candidate once on holdout.",
 	};
+}
+
+/** 고정 코퍼스에서 같은 유효 후보 조합의 격자 순위 결과를 재사용한다. */
+export async function runCachedGrid(store, vec, rows, altsOf) {
+	const { parseQuery } = await import(pathToFileURL(path.join(root, "dist/store.js")).href);
+	const states = new Map();
+	return runGrid(rows, (row, cfg) => {
+		let state = states.get(row);
+		if (!state) {
+			const queries = [row.query, ...(altsOf(row) ?? []).slice(0, MAX_ALTS)].map((query) => parseQuery(query));
+			const lexical = new Set(queries.filter((q) => q.tokens.length).flatMap((q) => store.retriever.search(q, Infinity, {}, readEnv("ASTRONRAG_SCORER", "BBM_SCORER") ?? "legacy").map((c) => c.record.slug)));
+			state = { lexical, ranked: new Map() }; states.set(row, state);
+		}
+		const fusion = cfg?.fusion ?? "add";
+		const hits = cfg ? vec.vr.nearest(vec.qv.get(row), {}, cfg.topK, cfg.tau) : [];
+		const effective = fusion === "add"
+			? hits.filter((h) => !state.lexical.has(store.retriever.candidate(h.key, {})?.record.slug)).map((h) => [h.key, cfg.w * h.cos])
+			: hits.map((h) => h.key);
+		const key = JSON.stringify([fusion, fusion === "rrf" && hits.length ? cfg.w : 0, effective]);
+		if (!state.ranked.has(key)) state.ranked.set(key, rankRow(store, cfg ? vec : null, row, altsOf(row), cfg));
+		return state.ranked.get(key);
+	});
 }
 
 /** crosslang 질의·정답 쌍(양성)과 질의마다 시드 고정으로 뽑은 비정답 쌍(음성)의 코사인 AUC(Mann-Whitney, 동점 0.5) */
@@ -606,11 +803,16 @@ function crosslangAuc(vec, rows, seed) {
 	return { all: auc(cross), tune: auc(cross.filter((r) => !r.holdout)), holdout: auc(cross.filter((r) => r.holdout)) };
 }
 
-const opts = readArgs(process.argv.slice(2));
+async function main(opts) {
+	const storeKind = readEnv("ASTRONRAG_STORE", "BBM_STORE") === "file" ? "file" : "sqlite";
+	const cleanEnv = evaluationEnv(process.env, opts);
+	for (const key of Object.keys(process.env)) if (!(key in cleanEnv)) delete process.env[key];
+	Object.assign(process.env, cleanEnv, { ASTRONRAG_STORE: storeKind });
+	if (opts.privateInput && opts.detailsOut) privatePath(opts.detailsOut, opts);
 
 if (opts.compare) {
 	emit(compare(opts.compare[0], opts.compare[1]), opts.out, ["all", "holdout", "unmatched"]);
-	process.exit(0);
+	return;
 }
 
 if (!SCORERS.includes(opts.scorer)) die(`지원하지 않는 scorer: ${opts.scorer} (가능: ${SCORERS.join(", ")})`, 2);
@@ -626,34 +828,19 @@ const distUrl = (f) => pathToFileURL(path.join(root, "dist", f)).href;
 if (!fs.existsSync(path.join(root, "dist", "store.js"))) die("dist/store.js 가 없다 — 먼저 npm run build");
 const { Vault } = await import(distUrl("vault.js"));
 const { MemoryStore } = await import(distUrl("store.js"));
-const { FileStore } = await import(distUrl("stores/file-store.js"));
-const { SqliteStore } = await import(distUrl("stores/sqlite-store.js"));
 
-function openEvaluationBackend(dir, tag) {
-	if (readEnv("ASTRONRAG_STORE", "BBM_STORE") === "file") {
-		return new FileStore(dir);
-	}
-	const databasePath = path.join(dir, ".bbm", `${tag}.sqlite`);
-	const backupPath = `${dir}-${tag}-backup`;
-	runMigration({ vault: dir, storePath: databasePath, backupPath, dryRun: false, merge: false, verify: false });
-	return new SqliteStore(dir, databasePath);
-}
-
-// die() 는 finally 를 건너뛰므로 임시 사본을 만들기 전에 골든셋을 검증한다
+// 공개 입력은 사본 준비 전에 검증한다.
 const fixtureSlugs = new Set(
 	fs.readdirSync(path.join(FIXTURE, "memories")).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)),
 );
-const golden = loadGolden(fixtureSlugs);
-const fixedAlts = opts.multi ? loadAlts(golden) : null;
+let golden = opts.privateInput ? [] : loadGolden(fixtureSlugs, opts.queries ?? GOLDEN, { publicOnly: true });
+const fixedAlts = (opts.multi || opts.queryMode === "alts") && (!opts.queries || path.resolve(opts.queries) === GOLDEN) ? loadAlts(golden, opts.alts) : null;
 const usedAlts = fixedAlts && opts.altControl ? derangeAlts(golden, fixedAlts, opts.seed) : fixedAlts;
 /** 행에 넘길 alt_queries — --multi 가 없으면 undefined */
-const altsOf = (row) => usedAlts?.get(`${row.split}\u0000${row.query}`);
+const altsOf = (row) => row.alts;
 
 const realNow = Date.now;
-let metricDir = "";
-let latDir = "";
-let metricBackend;
-let liveBackend;
+let session;
 const diffDirs = [];
 // --baseline·--min-exact-r1 은 필요한 계산만 하고 break 로 이 블록을 빠져나가 finally 정리를 탄다
 evaluation: try {
@@ -667,19 +854,25 @@ evaluation: try {
 	}
 
 	// 지표: 고정 시계 + 강화 끔 + 전체 순위
-	metricDir = copyFixture("metric");
+	session = await openEvaluationBackend({ ...opts, storeKind, corpusKind: opts.corpus ? opts.corpusKind : "file" });
 	Date.now = () => FROZEN_NOW;
-	metricBackend = openEvaluationBackend(metricDir, "metric");
+	const metricBackend = session.backend;
 	const store = new MemoryStore(metricBackend);
 	store.reinforce = () => {};
 	const records = store.loadAll(true);
-	if (records.length !== fixtureSlugs.size) throw new Error(`픽스처 파싱 수 불일치: ${records.length}/${fixtureSlugs.size}`);
+	if (!records.length) die("empty corpus");
+	if (opts.privateInput) {
+		golden = loadGolden(new Set(records.map((r) => r.slug)), opts.queries, { sourceRecords: records });
+		if (session.snapshotHash) for (const row of golden) validateProvenance(row, session.snapshotHash);
+	}
+	golden = expandAlts(golden, usedAlts, opts.queryMode, opts.multi);
+	store.retriever.sync(metricBackend);
 	const types = {};
 	for (const r of records) types[r.type] = (types[r.type] ?? 0) + 1;
 
 	// 벡터: 임베딩은 실제 시계로 한 번만 계산하고, 순위화는 고정 시계에서 한다
 	Date.now = realNow;
-	const vec = opts.vector ? await prepareVector(store, metricBackend, golden) : null;
+	const vec = opts.vector ? await prepareVector(store, metricBackend, golden, opts) : null;
 	Date.now = () => FROZEN_NOW;
 	if (vec && opts.auc) {
 		Date.now = realNow;
@@ -687,19 +880,35 @@ evaluation: try {
 		break evaluation;
 	}
 	if (vec && opts.grid) {
-		const grid = runGrid(golden, (row, cfg) => rankRow(store, vec, row, altsOf(row), cfg));
+		const synchronize = store.retriever.sync;
+		let grid;
+		try {
+			store.retriever.sync = () => {};
+			grid = await runCachedGrid(store, vec, golden, altsOf);
+		} finally { store.retriever.sync = synchronize; }
 		Date.now = realNow;
-		emit({ mode: "grid", model: vec.mod.MODEL_ID, dtype: vec.mod.DTYPE, embedMs: vec.embedMs, ...grid }, opts.out, ["rule", "base", "rrf", "pick"]);
+		const upper = [...grid.configs].sort((a, b) => (b.tune.paraphraseR5 - a.tune.paraphraseR5) || (b.tune.paraphraseMrr - a.tune.paraphraseMrr) || b.tau - a.tau || a.w - b.w).slice(0, 2);
+		const latencyRows = [...golden.filter((r) => !r.holdout && r.expected.length).slice(0, 3), ...golden.filter((r) => !r.holdout && !r.expected.length).slice(0, 3)];
+		for (const config of grid.configs) {
+			if (upper.includes(config) || ([0.7, 0.9].includes(config.tau) && [1, 5].includes(config.w))) config.latencyMs = await measureLatency(store, vec, latencyRows, altsOf, config, 1);
+		}
+		const resources = { model: vec.model, dtype: vec.dtype, loadMs: vec.loadMs, corpusEmbedMs: vec.corpusEmbedMs, queryEmbedMs: vec.queryEmbedMs, queryCount: golden.length, corpusCount: records.length, cacheBytes: vec.cacheBytes, prefix: vec.prefix, dimension: vec.dimension, maxRssMB: process.resourceUsage().maxRSS / 1024 };
+		emit({ mode: "grid", ...resources, snapshotHash: session.snapshotHash, count: golden.length, ...grid }, opts.out, ["rule", "base", "pick"], opts);
 		break evaluation;
 	}
 	const vectorCfg = vec
-		? { fusion: opts.fusion, w: opts.vectorWeight ?? vec.mod.VECTOR_WEIGHT, tau: opts.minCos ?? vec.mod.VECTOR_MIN_COS }
+		? { fusion: opts.fusion, w: opts.vectorWeight ?? vec.mod.VECTOR_WEIGHT, tau: opts.minCos ?? vec.mod.VECTOR_MIN_COS, topK: opts.topK }
 		: null;
 
-	const items = golden.map((row) => {
-		const ranked = rankRow(store, vec, row, altsOf(row), vectorCfg);
-		return { row, ranked, j: judge(row, ranked) };
-	});
+	const synchronize = store.retriever.sync;
+	let items;
+	try {
+		store.retriever.sync = () => {};
+		items = golden.map((row) => {
+			const ranked = rankRow(store, vec, row, altsOf(row), vectorCfg);
+			return { row, ranked, j: judge(row, ranked) };
+		});
+	} finally { store.retriever.sync = synchronize; }
 	Date.now = realNow;
 
 	if (opts.minExactR1 !== undefined) {
@@ -728,22 +937,12 @@ evaluation: try {
 		permuteControl = { seed: opts.seed, splits: splitTable(shuffled) };
 	}
 
-	// 지연: 실제 시계·실제 강화, 서버 recall 기본값(limit 5, 연상 포함)
-	latDir = copyFixture("latency");
-	liveBackend = openEvaluationBackend(latDir, "latency");
-	const live = new MemoryStore(liveBackend);
-	for (const row of golden) live.searchDetailed(row.query, { limit: 5, altQueries: altsOf(row) });
-	const times = Array.from({ length: LATENCY_ROUNDS }, () =>
-		golden.map((row) => {
-			const t0 = performance.now();
-			live.searchDetailed(row.query, { limit: 5, altQueries: altsOf(row) });
-			return performance.now() - t0;
-		}),
-	)
-		.flat()
-		.sort((a, b) => a - b);
+	// 지연은 실제 시계와 고정된 사본에서 매회 검색 경로를 실행한다.
+	const latencyRows = opts.privateInput ? [...golden.filter((r) => r.expected.length).slice(0, 6), ...golden.filter((r) => !r.expected.length).slice(0, 6)] : golden;
+	const latencyMs = await measureLatency(store, vec, latencyRows, altsOf, vectorCfg);
 
 	const result = {
+		snapshotHash: session.snapshotHash,
 		scorer: opts.scorer,
 		shadow: opts.scorer === "legacy" && readEnv("ASTRONRAG_SHADOW", "BIGBRAIN_SHADOW") !== "0",
 		frozenNow: new Date(FROZEN_NOW).toISOString(),
@@ -765,26 +964,22 @@ evaluation: try {
 		...(vec && vectorCfg
 			? {
 					vector: {
-						model: vec.mod.MODEL_ID,
-						dtype: vec.mod.DTYPE,
+						model: vec.model,
+						dtype: vec.dtype,
+						loadMs: vec.loadMs, corpusEmbedMs: vec.corpusEmbedMs, queryEmbedMs: vec.queryEmbedMs, dimension: vec.dimension, maxRssMB: process.resourceUsage().maxRSS / 1024, cacheBytes: vec.cacheBytes, prefix: vec.prefix,
 						...vectorCfg,
-						topK: vectorCfg.fusion === "add" ? vec.mod.VECTOR_TOP_K : RRF_DEPTH,
+						topK: vectorCfg.topK,
 						embedMs: vec.embedMs,
 						noneVectorTop5: {
 							tune: vectorTop5Rate(items.filter((x) => x.row.split === "none" && !x.row.holdout)),
 							holdout: vectorTop5Rate(items.filter((x) => x.row.split === "none" && x.row.holdout)),
 							all: vectorTop5Rate(items.filter((x) => x.row.split === "none")),
 						},
-						latencyNote: "latencyMs 는 어휘 경로만 잰다 — 벡터 추가 지연은 regress-vector.mjs --real",
+						latencyNote: "sync + embedQuery + nearest + searchDetailed",
 					},
 				}
 			: {}),
-		latencyMs: {
-			p50: percentile(times, 0.5),
-			p95: percentile(times, 0.95),
-			n: times.length,
-			mode: `in-process warm searchDetailed(limit 5), 워밍업 1회 후 ${LATENCY_ROUNDS}라운드, MCP 전송 제외, 실제 시계·강화 적용`,
-		},
+		latencyMs,
 		queries: items.map((x) => ({
 			query: x.row.query,
 			split: x.row.split,
@@ -795,12 +990,25 @@ evaluation: try {
 		})),
 	};
 
-	emit(result, opts.out, ["scorer", "shadow", "fixture", "splits", "g2", "latencyMs", "permuteControl", "multi", "vector"]);
+	emit(result, opts.out, ["scorer", "shadow", "fixture", "splits", "g2", "latencyMs", "permuteControl", "multi", "vector"], opts);
 } finally {
 	Date.now = realNow;
-	metricBackend?.close();
-	liveBackend?.close();
-	for (const d of [metricDir, latDir, ...diffDirs]) if (d) fs.rmSync(d, { recursive: true, force: true });
-	if (metricDir) fs.rmSync(`${metricDir}-metric-backup`, { recursive: true, force: true });
-	if (latDir) fs.rmSync(`${latDir}-latency-backup`, { recursive: true, force: true });
+	if (session) await session.cleanup();
+	for (const d of diffDirs) {
+		if (path.dirname(path.resolve(d)) !== path.resolve(os.tmpdir())) die("invalid cleanup target");
+		fs.rmSync(d, { recursive: true, force: true });
+	}
+}
+
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	const privateRun = process.argv.includes("--queries") && process.argv.includes("--corpus");
+	const originalError = console.error; const originalWarn = console.warn;
+	if (privateRun) { console.error = () => {}; console.warn = () => {}; }
+	try { await main(readArgs(process.argv.slice(2))); }
+	catch (error) {
+		process.stderr.write("eval-retrieval: evaluation failed (input, model or storage unavailable)\n");
+		process.exitCode = error.exitCode ?? 1;
+	} finally { console.error = originalError; console.warn = originalWarn; }
 }

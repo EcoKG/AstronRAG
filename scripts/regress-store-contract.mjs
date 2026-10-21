@@ -9,7 +9,10 @@ import { pathToFileURL } from "node:url";
 
 const root = path.resolve(import.meta.dirname, "..");
 const distUrl = (name) => pathToFileURL(path.join(root, "dist", name)).href;
-const tmpRoot = path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? os.tmpdir());
+for (const key of Object.keys(process.env)) {
+	if (/^(?:ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key)) delete process.env[key];
+}
+const tmpRoot = path.resolve(os.tmpdir());
 fs.mkdirSync(tmpRoot, { recursive: true });
 
 const tests = /** @type {{ name: string, run: () => unknown | Promise<unknown> }[]} */ (Array());
@@ -156,7 +159,7 @@ async function withSqliteMcp(name, setup, run) {
 	const transport = new StdioClientTransport({
 		command: process.execPath,
 		args: [path.join(root, "dist", "index.js")],
-		env: { ...process.env, ASTRONRAG_VAULT: dir, ASTRONRAG_STORE: "sqlite" },
+		env: { ...process.env, ASTRONRAG_VAULT: dir, ASTRONRAG_SQLITE_PATH: path.join(dir, ".bbm", "store.sqlite"), ASTRONRAG_STORE: "sqlite" },
 		stderr: "pipe",
 	});
 	const client = new Client({ name: `store-contract-${name}`, version: "0.0.1" });
@@ -363,7 +366,7 @@ test("test_sqlite_hook_reads_persisted_index_without_markdown_files", () => {
 		cwd: root,
 		input: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "sqlite-hook", prompt: "zirconium deployment procedure" }),
 		encoding: "utf8",
-		env: { ...process.env, ASTRONRAG_STORE: "sqlite", ASTRONRAG_AUTO_RECALL: "1", ASTRONRAG_AUTO_MIN_SCORE: "0" },
+		env: { ...process.env, ASTRONRAG_VAULT: dir, ASTRONRAG_SQLITE_PATH: path.join(dir, ".bbm", "store.sqlite"), ASTRONRAG_STORE: "sqlite", ASTRONRAG_AUTO_RECALL: "1", ASTRONRAG_AUTO_MIN_SCORE: "0" },
 	});
 	assert.equal(child.status, 0);
 	assert.match(child.stdout, /<astronrag-auto-recall/);
@@ -509,7 +512,7 @@ test("test_sqlite_migration_guard_hook_is_silent_and_exits_zero", () => {
 		cwd: root,
 		input: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "migration-hook", prompt: "legacy" }),
 		encoding: "utf8",
-		env: { ...process.env, ASTRONRAG_STORE: "sqlite", ASTRONRAG_AUTO_RECALL: "1" },
+		env: { ...process.env, ASTRONRAG_VAULT: dir, ASTRONRAG_SQLITE_PATH: path.join(dir, ".bbm", "store.sqlite"), ASTRONRAG_STORE: "sqlite", ASTRONRAG_AUTO_RECALL: "1" },
 	});
 	assert.equal(child.status, 0);
 	assert.equal(child.stdout, "");
@@ -545,7 +548,7 @@ test("test_file_store_usage_report_since_excludes_old_hook_event", () => {
 	const child = spawnSync(process.execPath, [path.join(root, "scripts", "usage-report.mjs"), "--vault", dir, "--since", "2026-01-01", "--json"], {
 		cwd: root,
 		encoding: "utf8",
-		env: { ...process.env, ASTRONRAG_STORE: "file" },
+		env: { ...process.env, ASTRONRAG_VAULT: dir, ASTRONRAG_SQLITE_PATH: path.join(dir, ".bbm", "store.sqlite"), ASTRONRAG_STORE: "file" },
 	});
 	assert.equal(child.status, 0, child.stderr);
 	assert.equal(JSON.parse(child.stdout).window.events, 0, child.stdout);

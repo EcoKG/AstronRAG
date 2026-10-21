@@ -18,6 +18,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import assert from "node:assert/strict";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -86,7 +87,7 @@ function check(name, cond, detail = "") {
 }
 
 const temps = new Array();
-const testTmp = path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? os.tmpdir());
+const testTmp = path.resolve(process.env.ASTRONRAG_TEST_TMPDIR ?? path.join(root, ".astron-logs/vector-tests"));
 fs.mkdirSync(testTmp, { recursive: true });
 /** %TEMP% 아래 새 디렉터리 (끝나면 지운다) */
 function tempDir(tag) {
@@ -205,6 +206,7 @@ if (failures > 0) {
 console.log("regress-vector 통과 ✔");
 
 async function defaultChecks() {
+	await tuningBoundaryChecks();
 	console.log("1) 저장 파일·증분 재계산");
 	{
 		const { vault, store, indexDir } = smallVault("files");
@@ -475,6 +477,98 @@ async function oldDistCheck() {
 }
 
 /** 실제 모델 측정 — 모델 로드 시간·RSS 증가, 합성 볼트 첫 sync, 질의당 추가 지연(sync+embedQuery+nearest) */
+/** 합성 기억으로 벡터 경계와 모델 캐시 계약을 검증한다. */
+async function tuningBoundaryChecks() {
+	const E = await import("./eval-retrieval.mjs");
+	const { FileStore } = await import(distUrl("stores/file-store.js"));
+	const { SqliteStore } = await import(distUrl("stores/sqlite-store.js"));
+	const run = async (name, fn) => {
+		try { await fn(); check(name, true); } catch (e) { check(name, false, e.stack ?? String(e)); }
+	};
+	await run("test_vector_threshold_topk_and_tie_order", async () => {
+		const { store } = smallVault("threshold"); const entries = store.retriever.entries().slice(0, 3);
+		const vr = new VectorRetriever(null, async (texts) => texts.map(() => new Float32Array([0.75, Math.sqrt(1 - 0.75 ** 2)])));
+		await vr.warm(() => entries);
+		const keys = entries.map((e) => e.key).sort();
+		assert.deepEqual(vr.nearest(new Float32Array([1, 0]), {}, 2, 0.75).map((h) => h.key), keys.slice(0, 2));
+		assert.deepEqual(vr.nearest(new Float32Array([1, 0]), {}, 2, 0.75001), []);
+	});
+	await run("test_vector_eval_matches_runtime_fusion", async () => {
+		const { store } = smallVault("fusion"); const row = { query: "connection pool" };
+		const entries = store.retriever.entries(); const calls = new Array();
+		const vec = { mod: { VECTOR_TOP_K: 10 }, qv: new Map([[row, new Float32Array([1])]]), vr: { nearest: (_q, _f, k, tau) => { calls.push([k, tau]); return [{ key: entries[1].key, cos: 0.8 }, { key: entries[0].key, cos: 0.79 }]; } } };
+		store.reinforce = () => {};
+		for (const fusion of ["add", "rrf"]) {
+			const cfg = { fusion, w: 3, tau: 0.72, topK: 10 };
+			const actual = E.rankRow(store, vec, row, undefined, cfg);
+			const expected = store.searchDetailed(row.query, { limit: 1000, includeLinked: false, vectorFusion: fusion, vectorHits: [{ key: entries[1].key, score: 3 * 0.8 }, { key: entries[0].key, score: 3 * 0.79 }], vectorWeight: 3 }).results.map((r) => ({ slug: r.record.slug, score: r.score, ...(r.via ? { via: r.via } : {}) }));
+			assert.deepEqual(actual, expected);
+		}
+		assert.deepEqual(calls, [[10, 0.72], [10, 0.72]]);
+	});
+	await run("test_vector_fusion_preserves_scope_filters", async () => {
+		const { store } = smallVault("scope-fusion"); store.reinforce = () => {};
+		store.remember({ title: "범위 밖 배포", content: "private deployment", type: "semantic", project: "other-project", slug: "outside" });
+		store.retriever.sync(store.vault);
+		const entries = store.retriever.entries(); const hits = entries.map((e) => ({ key: e.key, score: 100 })); hits.push({ key: "missing", score: 100 });
+		for (const vectorFusion of ["add", "rrf"]) {
+			assert.ok(store.searchDetailed("배포", { type: "procedural", vectorHits: hits, vectorFusion }).results.every((r) => r.record.type === "procedural"));
+			assert.ok(store.searchDetailed("배포", { project: "wanted-project", vectorHits: hits, vectorFusion }).results.every((r) => r.record.project !== "other-project"));
+		}
+	});
+	await run("test_vector_no_hits_preserves_lexical_with_rrf", async () => {
+		const { store } = smallVault("fallback-tuning"); store.reinforce = () => {};
+		const baseline = store.searchDetailed("connection pool");
+		assert.deepEqual(store.searchDetailed("connection pool", { vectorHits: undefined, vectorFusion: "rrf" }), baseline);
+	});
+	await run("test_vector_model_prefix_and_embedding_shape", async () => {
+		for (const id of [vmod.MODEL_ID, "Xenova/paraphrase-multilingual-MiniLM-L12-v2"]) {
+			const seen = new Array();
+			const embed = await vmod.loadEmbedder(id, "q8", async () => async (texts, options) => { seen.push({ texts, options }); return { dims: [texts.length, 2], data: new Float32Array(texts.flatMap(() => [1, 0])) }; });
+			assert.equal((await embed(["문장"], "query"))[0].length, 2); await embed(["문서"], "passage");
+			assert.deepEqual(seen[0], { texts: [id.includes("e5") ? "query: 문장" : "문장"], options: { pooling: "mean", normalize: true } });
+			assert.equal(seen[1].texts[0], id.includes("e5") ? "passage: 문서" : "문서");
+		}
+		const invalid = await vmod.loadEmbedder(vmod.MODEL_ID, "q8", async () => async () => ({ dims: [1, 2], data: new Float32Array([NaN, 0]) }));
+		await assert.rejects(() => invalid(["bad"], "query"));
+	});
+	for (const [kind, name] of [
+		["sqlite", "test_vector_sqlite_reembeds_on_model_key_change"],
+		["file", "test_vector_file_store_reembeds_on_model_key_change"],
+	]) await run(name, async () => {
+		const { dir, store } = smallVault(`reembed-${kind}`); const entries = store.retriever.entries();
+		let backend = kind === "file" ? new FileStore(dir) : new SqliteStore(dir); const calls = new Array();
+		try {
+			const old = new VectorRetriever(backend, fakeEmbed([]), "old@q8"); await old.warm(() => entries);
+			const embed = async (texts, phase) => { calls.push({ texts, kind: phase }); return texts.map(() => new Float32Array([1, 0, 0])); };
+			const fresh = new VectorRetriever(backend, embed, "new@q8"); await fresh.warm(() => entries);
+			assert.equal(fresh.state, "ready"); assert.equal(passages(calls), entries.length); assert.ok(backend.loadEmbeddings("new@q8").every((r) => r.vector.length === 3));
+			backend.close(); backend = kind === "file" ? new FileStore(dir) : new SqliteStore(dir);
+			calls.length = 0; const restart = new VectorRetriever(backend, embed, "new@q8"); await restart.warm(() => entries);
+			assert.equal(restart.state, "ready"); assert.equal(passages(calls), 0);
+		} finally { backend.close(); }
+	});
+	await run("test_vector_cache_corruption_and_save_retry_recover", async () => {
+		const { store } = smallVault("cache-tuning"); const entries = store.retriever.entries(); let saves = 0; const calls = [];
+		const backend = { loadEmbeddings: () => [{ key: entries[0].key, hash: "bad", vector: new Float32Array([NaN]) }], replaceEmbeddings: () => { if (++saves === 1) throw new Error("save failed"); } };
+		const vr = new VectorRetriever(backend, fakeEmbed(calls)); await vr.warm(() => entries);
+		assert.equal(vr.state, "ready"); await vr.sync(entries); assert.equal(saves, 2); assert.equal(passages(calls), entries.length);
+		const dimensionCalls = new Array();
+		const wrongDimension = { loadEmbeddings: () => [{ key: entries[0].key, hash: crypto.createHash("sha256").update(vmod.passageText(entries[0].record)).digest("hex"), vector: new Float32Array([1, 0]) }], replaceEmbeddings: () => {} };
+		const recovered = new VectorRetriever(wrongDimension, fakeEmbed(dimensionCalls)); await recovered.warm(() => entries);
+		assert.equal(recovered.state, "ready"); assert.equal(recovered.nearest(new Float32Array(DIM), {}, 10, -1).length, entries.length);
+		assert.ok(recovered.rows.size === entries.length && [...recovered.rows.values()].every((r) => r.vec.length === DIM));
+	});
+	await run("test_vector_concurrent_sync_preserves_latest_entries", async () => {
+		const { store } = smallVault("sync-tuning"); const entries = store.retriever.entries();
+		const vr = new VectorRetriever(null, async (texts) => { await new Promise((resolve) => setTimeout(resolve, 5)); return texts.map(() => new Float32Array([1, 0])); });
+		await vr.warm(() => entries); const latest = entries.slice().reverse();
+		await Promise.all([vr.sync(entries.slice(0, 1)), vr.sync(latest)]);
+		assert.deepEqual(vr.nearest(new Float32Array([1, 0]), {}, 10, 0).map((h) => h.key), latest.map((e) => e.key).sort());
+		assert.deepEqual([...vr.rows.keys()], latest.map((e) => e.key));
+	});
+}
+
 async function realMeasure() {
 	console.log(`9) 실제 모델 측정 (${vmod.MODEL_ID} ${vmod.DTYPE}, 합성 ${count}건, 질의 ${nQueries}개, 시드 ${seed})`);
 	const { buildVault, mulberry32 } = await import(pathToFileURL(path.join(here, "bench-rif.mjs")).href);

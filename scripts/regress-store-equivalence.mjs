@@ -135,7 +135,7 @@ test("test_store_equivalence_matches_single_reinforcement_state", () => {
 });
 
 test("test_sqlite_eval_retrieval_keeps_exact_recall_at_least_0_933", () => {
-	const result = spawnSync(process.execPath, [path.join(root, "scripts", "eval-retrieval.mjs"), "--min-exact-r1", "0.933"], {
+	const result = spawnSync(process.execPath, [path.join(root, "scripts", "eval-retrieval.mjs"), "--scorer", "legacy", "--queries", path.join(root, "eval/golden.jsonl"), "--corpus", path.join(root, "eval/fixture-vault"), "--min-exact-r1", "0.933"], {
 		cwd: root,
 		encoding: "utf8",
 		env: { ...process.env, ASTRONRAG_STORE: "sqlite" },
