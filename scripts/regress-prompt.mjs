@@ -80,7 +80,7 @@ console.log("2) 프롬프트 내용");
 console.log("3) 기존 기능 무회귀");
 {
   const { tools } = await client.listTools();
-  check("도구 9개 계약", tools.length === 9, `len=${tools.length}`);
+  check("도구 11개 계약", tools.length === 11, `len=${tools.length}`);
   const res = await client.callTool({ name: "reflect", arguments: {} });
   const content = res.content;
   if (!Array.isArray(content)) throw new TypeError();

@@ -98,7 +98,7 @@ async function mcp_config_astronrag_entrypoint() {
     command: server.command,
     args: server.args,
     cwd: root, // Claude Code 가 프로젝트 스코프 서버를 띄우는 방식과 동일
-    env: { ...process.env, ASTRONRAG_VAULT: tmpVault },
+	env: { ...process.env, ASTRONRAG_VAULT: tmpVault, ASTRONRAG_SQLITE_PATH: path.join(tmpVault, "store.sqlite"), ASTRONRAG_STORE: "sqlite" },
   });
   const client = new Client({ name: "regress-mcp-config", version: "0.0.1" });
 
@@ -106,19 +106,19 @@ async function mcp_config_astronrag_entrypoint() {
     await client.connect(transport);
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
-    const expected = ["forget", "link", "list_memories", "read_memory", "recall", "recommend", "reflect", "remember", "revise"];
-    const existing = tools.filter((tool) => tool.name !== "recommend").sort((a, b) => a.name.localeCompare(b.name)).map((tool) => ({ name: tool.name, inputSchema: tool.inputSchema }));
+	const expected = ["forget", "link", "list_memories", "model_catalog", "read_memory", "recall", "recommend", "record_recommendation_feedback", "reflect", "remember", "revise"];
+	const existing = tools.filter((tool) => !["recommend", "model_catalog", "record_recommendation_feedback"].includes(tool.name)).sort((a, b) => a.name.localeCompare(b.name)).map((tool) => ({ name: tool.name, inputSchema: tool.inputSchema }));
     const schemaHash = crypto.createHash("sha256").update(JSON.stringify(existing)).digest("hex");
     check("서버 기동 성공", true);
     check(
-      "test_existing_tools_contract_snapshot_unchanged",
+		"test_mcp_tools_additions_preserve_existing_contracts",
       JSON.stringify(names) === JSON.stringify(expected) && schemaHash === "3d5632242aa223ca880a38740f3f0770e4702876d494ee53634f73464138cbf9",
       `got: ${names.join(",")} schema=${schemaHash}`,
     );
     const recommend = tools.find((tool) => tool.name === "recommend");
     check(
       "recommend 입력 스키마",
-      JSON.stringify(Object.keys(recommend?.inputSchema?.properties ?? {}).sort()) === JSON.stringify(["description", "platform", "role"])
+		JSON.stringify(Object.keys(recommend?.inputSchema?.properties ?? {}).sort()) === JSON.stringify(["cross_review_of", "description", "novelty", "platform", "risk", "role", "size"])
         && JSON.stringify(recommend?.inputSchema?.required) === JSON.stringify(["description", "role"])
         && JSON.stringify(Reflect.get(recommend?.inputSchema?.properties?.platform ?? {}, "enum")) === JSON.stringify(["claude", "codex"]),
       JSON.stringify(recommend?.inputSchema),
