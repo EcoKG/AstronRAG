@@ -89,20 +89,31 @@ function writeAtomic(fp: string, data: string | Uint8Array): void {
 	}
 }
 
-/** transformers.js 로 모델을 올려 임베더를 만든다 — 패키지가 없으면 import 가 실패한다 */
-export async function loadEmbedder(): Promise<Embed> {
-	const spec = TRANSFORMERS_PKG;
-	const t = await import(spec);
-	t.env.cacheDir = MODEL_CACHE_DIR;
-	const extractor = await t.pipeline("feature-extraction", MODEL_ID, { dtype: DTYPE });
+/** 로컬 모델을 올리고 모델별 접두어와 정규화된 출력 형식을 검증한다. */
+export async function loadEmbedder(
+	model = MODEL_ID,
+	dtype: string = DTYPE,
+	createPipeline?: (task: string, model: string, options: { dtype: string }) => Promise<(texts: string[], options: { pooling: string; normalize: boolean }) => Promise<{ dims: number[]; data: Float32Array }>>,
+): Promise<Embed> {
+	if (!createPipeline) {
+		const spec = TRANSFORMERS_PKG;
+		const t = await import(spec);
+		t.env.cacheDir = MODEL_CACHE_DIR;
+		createPipeline = t.pipeline;
+	}
+	const extractor = await createPipeline!("feature-extraction", model, { dtype });
+	const e5 = /(?:^|\/)multilingual-e5-/.test(model);
 	return async (texts, kind) => {
 		const out = await extractor(
-			texts.map((s) => `${kind}: ${s}`),
+			e5 ? texts.map((s) => `${kind}: ${s}`) : texts,
 			{ pooling: "mean", normalize: true },
 		);
 		const dim = out.dims[out.dims.length - 1] as number;
 		const data = out.data as Float32Array;
-		return texts.map((_, i) => data.slice(i * dim, (i + 1) * dim));
+		if (out.dims.length !== 2 || out.dims[0] !== texts.length || !Number.isSafeInteger(dim) || dim <= 0 || data.length !== texts.length * dim) throw new Error("임베딩 출력 형식 불일치");
+		const vectors = texts.map((_, i) => data.slice(i * dim, (i + 1) * dim));
+		if (vectors.some((v) => v.some((x) => !Number.isFinite(x)) || Math.abs(Math.hypot(...v) - 1) > 0.001)) throw new Error("임베딩 정규화 불일치");
+		return vectors;
 	};
 }
 
@@ -142,7 +153,10 @@ export class VectorRetriever {
 	/** 모델을 올리고 저장된 임베딩을 적재해 항목과 맞춘 뒤 ready 가 된다 — 실패하면 unavailable */
 	async warm(entries: () => { key: string; record: MemoryRecord }[]): Promise<void> {
 		try {
-			if (!this.embed) this.embed = await loadEmbedder();
+			if (!this.embed) {
+				const at = this.model.lastIndexOf("@");
+				this.embed = await loadEmbedder(at < 0 ? this.model : this.model.slice(0, at), at < 0 ? DTYPE : this.model.slice(at + 1));
+			}
 		} catch (err) {
 			this.state = "unavailable";
 			const missing = (err as { code?: string }).code === "ERR_MODULE_NOT_FOUND" && String(err).includes(TRANSFORMERS_PKG);
@@ -167,7 +181,7 @@ export class VectorRetriever {
 			const rows = this.storage.loadEmbeddings(this.model);
 			if (rows.length === 0) return;
 			const dim = rows[0].vector.length;
-			if (dim === 0 || rows.some((row) => row.vector.length !== dim)) return;
+			if (dim === 0 || rows.some((row) => row.vector.length !== dim || row.vector.some((x) => !Number.isFinite(x)))) return;
 			this.dim = dim;
 			this.rows = new Map(rows.map((row) => [row.key, { record: null, hash: row.hash, vec: row.vector }]));
 			return;
@@ -187,6 +201,7 @@ export class VectorRetriever {
 		}
 		const dim = meta.dim;
 		const all = new Float32Array(bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.length));
+		if (all.some((x) => !Number.isFinite(x))) return;
 		this.dim = dim;
 		this.rows = new Map(meta.keys.map(([key, hash], i) => [key, { record: null, hash, vec: all.subarray(i * dim, (i + 1) * dim) }]));
 	}
@@ -198,7 +213,7 @@ export class VectorRetriever {
 		return run;
 	}
 
-	private async syncNow(entries: { key: string; record: MemoryRecord }[]): Promise<void> {
+	private async syncNow(entries: { key: string; record: MemoryRecord }[], recoverDimension = true): Promise<void> {
 		const embed = this.embed;
 		if (!embed) throw new Error("임베더가 없다");
 		const next = new Map<string, Row>();
@@ -220,6 +235,13 @@ export class VectorRetriever {
 				part.map((t) => t.text),
 				"passage",
 			);
+			if (vecs.length !== part.length || vecs.some((v) => !v?.length || v.some((x) => !Number.isFinite(x)))) throw new Error("임베딩 출력 불일치");
+			if (this.dim !== 0 && vecs.some((v) => v.length !== this.dim)) {
+				if (!recoverDimension) throw new Error("임베딩 차원 불일치");
+				this.rows.clear(); this.dim = 0;
+				await this.syncNow(entries, false);
+				return;
+			}
 			part.forEach((t, j) => {
 				const vec = vecs[j];
 				if (this.dim === 0) this.dim = vec.length;
