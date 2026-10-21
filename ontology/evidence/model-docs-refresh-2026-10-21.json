@@ -1,0 +1,491 @@
+{
+  "attemptedAt": "2026-10-21",
+  "status": "updated",
+  "documents": [
+    {
+      "url": "https://platform.claude.com/docs/en/about-claude/models/choosing-a-model",
+      "status": "downloaded",
+      "sha256": "3e80bced0fa5b08032870f93668b315b8b9ac48f7972c2d45f9faf694af31d68",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "status": "downloaded",
+      "sha256": "e45c1c8a21ca036c6638de55904540e3040c60d7547e322c3440c45faf1cb4fc",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "status": "downloaded",
+      "sha256": "d0dc6009ff1bae0023eec432d7c21d4a3b71a71e542ac350dbfd13dc85a8b862",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching",
+      "status": "downloaded",
+      "sha256": "a0bb0d71af45051398a1e63c7379fe0ec5af0dd91ea9351cba2d9b5c474161f6",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/build-with-claude/batch-processing",
+      "status": "downloaded",
+      "sha256": "becf39440b06098a7b112ba9c3704877d27f5814759454b33af8a7dd6e9dc7f4",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+      "status": "downloaded",
+      "sha256": "38cf202f17d28efe5a42f1df1de7f7af5924f76ce05abb7b5989db919ae892e5",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/build-with-claude/extended-thinking",
+      "status": "downloaded",
+      "sha256": "bb32ce9a4c39d2c66b62d4ee1d51b425c803ced54c7e612e9d77d51816dacd30",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+      "status": "downloaded",
+      "sha256": "65cb644a86d9ce9c8f3adad15af656c33db58a719b14ba7e899614b22616cd9f",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/build-with-claude/thinking",
+      "status": "downloaded",
+      "sha256": "8bbc8ed20cffa039e5c2c371c64610c7e4019d2dabf1a01392a87dc0018d9375",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/build-with-claude/thinking-steering-and-cost",
+      "status": "downloaded",
+      "sha256": "249dbb140ab8cdcf0d47a74a6a9fb4faba044240d9f5b16212fd060335d18a2f",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/overview",
+      "status": "downloaded",
+      "sha256": "e45c1c8a21ca036c6638de55904540e3040c60d7547e322c3440c45faf1cb4fc",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/ko/about-claude/models/choosing-a-model",
+      "status": "downloaded",
+      "sha256": "e5c134253f419f94005d03dde78a38f693a8d6f69050fe5bad133bea38b6c7cf",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/ko/about-claude/pricing",
+      "status": "downloaded",
+      "sha256": "6b2be640e39628f9dbb8294dc99c5d407db17e75984ace70fd72c416af54b041",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/ko/agents-and-tools/tool-use/tool-use-with-prompt-caching",
+      "status": "downloaded",
+      "sha256": "8063e4290030901ade5c8b60c0aa98e166410841b0fb24020241c2f25a74eaa5",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/ko/build-with-claude/batch-processing",
+      "status": "downloaded",
+      "sha256": "856c5d242f8e351fdcbca517773142fd60b406e50f45fb416d4be00df1a596e8",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/ko/build-with-claude/effort",
+      "status": "downloaded",
+      "sha256": "3d1eb395c9727bbd542104a43f3f0ad26b3ac9da4cc6316aed4830de6338f84f",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/ko/build-with-claude/extended-thinking",
+      "status": "downloaded",
+      "sha256": "8a8fd48dba214898c56181549928925e93c7200ef195c0d81d33dcf667bb3445",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/ko/build-with-claude/prompt-caching",
+      "status": "downloaded",
+      "sha256": "0135ac4dd7421fcc04c972257d5ed5ff43b1d9a5a3b5ae462917c58eb9618369",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/ko/build-with-claude/thinking",
+      "status": "downloaded",
+      "sha256": "ff1a516dcfa7041cc66d181ad08767d86aedbae52bbcad5764d26f9c20d51cbb",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/ko/build-with-claude/thinking-steering-and-cost",
+      "status": "downloaded",
+      "sha256": "cce6f8e22d78d6e191971124044398558848444edfd66caef9039b979cda704e",
+      "changed": false
+    },
+    {
+      "url": "https://platform.claude.com/docs/ko/models/overview",
+      "status": "downloaded",
+      "sha256": "6a9151b7d92c434efe672a442054869e6ec9805843e9e25241db997586f9b725",
+      "changed": false
+    }
+  ],
+  "changes": [
+    {
+      "path": "claude-fable-5-1.sources",
+      "kind": "changed",
+      "previous": [
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "name",
+            "contextTokens",
+            "maxOutputTokens",
+            "defaultEffort"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "supportedEfforts"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "pricing"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features",
+            "platforms"
+          ]
+        }
+      ],
+      "current": [
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features",
+            "platforms"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "contextTokens",
+            "defaultEffort",
+            "maxOutputTokens",
+            "name"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "supportedEfforts"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "pricing"
+          ]
+        }
+      ],
+      "sourceUrl": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "checkedAt": "2026-10-19"
+    },
+    {
+      "path": "claude-haiku-5-5.sources",
+      "kind": "changed",
+      "previous": [
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "name",
+            "contextTokens",
+            "maxOutputTokens",
+            "defaultEffort"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "supportedEfforts"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "pricing"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features",
+            "platforms"
+          ]
+        }
+      ],
+      "current": [
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features",
+            "platforms"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "contextTokens",
+            "defaultEffort",
+            "maxOutputTokens",
+            "name"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "supportedEfforts"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "pricing"
+          ]
+        }
+      ],
+      "sourceUrl": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "checkedAt": "2026-10-19"
+    },
+    {
+      "path": "claude-opus-5-5.sources",
+      "kind": "changed",
+      "previous": [
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "name",
+            "contextTokens",
+            "maxOutputTokens",
+            "defaultEffort"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "supportedEfforts"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "pricing"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features",
+            "platforms"
+          ]
+        }
+      ],
+      "current": [
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features",
+            "platforms"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "contextTokens",
+            "defaultEffort",
+            "maxOutputTokens",
+            "name"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "supportedEfforts"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "pricing"
+          ]
+        }
+      ],
+      "sourceUrl": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "checkedAt": "2026-10-19"
+    },
+    {
+      "path": "claude-sonnet-5-5.sources",
+      "kind": "changed",
+      "previous": [
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "name",
+            "contextTokens",
+            "maxOutputTokens",
+            "defaultEffort"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "supportedEfforts"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "pricing"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features",
+            "platforms"
+          ]
+        }
+      ],
+      "current": [
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-19",
+          "fields": [
+            "features",
+            "platforms"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "contextTokens",
+            "defaultEffort",
+            "maxOutputTokens",
+            "name"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "supportedEfforts"
+          ]
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "pricing"
+          ]
+        }
+      ],
+      "sourceUrl": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "checkedAt": "2026-10-19"
+    }
+  ],
+  "codex": "not rechecked: workspace-only policy; existing evidence and checkedAt preserved",
+  "preservedFields": [
+    "features",
+    "platforms"
+  ]
+}

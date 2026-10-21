@@ -11,7 +11,7 @@ MCP 클라이언트가 서버에 전달하는 환경에 지정합니다. 서버 
 | `ASTRONRAG_VAULT` | `<저장소>/vault` | 저장소 루트. 명시 경로에 기억·마커가 없으면 경고. `src/index.ts`의 `vaultOverride` 및 `vaultDir` |
 | `ASTRONRAG_STORE` | `sqlite` | `sqlite` 또는 `file`. 다른 값은 오류. `src/stores/index.ts`의 `createMemoryStore` |
 | `ASTRONRAG_SQLITE_PATH` | `<볼트>/.bbm/store.sqlite` | SQLite 저장소 선택 시에만 DB 경로로 적용. FileStore에서는 읽지 않음. `src/stores/index.ts`의 `STORE_FACTORIES`의 sqlite 항목, `src/stores/index.ts`의 `STORE_FACTORIES`의 file 항목 |
-| `ASTRONRAG_ONTOLOGY_PATH` | 내장 `ontology/ontology.json` | 추천용 온톨로지 경로. 빈 값은 내장 설정. `src/index.ts`의 `ontologyOverride` 및 `ontologyPath` |
+| `ASTRONRAG_ONTOLOGY_PATH` | 내장 `ontology/ontology.json` | `recommend`·`model_catalog`·`record_recommendation_feedback`가 함께 읽는 온톨로지 경로. 빈 값은 내장 설정. `src/index.ts`의 `ontologyOverride`·`ontologyPath` 및 `server.registerTool`의 각 도구 등록 |
 | `ASTRONRAG_PROJECT` | 설정 없음 | 기본 조회 스코프. 공백 제거 후 빈 값은 전체. `src/index.ts`의 `DEFAULT_PROJECT` |
 | `ASTRONRAG_SYNONYMS` | 추가 없음 | `대표어=동의어1,동의어2;대표어2=동의어3`. 내장 사전과 합쳐 양방향 확장. 예: `사내망=intranet,internalnet;웹메일=webmail`. `src/store.ts`의 `SYNONYM_INDEX` |
 | `ASTRONRAG_INDEX_LIMIT` | `40` | instructions의 인덱스 최대 건수. `0`은 목록 생략, 스코프 안내 유지. `src/index.ts`의 `INDEX_LIMIT` |

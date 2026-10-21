@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import crypto from "node:crypto";
 import type { MemoryRecord, MemoryStatus, MemoryType } from "../types.js";
 import { Vault } from "../vault.js";
-import { assertSafeSlug, type MemoryIdentity, type MemoryStore, type StoreInspection, type StoreUsageEvent, type StoredEmbedding } from "./memory-store.js";
+import { assertSafeSlug, type RecommendationFeedback, type RuleStatistics, type MemoryIdentity, type MemoryStore, type StoreInspection, type StoreUsageEvent, type StoredEmbedding } from "./memory-store.js";
 
 const SCHEMA_VERSION = "1";
 const BUSY_TIMEOUT_MS = 5000;
@@ -76,8 +76,10 @@ export class SqliteStore implements MemoryStore {
 	private readonly db: DatabaseSync;
 	private readonly vaultResources: Vault;
 	private closed = false;
+	private readonly readOnly: boolean;
 
 	constructor(root: string, databasePath = path.join(root, ".bbm", "store.sqlite"), options: { readOnly?: boolean } = {}) {
+		this.readOnly = options.readOnly ?? false;
 		this.root = path.resolve(root);
 		this.databasePath = path.resolve(databasePath);
 		if (!options.readOnly) fs.mkdirSync(path.dirname(this.databasePath), { recursive: true });
@@ -166,6 +168,27 @@ export class SqliteStore implements MemoryStore {
 				key TEXT PRIMARY KEY,
 				value TEXT NOT NULL
 			);
+			CREATE TABLE IF NOT EXISTS recommendation_feedback (
+				event_id TEXT PRIMARY KEY,
+				created_at TEXT NOT NULL,
+				policy_version TEXT NOT NULL,
+				catalog_revision TEXT NOT NULL,
+				rule_id TEXT NOT NULL,
+				model TEXT NOT NULL,
+				effort TEXT NOT NULL CHECK(effort IN ('low','medium','high','xhigh','max','ultra')),
+				role TEXT NOT NULL CHECK(role IN ('research','plan','impl','review','ship','ops','coordinator')),
+				size TEXT CHECK(size IS NULL OR size IN ('small','medium','large')),
+				risk TEXT NOT NULL CHECK(risk IN ('normal','high')),
+				novelty TEXT CHECK(novelty IS NULL OR novelty IN ('new','existing')),
+				cross_review_of TEXT,
+				input_tokens INTEGER NOT NULL CHECK(typeof(input_tokens) = 'integer' AND input_tokens BETWEEN 0 AND 9007199254740991),
+				output_tokens INTEGER NOT NULL CHECK(typeof(output_tokens) = 'integer' AND output_tokens BETWEEN 0 AND 9007199254740991),
+				cost_usd REAL CHECK(cost_usd IS NULL OR (cost_usd >= 0 AND cost_usd < 1.7976931348623157e308)),
+				duration_ms INTEGER NOT NULL CHECK(typeof(duration_ms) = 'integer' AND duration_ms BETWEEN 0 AND 9007199254740991),
+				reverts INTEGER NOT NULL CHECK(typeof(reverts) = 'integer' AND reverts BETWEEN 0 AND 9007199254740991),
+				verdict TEXT NOT NULL CHECK(verdict IN ('pass','fail','inconclusive'))
+			);
+			CREATE INDEX IF NOT EXISTS recommendation_feedback_rule ON recommendation_feedback(policy_version, catalog_revision, rule_id);
 		`);
 		this.db.prepare("INSERT INTO store_meta(key, value) VALUES('schema_version', ?) ON CONFLICT(key) DO NOTHING").run(SCHEMA_VERSION);
 	}
@@ -192,6 +215,40 @@ export class SqliteStore implements MemoryStore {
 			}
 			throw error;
 		}
+	}
+
+	/** 검증된 수치와 식별자를 중복 없이 저장한다. */
+	recordRecommendationFeedback(value: RecommendationFeedback): { duplicate: boolean } {
+		if (this.readOnly) throw new Error("feedback store is read-only");
+		const event = value;
+		const fields = ["event_id", "policy_version", "catalog_revision", "rule_id", "model", "effort", "role", "size", "risk", "novelty", "cross_review_of", "input_tokens", "output_tokens", "cost_usd", "duration_ms", "reverts", "verdict"] as const;
+		if (Object.keys(event).some((key) => !fields.includes(key as typeof fields[number]))) throw new Error("feedback contains unknown fields");
+		for (const field of ["input_tokens", "output_tokens", "duration_ms", "reverts"] as const) {
+			if (!Number.isSafeInteger(event[field]) || event[field] < 0) throw new Error("invalid feedback numeric value");
+		}
+		if (event.cost_usd !== null && (!Number.isFinite(event.cost_usd) || event.cost_usd < 0)) throw new Error("invalid feedback cost");
+		if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(event.event_id)) throw new Error("invalid feedback event identifier");
+		for (const field of ["policy_version", "catalog_revision"] as const) if (!/^[a-zA-Z0-9.-]{1,64}$/.test(event[field])) throw new Error("invalid feedback version");
+		if (!/^rule:[a-z0-9-]{1,100}$/.test(event.rule_id) || !/^[a-z0-9][a-z0-9.-]{0,100}$/.test(event.model)) throw new Error("invalid feedback model or rule identifier");
+		if (event.cross_review_of && !/^[a-z0-9][a-z0-9.-]{0,100}$/.test(event.cross_review_of)) throw new Error("feedback requires a canonical model identifier");
+		const values = fields.map((field) => event[field] ?? null);
+		return this.transaction(() => {
+			const previous = this.db.prepare("SELECT * FROM recommendation_feedback WHERE event_id = ?").get(event.event_id);
+			if (previous) {
+				if (!fields.every((field, index) => previous[field] === values[index])) throw new Error("feedback event_id reused with different values");
+				return { duplicate: true };
+			}
+			this.db.prepare(`INSERT INTO recommendation_feedback (${fields.join(",")}, created_at) VALUES (${fields.map(() => "?").join(",")}, ?)`).run(...values, new Date().toISOString());
+			return { duplicate: false };
+		});
+	}
+
+	/** 같은 정책·카탈로그·규칙의 확정 판정을 집계한다. */
+	recommendationFeedbackStats(policyVersion: string, catalogRevision: string): RuleStatistics {
+		if (!this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='recommendation_feedback'").get()) return {};
+		const rows = this.db.prepare(`SELECT rule_id, count(*) AS samples, sum(CASE WHEN verdict = 'pass' AND reverts = 0 THEN 1 ELSE 0 END) AS successes
+			FROM recommendation_feedback WHERE policy_version = ? AND catalog_revision = ? AND verdict != 'inconclusive' GROUP BY rule_id`).all(policyVersion, catalogRevision);
+		return Object.fromEntries(rows.map((row) => [String(row.rule_id), { samples: Number(row.samples), successes: Number(row.successes) }]));
 	}
 
 	private childValues(table: "memory_tags" | "memory_links" | "memory_history" | "memory_derived_from", slug: string): string[] {

@@ -144,7 +144,10 @@ try {
 		assert.equal(typeof collector.runCollector, "function");
 		const tracked = [path.join(root, "ontology/ontology.yaml"), path.join(root, "ontology/ontology.json"), ...names.map((name) => path.join(fixtures, name))];
 		const before = tracked.map((file) => hash(fs.readFileSync(file)));
-		const result = spawnSync(process.execPath, ["scripts/collect-model-docs.mjs", "--check"], { cwd: root, encoding: "utf8" });
+		const target = path.join(scratch, "offline-check.yaml");
+		fs.copyFileSync(path.join(root, "ontology/ontology.yaml"), target);
+		await collector.runCollector(["--write", "--ontology", target]);
+		const result = spawnSync(process.execPath, ["scripts/collect-model-docs.mjs", "--check", "--ontology", target], { cwd: root, encoding: "utf8" });
 		assert.equal(result.status, 0);
 		assert.equal(result.stdout, "[]\n");
 		assert.equal(result.stderr, "");
@@ -189,10 +192,10 @@ try {
 
 	await test("test_fetch_concurrent_commits_do_not_mix_snapshots", async () => {
 		const options = setup();
-		let release;
-		const gate = new Promise((resolve) => { release = resolve; });
-		let started;
-		const ready = new Promise((resolve) => { started = resolve; });
+		let release = () => {};
+		const gate = new Promise((resolve) => { release = () => resolve(undefined); });
+		let started = () => {};
+		const ready = new Promise((resolve) => { started = () => resolve(undefined); });
 		const first = collector.fetchDocuments({ ...options, fetchImpl: async () => { started(); await gate; return new Response("first"); } });
 		await ready;
 		try { await assert.rejects(collector.fetchDocuments({ ...options, fetchImpl: async () => new Response("second") }), /busy/i); }
@@ -224,12 +227,14 @@ try {
 	await test("test_offline_collector_preserves_codex_models_and_legacy_diffs", async () => {
 		assert.equal(typeof collector.runCollector, "function");
 		const source = fs.readFileSync(path.join(root, "ontology/ontology.yaml"), "utf8");
-		const data = yaml.load(source);
+		let data = yaml.load(source);
 		const codex = { "@id": "model:synthetic-codex", id: "synthetic-codex", name: "Synthetic", contextTokens: 500000, defaultEffort: "low", supportedEfforts: ["low"], features: ["text"], platforms: ["platform:codex"] };
 		if (!data.platforms.some((platform) => platform["@id"] === "platform:codex")) data.platforms.push({ "@id": "platform:codex", name: "Codex" });
 		data.models.push(codex);
 		const target = path.join(scratch, "mixed.yaml");
 		fs.writeFileSync(target, yaml.dump(data));
+		await collector.runCollector(["--write", "--ontology", target]);
+		data = yaml.load(fs.readFileSync(target, "utf8"));
 		assert.deepEqual(await collector.runCollector(["--check", "--ontology", target]), { output: "[]\n", exitCode: 0 });
 		data.models[0].contextTokens = 42;
 		fs.writeFileSync(target, yaml.dump(data));

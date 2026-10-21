@@ -1,16 +1,74 @@
 {
+  "catalog_revision": "2026-10-21.1",
+  "classification": {
+    "analysisKeywords": [
+      "complex investigation",
+      "large investigation",
+      "root cause",
+      "근본 원인",
+      "대규모 원인 조사",
+      "원인 규명"
+    ],
+    "difficultKeywords": [
+      "architecture",
+      "large code",
+      "root cause",
+      "근본 원인",
+      "대형 코드",
+      "아키텍처",
+      "어려운 설계"
+    ],
+    "newKeywords": [
+      "new architecture",
+      "새로운 설계"
+    ],
+    "securityKeywords": [
+      "concurrent",
+      "security",
+      "timing",
+      "vulnerability",
+      "동시",
+      "보안",
+      "정보 노출",
+      "취약점",
+      "타이밍"
+    ],
+    "smallKeywords": [
+      "small confirmed fix",
+      "한 파일 수정",
+      "확정된 작은 수정"
+    ]
+  },
+  "confidencePolicy": {
+    "minimumSamples": 20,
+    "priorWeight": 20
+  },
   "constraints": [
     {
-      "@id": "constraint:owner-claude-default",
-      "kind": "default",
-      "models": [
-        "claude-opus-5-5"
+      "@id": "constraint:haiku-evidence",
+      "evidence": [
+        "evidence:owner-policy"
       ],
-      "platform": "claude",
-      "reason": "Owner constraint makes Claude Opus the default model."
+      "kind": "evidence-required",
+      "models": [
+        "claude-haiku-5-5"
+      ],
+      "reason": "Haiku requires an evidenced owner-approved exception."
+    },
+    {
+      "@id": "constraint:latest-models",
+      "evidence": [
+        "evidence:owner-policy"
+      ],
+      "kind": "latest-only",
+      "models": [],
+      "reason": "Only the latest catalog model in each family is eligible."
     },
     {
       "@id": "constraint:owner-exclusions",
+      "evidence": [
+        "evidence:owner-policy"
+      ],
       "kind": "exclude",
       "models": [
         "claude-fable-5-1",
@@ -28,6 +86,16 @@
       "@id": "difficulty:normal",
       "name": "Normal"
     }
+  ],
+  "documentSources": [
+    "https://platform.claude.com/docs/en/about-claude/models/choosing-a-model",
+    "https://platform.claude.com/docs/en/about-claude/models/overview",
+    "https://platform.claude.com/docs/en/about-claude/pricing",
+    "https://platform.claude.com/docs/en/build-with-claude/batch-processing",
+    "https://platform.claude.com/docs/en/build-with-claude/effort",
+    "https://platform.claude.com/docs/en/build-with-claude/extended-thinking",
+    "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+    "https://platform.claude.com/docs/ko/about-claude/models/choosing-a-model"
   ],
   "efforts": [
     {
@@ -70,6 +138,11 @@
       "@id": "evidence:official-models",
       "label": "Official model overview",
       "link": "https://platform.claude.com/docs/en/about-claude/models/overview"
+    },
+    {
+      "@id": "evidence:owner-policy",
+      "label": "주인님 결정 2026-10-21 자율 배정 기준표",
+      "link": "ontology/evidence/owner-policy-2026-10-21.md"
     },
     {
       "@id": "evidence:role-stats",
@@ -118,8 +191,12 @@
   "models": [
     {
       "@id": "model:claude-fable-5-1",
+      "aliases": [
+        "Fable"
+      ],
       "contextTokens": 1000000,
       "defaultEffort": "high",
+      "family": "claude-fable",
       "features": [
         "adaptive",
         "image",
@@ -129,6 +206,7 @@
         "vision"
       ],
       "id": "claude-fable-5-1",
+      "latest": true,
       "maxOutputTokens": 128000,
       "name": "Claude Fable 5.1",
       "platforms": [
@@ -151,28 +229,34 @@
         {
           "checkedAt": "2026-10-19",
           "fields": [
-            "contextTokens",
-            "defaultEffort",
             "features",
-            "maxOutputTokens",
-            "name",
             "platforms"
           ],
           "url": "https://platform.claude.com/docs/en/about-claude/models/overview"
         },
         {
-          "checkedAt": "2026-10-19",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "contextTokens",
+            "defaultEffort",
+            "maxOutputTokens",
+            "name"
+          ],
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview"
+        },
+        {
+          "checkedAt": "2026-10-21",
           "fields": [
             "supportedEfforts"
           ],
           "url": "https://platform.claude.com/docs/en/build-with-claude/effort"
         },
         {
-          "checkedAt": "2026-10-19",
+          "checkedAt": "2026-10-21",
           "fields": [
             "pricing"
           ],
-          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing"
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"
         }
       ],
       "supportedEfforts": [
@@ -185,8 +269,12 @@
     },
     {
       "@id": "model:claude-haiku-5-5",
+      "aliases": [
+        "Haiku"
+      ],
       "contextTokens": 1000000,
       "defaultEffort": "medium",
+      "family": "claude-haiku",
       "features": [
         "adaptive",
         "image",
@@ -196,6 +284,7 @@
         "vision"
       ],
       "id": "claude-haiku-5-5",
+      "latest": true,
       "maxOutputTokens": 128000,
       "name": "Claude Haiku 5.5",
       "platforms": [
@@ -226,28 +315,34 @@
         {
           "checkedAt": "2026-10-19",
           "fields": [
-            "contextTokens",
-            "defaultEffort",
             "features",
-            "maxOutputTokens",
-            "name",
             "platforms"
           ],
           "url": "https://platform.claude.com/docs/en/about-claude/models/overview"
         },
         {
-          "checkedAt": "2026-10-19",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "contextTokens",
+            "defaultEffort",
+            "maxOutputTokens",
+            "name"
+          ],
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview"
+        },
+        {
+          "checkedAt": "2026-10-21",
           "fields": [
             "supportedEfforts"
           ],
           "url": "https://platform.claude.com/docs/en/build-with-claude/effort"
         },
         {
-          "checkedAt": "2026-10-19",
+          "checkedAt": "2026-10-21",
           "fields": [
             "pricing"
           ],
-          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing"
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"
         }
       ],
       "supportedEfforts": [
@@ -260,8 +355,12 @@
     },
     {
       "@id": "model:claude-opus-5-5",
+      "aliases": [
+        "Opus"
+      ],
       "contextTokens": 1000000,
       "defaultEffort": "medium",
+      "family": "claude-opus",
       "features": [
         "adaptive",
         "image",
@@ -271,6 +370,7 @@
         "vision"
       ],
       "id": "claude-opus-5-5",
+      "latest": true,
       "maxOutputTokens": 128000,
       "name": "Claude Opus 5.5",
       "platforms": [
@@ -293,28 +393,34 @@
         {
           "checkedAt": "2026-10-19",
           "fields": [
-            "contextTokens",
-            "defaultEffort",
             "features",
-            "maxOutputTokens",
-            "name",
             "platforms"
           ],
           "url": "https://platform.claude.com/docs/en/about-claude/models/overview"
         },
         {
-          "checkedAt": "2026-10-19",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "contextTokens",
+            "defaultEffort",
+            "maxOutputTokens",
+            "name"
+          ],
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview"
+        },
+        {
+          "checkedAt": "2026-10-21",
           "fields": [
             "supportedEfforts"
           ],
           "url": "https://platform.claude.com/docs/en/build-with-claude/effort"
         },
         {
-          "checkedAt": "2026-10-19",
+          "checkedAt": "2026-10-21",
           "fields": [
             "pricing"
           ],
-          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing"
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"
         }
       ],
       "supportedEfforts": [
@@ -327,8 +433,12 @@
     },
     {
       "@id": "model:claude-sonnet-5-5",
+      "aliases": [
+        "Sonnet"
+      ],
       "contextTokens": 1000000,
       "defaultEffort": "high",
+      "family": "claude-sonnet",
       "features": [
         "adaptive",
         "image",
@@ -338,6 +448,7 @@
         "vision"
       ],
       "id": "claude-sonnet-5-5",
+      "latest": true,
       "maxOutputTokens": 128000,
       "name": "Claude Sonnet 5.5",
       "platforms": [
@@ -360,28 +471,34 @@
         {
           "checkedAt": "2026-10-19",
           "fields": [
-            "contextTokens",
-            "defaultEffort",
             "features",
-            "maxOutputTokens",
-            "name",
             "platforms"
           ],
           "url": "https://platform.claude.com/docs/en/about-claude/models/overview"
         },
         {
-          "checkedAt": "2026-10-19",
+          "checkedAt": "2026-10-21",
+          "fields": [
+            "contextTokens",
+            "defaultEffort",
+            "maxOutputTokens",
+            "name"
+          ],
+          "url": "https://platform.claude.com/docs/en/about-claude/models/overview"
+        },
+        {
+          "checkedAt": "2026-10-21",
           "fields": [
             "supportedEfforts"
           ],
           "url": "https://platform.claude.com/docs/en/build-with-claude/effort"
         },
         {
-          "checkedAt": "2026-10-19",
+          "checkedAt": "2026-10-21",
           "fields": [
             "pricing"
           ],
-          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing"
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"
         }
       ],
       "supportedEfforts": [
@@ -394,13 +511,20 @@
     },
     {
       "@id": "model:gpt-5.6-sol",
+      "aliases": [],
+      "checkedAt": "2026-10-20",
       "contextTokens": 272000,
       "defaultEffort": "low",
+      "evidence": [
+        "evidence:codex-catalog"
+      ],
+      "family": "codex-sol",
       "features": [
         "image",
         "text"
       ],
       "id": "gpt-5.6-sol",
+      "latest": false,
       "name": "Older generation workhorse model.",
       "platforms": [
         "platform:codex"
@@ -416,13 +540,22 @@
     },
     {
       "@id": "model:gpt-6-astra",
+      "aliases": [
+        "Astra"
+      ],
+      "checkedAt": "2026-10-20",
       "contextTokens": 272000,
       "defaultEffort": "medium",
+      "evidence": [
+        "evidence:codex-catalog"
+      ],
+      "family": "codex-astra",
       "features": [
         "image",
         "text"
       ],
       "id": "gpt-6-astra",
+      "latest": true,
       "name": "Frontier intelligence for the most demanding work.",
       "platforms": [
         "platform:codex"
@@ -438,13 +571,20 @@
     },
     {
       "@id": "model:gpt-6-luna",
+      "aliases": [],
+      "checkedAt": "2026-10-20",
       "contextTokens": 272000,
       "defaultEffort": "medium",
+      "evidence": [
+        "evidence:codex-catalog"
+      ],
+      "family": "codex-luna",
       "features": [
         "image",
         "text"
       ],
       "id": "gpt-6-luna",
+      "latest": true,
       "name": "Fast and affordable model for easier tasks.",
       "platforms": [
         "platform:codex"
@@ -459,13 +599,20 @@
     },
     {
       "@id": "model:gpt-6-sol",
+      "aliases": [],
+      "checkedAt": "2026-10-20",
       "contextTokens": 272000,
       "defaultEffort": "medium",
+      "evidence": [
+        "evidence:codex-catalog"
+      ],
+      "family": "codex-sol",
       "features": [
         "image",
         "text"
       ],
       "id": "gpt-6-sol",
+      "latest": false,
       "name": "Previous generation workhorse model.",
       "platforms": [
         "platform:codex"
@@ -481,13 +628,22 @@
     },
     {
       "@id": "model:gpt-6.1-sol",
+      "aliases": [
+        "Codex"
+      ],
+      "checkedAt": "2026-10-20",
       "contextTokens": 500000,
       "defaultEffort": "low",
+      "evidence": [
+        "evidence:codex-catalog"
+      ],
+      "family": "codex-sol",
       "features": [
         "image",
         "text"
       ],
       "id": "gpt-6.1-sol",
+      "latest": true,
       "name": "Latest workhorse model for coding and everyday work.",
       "platforms": [
         "platform:codex"
@@ -558,6 +714,7 @@
       "name": "Google Vertex AI"
     }
   ],
+  "policy_version": "2026-10-21.1",
   "resultMetrics": [
     {
       "@id": "metric:coordinator-cost",
@@ -600,13 +757,32 @@
   ],
   "rules": [
     {
+      "@id": "rule:codex-analysis",
+      "conditions": [
+        {
+          "type": "analysis",
+          "values": [
+            "yes"
+          ]
+        }
+      ],
+      "confidence": 0.1,
+      "effort": "high",
+      "evidence": [
+        "evidence:owner-policy"
+      ],
+      "model": "gpt-6.1-sol",
+      "platform": "codex",
+      "priority": 850,
+      "reason": "Codex root-cause analysis and large investigation use high effort."
+    },
+    {
       "@id": "rule:codex-fallback",
       "conditions": [],
       "confidence": 0.1,
       "effort": "medium",
       "evidence": [
-        "evidence:codex-catalog",
-        "evidence:role-stats"
+        "evidence:owner-policy"
       ],
       "model": "gpt-6.1-sol",
       "platform": "codex",
@@ -626,13 +802,12 @@
       "confidence": 0.1,
       "effort": "high",
       "evidence": [
-        "evidence:codex-catalog",
-        "evidence:role-stats"
+        "evidence:owner-policy"
       ],
       "model": "gpt-6.1-sol",
       "platform": "codex",
-      "priority": 300,
-      "reason": "Codex security, concurrency, and timing risks use high effort."
+      "priority": 1000,
+      "reason": "High-risk Codex work uses high effort."
     },
     {
       "@id": "rule:codex-high-roles",
@@ -655,13 +830,12 @@
       "confidence": 0.1,
       "effort": "high",
       "evidence": [
-        "evidence:codex-catalog",
-        "evidence:role-stats"
+        "evidence:owner-policy"
       ],
       "model": "gpt-6.1-sol",
       "platform": "codex",
       "priority": 200,
-      "reason": "Codex planning, implementation, and review use the current high-effort placement."
+      "reason": "Codex implementation, planning and review use high effort."
     },
     {
       "@id": "rule:codex-medium-roles",
@@ -684,26 +858,106 @@
       "confidence": 0.1,
       "effort": "medium",
       "evidence": [
-        "evidence:codex-catalog",
-        "evidence:role-stats"
+        "evidence:owner-policy"
       ],
       "model": "gpt-6.1-sol",
       "platform": "codex",
       "priority": 200,
-      "reason": "Codex research, shipping, and coordination use the current medium-effort placement."
+      "reason": "Routine Codex research, shipping and coordination use medium effort."
     },
     {
-      "@id": "rule:default-opus",
+      "@id": "rule:cross-review-claude",
+      "conditions": [
+        {
+          "type": "role",
+          "values": [
+            "review"
+          ]
+        },
+        {
+          "type": "cross_family",
+          "values": [
+            "codex"
+          ]
+        },
+        {
+          "type": "risk",
+          "values": [
+            "normal"
+          ]
+        }
+      ],
+      "confidence": 0.2,
+      "effort": "high",
+      "evidence": [
+        "evidence:owner-policy"
+      ],
+      "model": "claude-sonnet-5-5",
+      "priority": 700,
+      "reason": "Codex implementations prefer Claude cross-review."
+    },
+    {
+      "@id": "rule:cross-review-codex",
+      "conditions": [
+        {
+          "type": "role",
+          "values": [
+            "review"
+          ]
+        },
+        {
+          "type": "cross_family",
+          "values": [
+            "claude"
+          ]
+        },
+        {
+          "type": "risk",
+          "values": [
+            "normal"
+          ]
+        }
+      ],
+      "confidence": 0.1,
+      "effort": "high",
+      "evidence": [
+        "evidence:owner-policy"
+      ],
+      "model": "gpt-6.1-sol",
+      "platform": "codex",
+      "priority": 700,
+      "reason": "Claude implementations prefer Codex cross-review."
+    },
+    {
+      "@id": "rule:default-sonnet",
       "conditions": [],
       "confidence": 0.2,
-      "effort": "medium",
+      "effort": "high",
       "evidence": [
-        "evidence:official-effort",
-        "evidence:official-models"
+        "evidence:owner-policy"
+      ],
+      "model": "claude-sonnet-5-5",
+      "priority": 100,
+      "reason": "General implementation, documentation and tests use Sonnet high."
+    },
+    {
+      "@id": "rule:design-opus",
+      "conditions": [
+        {
+          "type": "role",
+          "values": [
+            "plan"
+          ]
+        }
+      ],
+      "confidence": 0.2,
+      "effort": "high",
+      "evidence": [
+        "evidence:owner-policy"
       ],
       "model": "claude-opus-5-5",
-      "priority": 100,
-      "reason": "Claude work defaults to Opus 5.5 medium under the owner constraint."
+      "priority": 800,
+      "reason": "Difficult design uses Opus high."
     },
     {
       "@id": "rule:high-risk-opus",
@@ -718,34 +972,183 @@
       "confidence": 0.2,
       "effort": "high",
       "evidence": [
-        "evidence:official-effort",
-        "evidence:role-stats",
-        "evidence:seed-measurements"
+        "evidence:owner-policy"
       ],
       "model": "claude-opus-5-5",
-      "priority": 200,
-      "reason": "Security, concurrency, and timing risks require the higher Opus effort."
+      "priority": 1000,
+      "reason": "Security and high-risk work use Opus high."
     },
     {
-      "@id": "rule:plan-review-opus",
+      "@id": "rule:large-structure-opus",
+      "conditions": [
+        {
+          "type": "size",
+          "values": [
+            "large"
+          ]
+        },
+        {
+          "type": "novelty",
+          "values": [
+            "new"
+          ]
+        }
+      ],
+      "confidence": 0.2,
+      "effort": "xhigh",
+      "evidence": [
+        "evidence:owner-policy"
+      ],
+      "model": "claude-opus-5-5",
+      "priority": 900,
+      "reason": "Large structural changes use Opus xhigh."
+    },
+    {
+      "@id": "rule:normal-review-sonnet",
       "conditions": [
         {
           "type": "role",
           "values": [
-            "plan",
             "review"
+          ]
+        },
+        {
+          "type": "risk",
+          "values": [
+            "normal"
           ]
         }
       ],
       "confidence": 0.2,
       "effort": "high",
       "evidence": [
-        "evidence:official-effort",
-        "evidence:role-stats"
+        "evidence:owner-policy"
+      ],
+      "model": "claude-sonnet-5-5",
+      "priority": 200,
+      "reason": "General reviews use Sonnet high."
+    },
+    {
+      "@id": "rule:root-cause-opus",
+      "conditions": [
+        {
+          "type": "analysis",
+          "values": [
+            "yes"
+          ]
+        }
+      ],
+      "confidence": 0.2,
+      "effort": "high",
+      "evidence": [
+        "evidence:owner-policy"
       ],
       "model": "claude-opus-5-5",
-      "priority": 190,
-      "reason": "Planning and review use the measured high-effort Opus placement."
+      "priority": 850,
+      "reason": "Root-cause analysis and complex investigation use Opus high."
+    },
+    {
+      "@id": "rule:simple-work-sonnet",
+      "conditions": [
+        {
+          "type": "role",
+          "values": [
+            "coordinator",
+            "ops",
+            "research",
+            "ship"
+          ]
+        },
+        {
+          "type": "risk",
+          "values": [
+            "normal"
+          ]
+        }
+      ],
+      "confidence": 0.2,
+      "effort": "medium",
+      "evidence": [
+        "evidence:owner-policy"
+      ],
+      "model": "claude-sonnet-5-5",
+      "priority": 200,
+      "reason": "Shipping and simple queries use Sonnet medium."
+    },
+    {
+      "@id": "rule:small-confirmed-claude",
+      "conditions": [
+        {
+          "type": "role",
+          "values": [
+            "impl"
+          ]
+        },
+        {
+          "type": "size",
+          "values": [
+            "small"
+          ]
+        },
+        {
+          "type": "novelty",
+          "values": [
+            "existing"
+          ]
+        },
+        {
+          "type": "risk",
+          "values": [
+            "normal"
+          ]
+        }
+      ],
+      "confidence": 0.2,
+      "effort": "medium",
+      "evidence": [
+        "evidence:owner-policy"
+      ],
+      "model": "claude-sonnet-5-5",
+      "priority": 500,
+      "reason": "Small confirmed changes use Sonnet medium."
+    },
+    {
+      "@id": "rule:small-confirmed-codex",
+      "conditions": [
+        {
+          "type": "role",
+          "values": [
+            "impl"
+          ]
+        },
+        {
+          "type": "size",
+          "values": [
+            "small"
+          ]
+        },
+        {
+          "type": "novelty",
+          "values": [
+            "existing"
+          ]
+        },
+        {
+          "type": "risk",
+          "values": [
+            "normal"
+          ]
+        }
+      ],
+      "confidence": 0.1,
+      "effort": "medium",
+      "evidence": [
+        "evidence:owner-policy"
+      ],
+      "model": "gpt-6.1-sol",
+      "platform": "codex",
+      "priority": 500,
+      "reason": "Small confirmed Codex changes use medium effort."
     }
   ],
   "taskTypes": [
