@@ -18,6 +18,16 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
+for (const key of Object.keys(process.env)) if (/^(ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key)) delete process.env[key];
+fs.mkdirSync(path.join(root, ".astron-logs"), { recursive: true });
+const isolationRoot = fs.mkdtempSync(path.join(root, ".astron-logs", "trigger-"));
+const isolatedHome = path.join(isolationRoot, "home");
+const isolatedVault = path.join(isolationRoot, "vault");
+fs.mkdirSync(isolatedHome);
+fs.mkdirSync(isolatedVault);
+fs.mkdirSync(path.join(isolatedHome, ".claude"));
+fs.writeFileSync(path.join(isolatedHome, ".claude", "settings.json"), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: "node /synthetic/session-guard.mjs --start" }] }] } }));
+Object.assign(process.env, { HOME: isolatedHome, USERPROFILE: isolatedHome, ASTRONRAG_VAULT: isolatedVault });
 const entry = path.join(root, "dist", "index.js");
 const distUrl = (f) => `file://${path.join(root, "dist", f).replace(/\\/g, "/")}`;
 const { Vault } = await import(distUrl("vault.js"));
@@ -46,7 +56,7 @@ async function boot(vaultDir, extraEnv = {}) {
     command: process.execPath,
     args: [entry],
     cwd: root,
-    env: { ...process.env, ASTRONRAG_STORE: "file", ASTRONRAG_VAULT: vaultDir, ...extraEnv },
+		env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(ASTRONRAG_|BIGBRAIN_|BBM_)/.test(key))), HOME: isolatedHome, USERPROFILE: isolatedHome, ASTRONRAG_STORE: "file", ASTRONRAG_VAULT: vaultDir, ...extraEnv },
     stderr: "pipe",
   });
   const client = new Client({ name: "regress-trigger", version: "0.0.1" });
@@ -345,6 +355,7 @@ console.log("7) 격리 파일 존재 알림");
 }
 
 for (const d of cleanups) fs.rmSync(d, { recursive: true, force: true });
+fs.rmSync(isolationRoot, { recursive: true, force: true });
 
 if (failures > 0) {
   console.error(`\n실패: ${failures}건`);

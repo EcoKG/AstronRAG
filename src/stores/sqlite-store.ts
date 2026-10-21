@@ -568,9 +568,28 @@ export class SqliteStore implements MemoryStore {
 		return slug;
 	}
 
-	appendUsageEvent(event: Omit<StoreUsageEvent, "ts"> & { ts?: string }): void {
+	/** 제한 시간 지정 시 usage만 별도 연결로 기록하고 즉시 닫는다. */
+	appendUsageEvent(event: Omit<StoreUsageEvent, "ts"> & { ts?: string }, options: { timeoutMs?: number; throwOnError?: boolean } = {}): void {
 		const ts = event.ts ?? new Date().toISOString();
-		this.db.prepare("INSERT INTO usage_events(ts, payload) VALUES(?, ?)").run(ts, JSON.stringify({ ...event, ts: undefined }));
+		const payload = JSON.stringify({ ...event, ts: undefined });
+		const deadline = performance.now() + (options.timeoutMs ?? 0);
+		for (;;) {
+			let db = this.db;
+			try {
+				if (options.timeoutMs !== undefined) {
+					db = new DatabaseSync(this.databasePath);
+					db.exec("PRAGMA busy_timeout = 0");
+				}
+				db.prepare("INSERT INTO usage_events(ts, payload) VALUES(?, ?)").run(ts, payload);
+				return;
+			} catch (error) {
+				const code = (error as { errcode?: number }).errcode;
+				if (options.timeoutMs === undefined || (code !== 5 && code !== 6) || performance.now() >= deadline) throw error;
+			} finally {
+				if (db !== this.db) db.close();
+			}
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);
+		}
 	}
 
 	readUsageEvents(): StoreUsageEvent[] {

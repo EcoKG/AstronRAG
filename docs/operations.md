@@ -162,7 +162,13 @@ npm run usage:report -- --json
 npm run usage:report -- --since 2026-10-01
 ```
 
-파일 저장소는 `.bbm-usage.jsonl` append-only 로그를 쓰며 SQLite 저장소의 도구 이벤트는 DB에 저장됩니다. 훅은 세션 단위 결과를 로그에 기록합니다. 로그는 볼트와 함께 옮깁니다. 도구 사용 이벤트는 기본적으로 질의문·본문·제목을 기록하지 않으며, `ASTRONRAG_LOG_QUERIES=1`로 서버 `recall`의 질의문 기록을 켭니다. 강화 실패 이벤트 `reinforcement_unapplied`에는 기억 slug(제목에서 만든 값)와 원문 오류 메시지가 남습니다(`src/store.ts`의 `MemoryService.reinforce`의 강화 실패 분기, `src/vault.ts`의 `Vault.makeSlug`). `shadowTop5`는 두 점수 방식의 목록 일치율입니다.
+파일 저장소는 `.bbm-usage.jsonl` append-only 로그를 쓰며 SQLite 저장소는 `usage_events` 테이블에 사용 이벤트를 기록합니다. 훅도 선택한 저장소에 위임합니다. 로그는 볼트와 함께 옮깁니다. 근거: `src/stores/file-store.ts`의 `USAGE_FILE`·`FileStore.appendUsageEvent`, `src/stores/sqlite-store.ts`의 `SqliteStore.appendUsageEvent`, `scripts/session-guard.mjs`의 `logUsage`.
+
+훅은 세션 시작·종료·부호화 큐 이벤트와 자동 회상의 `tool: auto_recall` 이벤트를 기록합니다. `--prompt`의 검색은 읽기 경로이며, 자동 회상 검색이 완료되면(주입 0건 포함) 유효한 `session_id`에 대해 마커 추적 여부와 관계없이 사용 이벤트를 기록합니다(`astron:<id>` 포함). 빈 `session_id`는 기록하지 않습니다. 자동 회상 이벤트에는 `sessionId`·`injected` 건수·`topScore` 같은 식별자·수치와 이벤트 구분·시각만 남기며 질의 원문·기억 내용은 기록하지 않습니다. 근거: `scripts/session-guard.mjs`의 `selectedStore` 초기화·`autoRecall`·`logUsage`, `scripts/session-guard.mjs`의 `mode`의 prompt·start·stop 분기, `src/stores/sqlite-store.ts`의 `SqliteStore.appendUsageEvent`, `src/stores/file-store.ts`의 `FileStore.appendUsageEvent`.
+
+SQLite 자동 회상 사용 기록은 검색 연결과 별도의 짧은 쓰기 연결을 사용합니다. `USAGE_WRITE_TIMEOUT_MS`의 재시도 예산은 125ms이며 busy·잠금이면 짧게 재시도하다 포기합니다. 기록 실패 시 stderr에 `astronrag usage: write failed (<code>)` 한 줄을 남기고 회상 출력과 종료 코드 0을 유지합니다. 이 예산은 훅 전체 실행 시간의 상한이 아닙니다. 여러 쓰기 프로세스가 같은 SQLite를 동시에 쓰는 고경합에서는 훅 기록이 빠질 수 있는 best-effort 방식이므로 사용 로그를 완전한 감사 기록으로 취급하지 않습니다. 근거: `scripts/session-guard.mjs`의 `USAGE_WRITE_TIMEOUT_MS`·`logUsage`·`emitPrompt`, `src/stores/sqlite-store.ts`의 `SqliteStore.appendUsageEvent`.
+
+서버 도구 사용 이벤트는 기본적으로 질의문·본문·제목을 기록하지 않으며, `ASTRONRAG_LOG_QUERIES=1`로 서버 `recall`의 질의문 기록을 켭니다. 훅 자동 회상에는 질의문 기록 경로가 없습니다(`src/usage.ts`의 `queryField`, `scripts/session-guard.mjs`의 `logUsage`의 `auto_recall` 호출). 강화 실패 이벤트 `reinforcement_unapplied`에는 기억 slug(제목에서 만든 값)와 원문 오류 메시지가 남습니다(`src/store.ts`의 `MemoryService.reinforce`의 강화 실패 분기, `src/vault.ts`의 `Vault.makeSlug`). `shadowTop5`는 두 점수 방식의 목록 일치율입니다.
 
 `ASTRONRAG_USAGE_LOG=0`은 서버의 일반 도구 사용 로그를 끕니다. 저장소에 직접 쓰는 강화 실패 이벤트 `reinforcement_unapplied`는 이 설정의 영향을 받지 않습니다. 훅 사용 로그를 끄려면 훅 프로세스 환경에도 별도로 `ASTRONRAG_USAGE_LOG=0`을 설정해야 합니다. 근거: `src/usage.ts`의 `DISABLED`, `src/usage.ts`의 `logUsage`, `src/store.ts`의 `MemoryService.reinforce`의 강화 실패 분기, `scripts/session-guard.mjs`의 `logUsage`.
 

@@ -52,7 +52,7 @@ MCP 클라이언트가 서버에 전달하는 환경에 지정합니다. 서버 
 |---|---|---|
 | `ASTRONRAG_STORE` | `sqlite` | 훅이 열 저장소. MCP 등록의 env에서 자동 탐지하지 않으므로 훅 환경에 지정. `scripts/session-guard.mjs`의 `selectedStore` 초기화의 `createMemoryStore` 호출 |
 | `ASTRONRAG_SQLITE_PATH` | `<볼트>/.bbm/store.sqlite` | 훅 환경에서 지정하는 SQLite 경로. 서버와 같은 DB를 가리켜야 함. `src/stores/index.ts`의 `STORE_FACTORIES`의 sqlite 항목 |
-| `ASTRONRAG_AUTO_RECALL` | 꺼짐 | 정확히 `1`일 때만 활성. `scripts/session-guard.mjs`의 `autoRecall` |
+| `ASTRONRAG_AUTO_RECALL` | 꺼짐 | 정확히 `1`일 때만 활성. 검색은 읽기 경로이며, 검색 완료 시(주입 0건 포함) 유효한 session_id의 `auto_recall` 사용 이벤트를 마커 유무와 관계없이 별도로 기록. `scripts/session-guard.mjs`의 `autoRecall`·`selectedStore` 초기화·`logUsage` |
 | `ASTRONRAG_AUTO_MIN_SCORE` | `9` | 0 이상 유한수. 빈 값은 기본값. legacy 척도이며 BM25F 사용 시 다시 정함. `scripts/session-guard.mjs`의 `AUTO_MIN_SCORE` |
 | `ASTRONRAG_AUTO_BUDGET` | `1500`자 | 태그 포함 전체 블록 상한. 양수의 정수부 사용. `scripts/session-guard.mjs`의 `AUTO_BUDGET` |
 | `ASTRONRAG_CUE_TURNS` | `8` | 마지막 저장 뒤 부호화 큐를 낼 턴 임계. 양수만 허용. `scripts/session-guard.mjs`의 `TURN_CUE` |
@@ -61,7 +61,7 @@ MCP 클라이언트가 서버에 전달하는 환경에 지정합니다. 서버 
 | `ASTRONRAG_PROJECT` | 등록 설정 또는 설정 없음 | 공백이 아닌 환경값 우선. 이후 프로젝트 `.mcp.json` → 사용자 설정의 해당 프로젝트 → 전역 설정 순으로 첫 서버를 선택하고 그 `project`를 사용. 해당 서버에 값이 없으면 전체 조회로 뒤 설정 탐색 중단. `scripts/session-guard.mjs`의 `resolveProject` |
 | `ASTRONRAG_STALE_DAYS` | 서버와 같은 타입별 값 | 훅 환경에서 지정. 서버에만 설정하면 훅은 타입별 값을 사용. `scripts/session-guard.mjs`의 `autoRecall`의 공유 store 모듈 로드, `src/store.ts`의 `STALE_OVERRIDE` 및 `STALE_DAYS_BY_TYPE` |
 | `ASTRONRAG_SCORER` | `legacy` | 훅이 불러온 공유 어휘 검색기의 점수 방식. 훅 환경에서 지정하며 서버 설정과 별개. `src/store.ts`의 `SCORER`, `src/store.ts`의 `searchPersistedIndex`, `scripts/session-guard.mjs`의 `autoRecall`의 `searchPersistedIndex` 호출 |
-| `ASTRONRAG_USAGE_LOG` | 켜짐 | 훅 프로세스 환경에서 `0`이면 훅 사용 로그를 끔. 서버의 환경 설정과 별개. 유효한 id가 없으면 훅 로그를 남기지 않으며, 자동 회상은 추적 중인 세션만 로그를 남김. `scripts/session-guard.mjs`의 `logUsage`·`tracked` |
+| `ASTRONRAG_USAGE_LOG` | 켜짐 | 훅 프로세스 환경에서 `0`이면 훅 사용 로그를 끔. 서버의 환경 설정과 별개. 유효한 session_id가 없으면 기록하지 않으며, 자동 회상 검색 완료 시 마커 없는 id도 기록 대상. SQLite 기록은 125ms 재시도 예산으로 시도하며 실패해도 회상 출력·종료 코드 0을 유지. `scripts/session-guard.mjs`의 `logUsage`·`USAGE_WRITE_TIMEOUT_MS`·`emitPrompt`, `src/stores/sqlite-store.ts`의 `SqliteStore.appendUsageEvent` |
 
 ## 프로젝트 스코핑
 

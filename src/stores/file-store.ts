@@ -117,13 +117,14 @@ export class FileStore implements MemoryStore {
 		return this.vault.makeSlug(title);
 	}
 
-	appendUsageEvent(event: Omit<StoreUsageEvent, "ts"> & { ts?: string }): void {
+	/** 사용 이벤트를 파일에 추가하고 요청된 경우 쓰기 오류를 전달한다. */
+	appendUsageEvent(event: Omit<StoreUsageEvent, "ts"> & { ts?: string }, options: { timeoutMs?: number; throwOnError?: boolean } = {}): void {
 		const fp = path.join(this.root, USAGE_FILE);
 		try {
 			if (fs.existsSync(fp) && fs.statSync(fp).size > MAX_USAGE_BYTES) fs.renameSync(fp, `${fp}.old`);
 			fs.appendFileSync(fp, `${JSON.stringify({ ...event, ts: event.ts ?? new Date().toISOString() })}\n`, "utf8");
-		} catch {
-			/* 사용량 계측은 기억 동작을 막지 않는다. */
+		} catch (error) {
+			if (options.throwOnError) throw error;
 		}
 	}
 
