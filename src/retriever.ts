@@ -82,23 +82,19 @@ export function tokenMatch(a: string, b: string): boolean {
 	return short.length >= 3 && long.length - short.length <= 2 && long.startsWith(short);
 }
 
-/**
- * overlap 계수 — **자카드**(합집합 대비 겹침).
- *
- * 종전 분모는 min(|A|,|B|) 라, 비교 대상 한쪽이 1~2 토큰으로 희소하기만 하면
- * 토큰 하나만 겹쳐도 유사도가 0.5~1.0 으로 치솟았다(감사 D3). 제목이 짧은 메모 하나가
- * 그 토큰을 공유하는 볼트 전체를 매 질의마다 RIF 로 억제하는 구조였다
- * (실측: 무관한 빌드 문서 3건이 11.52 → 5.76 으로 반토막, overlap 1.0 vs 자카드 0.10).
- * 자카드는 한쪽이 희소해도 부풀지 않아 "근접 중복만 누른다" 는 P5 의도에 맞다.
- *
- * 추가 안전장치: 비교 집합이 3 토큰 미만이면 판단 근거가 부족하므로 0 을 돌려준다.
- */
+/** 원형 기준 중복을 제거하고 토큰별 조사를 한 번만 정규화해 자카드 유사도를 구한다. */
 export function overlap(a: string[], b: string[]): number {
 	const sa = [...new Set(a)];
 	const sb = [...new Set(b)];
 	if (sa.length < MIN_OVERLAP_TOKENS || sb.length < MIN_OVERLAP_TOKENS) return 0;
+	const normalizedB = sb.map(stripParticle);
 	let inter = 0;
-	for (const t of sa) if (sb.some((u) => tokenMatch(t, u))) inter++;
+	for (const t of sa.map(stripParticle)) {
+		if (normalizedB.some((u) => {
+			const [short, long] = t.length <= u.length ? [t, u] : [u, t];
+			return t === u || (short.length >= 3 && long.length - short.length <= 2 && long.startsWith(short));
+		})) inter++;
+	}
 	const union = sa.length + sb.length - inter;
 	return union === 0 ? 0 : inter / union;
 }
