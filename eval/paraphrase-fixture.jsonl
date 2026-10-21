@@ -1,0 +1,52 @@
+{"query":"데이터베이스에 동시에 붙을 수 있는 세션 수는 어디서 제한하지","expected":["db-postgres-connection-pool"],"split":"paraphrase","holdout":true,"alts":["DB 연결을 몇 개까지 허용하는가"],"source":"fixture"}
+{"query":"인증 후 받은 이용권과 갱신용 이용권은 각각 얼마나 유효한가","expected":["auth-jwt-expiry"],"split":"paraphrase","holdout":false,"alts":["로그인을 유지하는 두 종류의 증표가 효력을 잃는 시점"],"source":"fixture"}
+{"query":"완성한 새 버전을 실서비스 사용자에게 전달하려면 어떤 순서로 진행하나","expected":["deploy-prod-runbook"],"split":"paraphrase","holdout":false,"alts":["실서비스에 변경분을 내보내기 전에 해야 하는 일"],"source":"fixture"}
+{"query":"배포한 버전이 잘못됐을 때 직전 정상 상태로 복구하는 순서는","expected":["deploy-rollback-steps"],"split":"paraphrase","holdout":true,"alts":["실패한 출시를 취소하고 이전 버전으로 돌리는 법"],"source":"fixture"}
+{"query":"저장해 둔 응답이 낡았을 때 레디스의 복사본을 사람이 직접 없애는 법","expected":["cache-invalidate-redis"],"split":"paraphrase","holdout":false,"alts":["레디스에 남은 오래된 결과를 강제로 비우려면"],"source":"fixture"}
+{"query":"같은 코드인데 가끔만 실패하는 검사를 주 검사 흐름에서 빼는 방법","expected":["test-flaky-quarantine"],"split":"paraphrase","holdout":false,"alts":["재현이 불규칙한 자동 검사를 별도로 관리하려면"],"source":"fixture"}
+{"query":"깃에서 방금 기록한 변경 묶음 하나를 취소하고 싶다","expected":["git-undo-commit"],"split":"paraphrase","holdout":true,"alts":["가장 최근 버전 이력 한 건을 없애는 방법"],"source":"fixture"}
+{"query":"컴파일 도구를 최종 컨테이너에 남기지 않도록 빌드 단계를 분리하는 법","expected":["build-docker-multistage"],"split":"paraphrase","holdout":false,"alts":["실행용 도커 이미지만 작게 남기는 단계별 제작법"],"source":"fixture"}
+{"query":"서비스에 문제가 터졌을 때 당직자가 처음부터 해야 할 행동은","expected":["oncall-incident-response"],"split":"paraphrase","holdout":false,"alts":["운영 중단 상황에서 당번이 따르는 대응 순서"],"source":"fixture"}
+{"query":"래빗 메시지가 계속 처리되지 않을 때 따로 보내 놓는 곳은","expected":["queue-rabbitmq-dlq"],"split":"paraphrase","holdout":true,"alts":["반복 실패한 메시지를 일반 대기열에서 분리하는 곳"],"source":"fixture"}
+{"query":"코드를 오른쪽으로 한 단계 밀 때 공백 여러 개 대신 무엇을 쓰나","expected":["pref-indent-tabs"],"split":"paraphrase","holdout":false,"alts":["소스 줄 앞의 간격 문자를 고르는 취향"],"source":"fixture"}
+{"query":"버전 이력에 남기는 변경 설명의 앞부분은 어떻게 작성해야 하나","expected":["pref-commit-message-format"],"split":"paraphrase","holdout":false,"alts":["변경 이력 메시지의 제목 작성 규칙"],"source":"fixture"}
+{"query":"밤중에 자동으로 돌아가는 일괄 처리는 언제 시작하나","expected":["cron-batch-schedule"],"split":"paraphrase","holdout":true,"alts":["정기 작업이 새벽에 실행되는 시각"],"source":"fixture"}
+{"query":"결제 금액을 맞추는 정기 작업이 한 번 더 돌아간 사건","expected":["batch-duplicate-run"],"split":"paraphrase","holdout":false,"alts":["정산 작업이 중복으로 수행된 사고"],"source":"fixture"}
+{"query":"API의 암호화 연결 증명서가 기한을 넘겨 접속이 막힌 일","expected":["cert-expired-api"],"split":"paraphrase","holdout":false,"alts":["보안 연결 인증서의 유효기간을 놓친 장애"],"source":"fixture"}
+{"query":"파드를 늘린 뒤 사용 가능한 DB 연결을 모두 써 버린 사건","expected":["inc-pool-exhaustion"],"split":"paraphrase","holdout":true,"alts":["접속 자리가 남지 않아 데이터베이스 요청이 막힌 장애"],"source":"fixture"}
+{"query":"타입스크립트에서 느슨한 타입 검사를 허용하지 않는 설정 취향","expected":["pref-typescript-strict"],"split":"paraphrase","holdout":false,"alts":["TS 컴파일러가 타입을 엄격하게 검사하도록 하는 선호"],"source":"fixture"}
+{"query":"출시 전 시험 환경의 데이터를 새로 채우는 간격은","expected":["staging-data-refresh"],"split":"paraphrase","holdout":false,"alts":["스테이징에 최신 자료를 얼마나 자주 복사하나"],"source":"fixture"}
+{"query":"큰 디자인 바이너리를 일반 깃 이력 밖에서 관리하는 방법","expected":["git-lfs-assets"],"split":"paraphrase","holdout":true,"alts":["대용량 리소스를 깃에 넣을 때 사용하는 확장 기능"],"source":"fixture"}
+{"query":"컨테이너를 쓰다 디스크가 찼을 때 남은 찌꺼기를 치우는 법","expected":["docker-disk-cleanup"],"split":"paraphrase","holdout":false,"alts":["도커가 차지한 불필요한 저장 공간을 회수하려면"],"source":"fixture"}
+{"query":"일부 사용자에게 먼저 노출한 덕분에 잘못된 새 버전을 되돌린 사례","expected":["rollback-success-canary"],"split":"paraphrase","holdout":false,"alts":["소규모 시험 출시가 문제를 잡아 자동 복구한 일"],"source":"fixture"}
+{"query":"다른 언어 화면에서 표시할 문구의 식별자가 빠졌던 문제","expected":["i18n-missing-key"],"split":"paraphrase","holdout":true,"alts":["다국어 문자열 사전에 항목이 없어서 생긴 오류"],"source":"fixture"}
+{"query":"백그라운드 처리기가 메모리를 너무 먹으면 다시 띄우는 기준","expected":["memory-leak-worker"],"split":"paraphrase","holdout":false,"alts":["워커의 메모리 사용량이 한도를 넘을 때의 대응"],"source":"fixture"}
+{"query":"외부 공개 소프트웨어를 제품에 넣기 전에 허가 조건을 검토하는 규칙","expected":["license-policy"],"split":"paraphrase","holdout":false,"alts":["오픈소스 사용 권한과 배포 조건을 확인하는 정책"],"source":"fixture"}
+{"query":"같은 HTTP 요청을 재전송해도 처리가 두 번 되지 않게 하는 표식","expected":["http-retry-idempotency"],"split":"paraphrase","holdout":true,"alts":["네트워크 재시도 때문에 중복 실행되지 않도록 보내는 값"],"source":"fixture"}
+{"query":"윈도 셸 구버전에서 글자를 파일로 저장할 때 기본 문자셋은","expected":["powershell-encoding"],"split":"paraphrase","holdout":false,"alts":["파워셸 5.1이 텍스트 파일을 인코딩하는 기본 방식"],"source":"fixture"}
+{"query":"많은 사용자가 몰리는 상황을 흉내 내어 서버를 시험하는 법","expected":["load-test-run"],"split":"paraphrase","holdout":false,"alts":["k6로 서비스의 동시 요청 처리량을 재려면"],"source":"fixture"}
+{"query":"원격 이력을 억지로 덮어써서 다른 변경 기록이 사라진 사건","expected":["git-force-push-loss"],"split":"paraphrase","holdout":true,"alts":["강제로 깃 서버를 갱신하다 커밋을 잃어버린 일"],"source":"fixture"}
+{"query":"배포 없이 특정 기능을 켜고 끄도록 해 주는 시스템은","expected":["feature-flag-service"],"split":"paraphrase","holdout":false,"alts":["코드 출시와 기능 공개 시점을 분리하는 도구"],"source":"fixture"}
+{"query":"상품 정보를 임시 저장한 복사본을 얼마나 오래 유효하게 보나","expected":["perf-cache-ttl"],"split":"paraphrase","holdout":false,"alts":["캐시된 상품 자료가 만료될 때까지의 시간"],"source":"fixture"}
+{"query":"읽기 전용 DB 복사본이 원본의 최신 변경을 아직 못 따라온 상태","expected":["db-replica-lag-kr"],"split":"paraphrase","holdout":true,"alts":["데이터베이스 복제가 뒤처질 때 확인하는 지연"],"source":"fixture"}
+{"query":"다른 시간대로 실행하자 자동 검사가 들쭉날쭉해진 원인","expected":["test-flaky-timezone"],"split":"paraphrase","holdout":false,"alts":["날짜와 시간대 차이 때문에 가끔 실패했던 테스트"],"source":"fixture"}
+{"query":"밖으로 새어 나간 접근 자격을 폐기하고 대체하는 절차","expected":["secret-rotation"],"split":"paraphrase","holdout":false,"alts":["유출된 인증 수단을 새것으로 갈아 끼우는 순서"],"source":"fixture"}
+{"query":"보안 연결용 증명서의 유효기간이 끝나기 전에 새것으로 바꾸는 법","expected":["ssl-cert-renew"],"split":"paraphrase","holdout":true,"alts":["TLS 인증서 갱신 작업을 진행하는 방법"],"source":"fixture"}
+{"query":"컨테이너 이미지 파일이 갑자기 너무 커졌던 사건","expected":["docker-image-bloat"],"split":"paraphrase","holdout":false,"alts":["도커 산출물 용량이 부풀어 오른 문제"],"source":"fixture"}
+{"query":"임시 저장소의 키가 쫓겨나면서 사람들이 한꺼번에 로그인 상태를 잃은 일","expected":["redis-eviction-spike"],"split":"paraphrase","holdout":false,"alts":["레디스 항목 제거가 급증해 세션이 끊긴 장애"],"source":"fixture"}
+{"query":"답변할 때 영어보다 어떤 언어를 우선해야 하는가","expected":["pref-answer-korean"],"split":"paraphrase","holdout":true,"alts":["응답 문장의 언어에 관한 사용자 취향"],"source":"fixture"}
+{"query":"목록 하나를 읽는데 각 항목마다 DB를 다시 조회해서 느려진 문제","expected":["perf-n-plus-one"],"split":"paraphrase","holdout":false,"alts":["반복 조회가 쌓여 API 응답이 지연되는 현상"],"source":"fixture"}
+{"query":"저장한 데이터 사본으로 데이터베이스를 되살리는 순서","expected":["db-backup-restore"],"split":"paraphrase","holdout":false,"alts":["백업 파일에서 DB 내용을 복구하는 법"],"source":"fixture"}
+{"query":"대시보드에서 특정 API 요청이 남긴 실행 기록만 골라 보는 방법","expected":["log-search-loki"],"split":"paraphrase","holdout":true,"alts":["로키 자료를 요청 식별자로 걸러서 찾는 법"],"source":"fixture"}
+{"query":"해왕성 위성의 평균 반지름은 얼마인가","expected":[],"split":"none","holdout":true,"alts":["트리톤이라는 천체의 크기는"],"source":"fixture"}
+{"query":"조선 시대 도자기 유약의 화학적 배합을 설명해 줘","expected":[],"split":"none","holdout":false,"alts":["백자에 쓰던 유약 재료의 비율"],"source":"fixture"}
+{"query":"남극 황제펭귄의 번식 주기는 어떻게 되는가","expected":[],"split":"none","holdout":false,"alts":["황제펭귄은 알을 언제 품는가"],"source":"fixture"}
+{"query":"프랑스 인상주의 회화의 대표 화가는 누구인가","expected":[],"split":"none","holdout":true,"alts":["인상파 미술가들의 이름"],"source":"fixture"}
+{"query":"생강을 넣은 배숙의 조리 순서를 알려 줘","expected":[],"split":"none","holdout":false,"alts":["전통 배 음료를 만드는 재료와 방법"],"source":"fixture"}
+{"query":"현악 사중주에서 비올라의 역할은 무엇인가","expected":[],"split":"none","holdout":false,"alts":["실내악에서 비올라가 담당하는 음역"],"source":"fixture"}
+{"query":"백악기 말 공룡 멸종의 지질학적 증거는","expected":[],"split":"none","holdout":true,"alts":["운석 충돌설을 뒷받침하는 지층"],"source":"fixture"}
+{"query":"벚나무 접붙이기는 어느 계절에 하는가","expected":[],"split":"none","holdout":false,"alts":["벚나무 품종을 접목하는 적당한 시기"],"source":"fixture"}
+{"query":"마라톤 훈련 중 장거리 달리기의 적정 빈도는","expected":[],"split":"none","holdout":false,"alts":["달리기 지구력을 키우는 운동 주기"],"source":"fixture"}
+{"query":"고대 이집트 상형문자의 해독 과정은","expected":[],"split":"none","holdout":true,"alts":["로제타석이 문자 연구에 기여한 방법"],"source":"fixture"}
+{"query":"달의 바다를 이루는 암석의 종류는","expected":[],"split":"none","holdout":false,"alts":["월면의 어두운 평원을 구성한 물질"],"source":"fixture"}
+{"query":"한라산 고산식물의 수직 분포는 어떻게 나뉘나","expected":[],"split":"none","holdout":false,"alts":["높이에 따라 달라지는 한라산 식생"],"source":"fixture"}
