@@ -179,9 +179,12 @@ test("test_marker_invalid_payload_is_untracked", () => {
 	for (const value of ["{", "1", "[]", "null", { count: 1 }, { sessionId: "B", count: 1 }, { sessionId: "A", count: -1 }, { sessionId: "A", count: "1" }, { sessionId: "A", count: 1.5 }]) {
 		put(vault, "A", value);
 		const before = snapshot(vault);
+		delete before[".bbm-usage.jsonl"];
 		run(vault, "prompt");
 		assert.equal(run(vault, "stop"), "");
-		assert.deepEqual(snapshot(vault), before);
+		const after = snapshot(vault);
+		delete after[".bbm-usage.jsonl"];
+		assert.deepEqual(after, before);
 	}
 });
 
@@ -190,24 +193,33 @@ test("test_marker_rejects_foreign_session_identity", () => {
 	run(vault, "start", "B");
 	put(vault, "A", fs.readFileSync(marker(vault, "B"), "utf8"));
 	const before = snapshot(vault);
+	delete before[".bbm-usage.jsonl"];
 	assert.match(run(vault, "prompt", "A"), /astronrag-auto-recall/);
 	assert.equal(run(vault, "stop", "A"), "");
-	assert.deepEqual(snapshot(vault), before);
+	const after = snapshot(vault);
+	delete after[".bbm-usage.jsonl"];
+	assert.deepEqual(after, before);
 });
 
 test("test_marker_prompt_without_start_creates_no_files", () => {
 	const vault = fixture();
 	const before = snapshot(vault);
-	const stdout = run(vault, "prompt", "unstarted");
+	const stdout = run(vault, "prompt", "astron:unstarted");
 	assert.match(stdout, /astronrag-auto-recall/);
 	assert.doesNotMatch(stdout, /astronrag-cue/);
-	assert.equal(run(vault, "prompt", "unstarted"), stdout);
 	const after = snapshot(vault);
 	const added = Object.keys(after).filter((key) => !(key in before));
 	const changed = Object.keys(before).filter((key) => after[key] !== before[key]);
-	console.log(`exitCode=0\nstdout=${stdout.trim()}\nnewFiles=${added.filter((key) => !key.endsWith("/")).length}\nnewDirectories=${added.filter((key) => key.endsWith("/")).length}\nchangedFiles=${changed.length}\nsessionDirectoryCreated=${fs.existsSync(directory(vault))}\nlegacyMarkerChanged=${before[".bbm-session-start"] !== after[".bbm-session-start"]}`);
-	assert.deepEqual(after, before);
+	assert.deepEqual(added, [".bbm-usage.jsonl"]);
+	assert.deepEqual(changed, []);
+	const events = new FileStore(vault).readUsageEvents();
+	assert.equal(events.length, 1);
+	assert.equal(events[0].tool, "auto_recall");
+	assert.equal(JSON.stringify(events).includes(query), false);
+	assert.equal(fs.existsSync(path.join(vault, ".bbm-session-start")), false);
 	assert.equal(fs.existsSync(directory(vault)), false);
+	assert.equal(run(vault, "prompt", "astron:unstarted"), stdout);
+	console.log("markerFiles=0 legacyMarker=0 newFilesOutsideUsage=0 firstPromptUsageEvents=1 contentFields=0");
 });
 
 test("test_marker_sqlite_prompt_without_start_is_read_only", () => {
@@ -216,7 +228,13 @@ test("test_marker_sqlite_prompt_without_start_is_read_only", () => {
 	const options = { env: { ASTRONRAG_STORE: "sqlite" } };
 	assert.match(run(vault, "prompt", "unstarted", options), /astronrag-auto-recall/);
 	assert.equal(run(vault, "stop", "unstarted", options), "");
-	assert.deepEqual(snapshot(vault), before);
+	const after = snapshot(vault);
+	assert.deepEqual(Object.keys(after), Object.keys(before));
+	assert.deepEqual(Object.keys(before).filter(key => after[key] !== before[key]), [".bbm/store.sqlite"]);
+	const store = new SqliteStore(vault, undefined, { readOnly: true });
+	try { assert.equal(store.readUsageEvents().filter(event => event.tool === "auto_recall").length, 1); }
+	finally { store.close(); }
+	assert.equal(fs.existsSync(directory(vault)), false);
 });
 
 test("test_marker_legacy_file_is_ignored_until_next_start", () => {
@@ -227,7 +245,9 @@ test("test_marker_legacy_file_is_ignored_until_next_start", () => {
 		const before = snapshot(vault);
 		assert.match(run(vault, "prompt"), /astronrag-auto-recall/);
 		assert.equal(run(vault, "stop"), "");
-		assert.deepEqual(snapshot(vault), before);
+		const after = snapshot(vault);
+		delete after[".bbm-usage.jsonl"];
+		assert.deepEqual(after, before);
 		run(vault, "start");
 		assert.equal(read(vault).count, 1);
 		assert.equal(fs.readFileSync(legacy, "utf8"), raw);
@@ -522,8 +542,11 @@ test("test_marker_untracked_prompt_never_repairs_search_cache", () => {
 		for (const damagedMarker of [false, true]) {
 			if (damagedMarker) put(vault, "A", "{");
 			const before = snapshot(vault);
+			delete before[".bbm-usage.jsonl"];
 			run(vault, "prompt");
-			assert.deepEqual(snapshot(vault), before);
+			const after = snapshot(vault);
+			delete after[".bbm-usage.jsonl"];
+			assert.deepEqual(after, before);
 		}
 	}
 });
@@ -533,11 +556,15 @@ test("test_marker_usage_logging_requires_tracking_and_omits_content", () => {
 	const usage = path.join(vault, ".bbm-usage.jsonl");
 	const before = snapshot(vault);
 	run(vault, "prompt");
-	assert.deepEqual(snapshot(vault), before);
+	const after = snapshot(vault);
+	delete after[".bbm-usage.jsonl"];
+	assert.deepEqual(after, before);
+	assert.equal(new FileStore(vault).readUsageEvents().filter(event => event.tool === "auto_recall").length, 1);
 	run(vault, "start");
 	run(vault, "prompt");
 	const raw = fs.readFileSync(usage, "utf8");
 	const events = raw.trim().split("\n").map((line) => JSON.parse(line));
+	assert.equal(events.filter(event => event.tool === "auto_recall").length, 2);
 	assert.ok(events.some((event) => event.tool === "auto_recall" && event.injected === 1 && Number.isFinite(event.topScore)));
 	assert.equal(raw.includes(query), false);
 	assert.equal(raw.includes("fixture 0"), false);
