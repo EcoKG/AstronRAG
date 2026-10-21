@@ -41,7 +41,7 @@ npm run setup:hook -- --settings <경로>
 | 훅 | 역할 |
 |---|---|
 | `SessionStart` | MEMORY.md 인덱스와 볼트 출처·건수·나이 경고 주입 |
-| `UserPromptSubmit` | 부호화 큐. 옵션 활성 시 읽기 전용 자동 회상 |
+| `UserPromptSubmit` | 부호화 큐. 옵션 활성 시 읽기 경로로 자동 회상 검색, 사용 이벤트는 별도 기록 |
 | `Stop` | 작업 세션의 새 기억 저장이 0건이면 경고 |
 
 본체는 `scripts/session-guard.mjs`입니다. 등록 명령은 셸 표현식 대신 Node 실행 파일과 스크립트 인수를 사용하며 Node는 절대 경로로 등록합니다. 자동 postinstall 설치는 하지 않습니다.
@@ -95,10 +95,11 @@ claude
 - **선택:** active이며 아직 같은 세션에서 주입하지 않은 결과 중 절대 점수 기본 9 이상이면서 활성 결과 1위 점수의 50% 이상인 최대 3건을 주입합니다. 1위 계산에는 이미 주입한 active 결과도 포함합니다.
 - **형식:** 본문 없이 slug·설명·타입·확신도·나이를 넣으며 태그 포함 전체 예산은 기본 1,500자입니다. 낡음 판정은 recall과 같은 타입별 임계·검토일을 사용합니다.
 - **중복:** 추적 중인 세션별 마커의 `autoSlugs`로 재주입을 막고 같은 id의 compact 시작 이벤트에서 다시 넣을 수 있게 비웁니다. 최근 200개 slug를 보관합니다. SessionStart 인덱스에 나온 기억도 자동 회상 대상입니다.
-- **마커 없는 세션:** 해당 id의 유효한 마커가 없으면 조건을 충족하는 회상 블록만 출력하고 마커를 만들지 않습니다. 부호화 큐는 내지 않고 세션 중복 제외 상태·자동 회상 사용 로그를 기록하지 않으므로 다음 프롬프트에서 같은 기억을 다시 주입할 수 있습니다. 빈 id도 이 경로를 따릅니다.
+- **마커 없는 세션:** 해당 id의 유효한 마커가 없으면 조건을 충족하는 회상 블록을 출력하고 마커·세션 파일을 만들지 않습니다(1안 계약). 부호화 큐와 세션 중복 제외 상태를 기록하지 않으므로 다음 프롬프트에서 같은 기억을 다시 주입할 수 있습니다. 유효한 `session_id`가 있으면 `astron:<id>`를 포함해 마커 유무와 관계없이 자동 회상 사용 이벤트를 기록합니다. 사용 기록은 세션 마커가 아닙니다. 빈 id도 회상은 가능하지만 사용 이벤트는 기록하지 않습니다(`scripts/session-guard.mjs`의 `readMarker`·`logUsage`·`emitPrompt`).
 - **출력:** `hookSpecificOutput`의 `hookEventName: "UserPromptSubmit"`, `additionalContext`에 넣은 JSON 하나입니다. 같은 턴의 부호화 큐는 회상 블록 뒤에 붙입니다.
 - **읽기 전용 검색:** 영속 `.bbm-index/lexical.v2.json`을 읽습니다. 처음 6개 후보부터 필요할 때 범위를 늘려 저장소 신원이 달라진 기억과 삭제된 기억을 제외합니다. 파일 저장소는 파일 stat을 대조하고, SQLite는 `getIdentity`로 내용 해시를 대조하여 강화 메타데이터만 바뀐 기억은 유지합니다. 색인이 없거나 손상됐으면 침묵합니다. 색인을 고쳐 쓰거나 벡터·무거운 파서를 로드하지 않습니다. 세션 마커·사용 로그 기록은 검색과 별개입니다.
-- **강화 없음:** 자동 주입으로 storage_strength·last_accessed를 바꾸지 않습니다. 추적 중인 세션의 사용 이벤트에는 `tool: auto_recall`, sessionId·injected 건수·topScore를 기록하며 프롬프트는 남기지 않습니다. 사용 로그를 끄면 이 이벤트도 남기지 않습니다.
+- **강화 없음:** 자동 주입으로 storage_strength·last_accessed를 바꾸지 않습니다. 자동 회상 사용 이벤트에는 `tool: auto_recall`, sessionId·injected 건수·topScore 같은 식별자·수치와 이벤트 구분·시각만 기록하며 질의 원문·기억 내용은 남기지 않습니다. 훅 프로세스 환경에서 `ASTRONRAG_USAGE_LOG=0`이면 이 이벤트도 남기지 않습니다(`scripts/session-guard.mjs`의 `logUsage`의 `auto_recall` 호출).
+- **사용 기록 실패:** SQLite 사용 이벤트는 별도의 짧은 쓰기 연결로 기록하며 `USAGE_WRITE_TIMEOUT_MS=125ms` 예산 안에서 busy·잠금을 재시도합니다. 실패하면 stderr에 `astronrag usage: write failed (<code>)` 한 줄을 남겨도 회상 출력과 종료 코드 0은 유지합니다. 고경합에서는 기록이 빠질 수 있습니다. 저장 위치와 best-effort 한계는 [사용 계측](operations.md#사용-계측)을 참고합니다(`scripts/session-guard.mjs`의 `logUsage`·`USAGE_WRITE_TIMEOUT_MS`·`emitPrompt`, `src/stores/sqlite-store.ts`의 `SqliteStore.appendUsageEvent`).
 
 서버를 띄우지 않은 볼트는 색인이 없고, 서버가 꺼진 동안 추가한 기억은 색인 동기화 전까지 잡히지 않습니다. 직접 수정한 파일이나 내용이 바뀐 SQLite 기억은 색인과 신원이 달라져 제외됩니다. 점수 방식과 하한, 프로젝트·낡음 설정은 [훅 환경변수](configuration.md#훅-환경변수)를 확인합니다.
 

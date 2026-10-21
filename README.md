@@ -131,6 +131,8 @@ npm run setup:hook
 
 설치 후 Claude를 재시작하면 세 훅이 같은 `session_id`의 세션별 마커로 상태를 공유합니다. 빈 id는 추적하지 않으며, 마커가 없는 프롬프트에서도 활성화된 자동 회상은 동작할 수 있습니다(`scripts/setup-hook.mjs`의 `buildCommands`·`results`, `scripts/session-guard.mjs`의 `markerPath`·`readMarker`·`autoRecall`).
 
+`--prompt`의 검색은 읽기 경로이며, 자동 회상 검색 시 유효한 `session_id`가 있으면 마커가 없어도 `auto_recall` 사용 이벤트를 별도로 기록합니다(주입 0건 포함). 이 기록은 마커·세션 파일을 만들지 않습니다. 훅 프로세스 환경의 `ASTRONRAG_USAGE_LOG=0`으로 끌 수 있습니다. SQLite 기록은 125ms 재시도 예산의 best-effort 방식이며, 실패해도 회상 출력과 종료 코드 0을 유지합니다. [사용 계측·실패 동작](docs/operations.md#사용-계측)을 참고하십시오(`scripts/session-guard.mjs`의 `logUsage`·`USAGE_WRITE_TIMEOUT_MS`·`emitPrompt`, `src/stores/sqlite-store.ts`의 `SqliteStore.appendUsageEvent`).
+
 </details>
 
 <details>
