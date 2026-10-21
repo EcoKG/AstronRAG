@@ -573,6 +573,8 @@ export class MemoryService {
       project?: string;
       altQueries?: string[];
       vectorHits?: { key: string; score: number }[];
+			vectorFusion?: "add" | "rrf";
+			vectorWeight?: number;
     },
   ): SearchResult[] {
     return this.searchDetailed(query, opts).results;
@@ -586,8 +588,10 @@ export class MemoryService {
       includeLinked?: boolean;
       project?: string;
       altQueries?: string[];
-      /** 벡터 검색 결과(항목 키·점수) — 어휘 후보에 없는 항목만 via "vector" 후보로 덧붙인다 */
+			/** 벡터 검색 후보의 항목 키와 점수를 받는다. */
       vectorHits?: { key: string; score: number }[];
+			vectorFusion?: "add" | "rrf";
+			vectorWeight?: number;
     },
   ): SearchOutcome {
     this.shadowTop5 = undefined;
@@ -625,7 +629,7 @@ export class MemoryService {
     // 순위 기반 융합(RRF)은 점수 차를 평평하게 만들어 Ranker 의 신뢰도·활성도 곱이 관련도를 뒤집는다.
     const fused =
       alts.length === 0 ? lists[0] : fuseWeightedMax(lists, queries.map((_, i) => (i === 0 ? 1 : ALT_QUERY_WEIGHT)));
-    const candidates = opts?.vectorHits ? this.withVectorHits(fused, opts.vectorHits, filter) : fused;
+		const candidates = opts?.vectorHits ? this.withVectorHits(fused, opts.vectorHits, filter, opts.vectorFusion, opts.vectorWeight) : fused;
     const rq = alts.length === 0 ? q : mergeQueries(queries);
 
     // 3) Ranker — 신뢰도·활성도·RIF·연상 확산
@@ -656,18 +660,33 @@ export class MemoryService {
     return { results, totalMatched };
   }
 
-  /** 어휘 후보에 없는 벡터 결과만 via "vector" 후보로 덧붙인다 — 어휘 후보의 점수·순서는 그대로 둔다 */
-  private withVectorHits(cands: Candidate[], hits: { key: string; score: number }[], filter: ScopeFilter): Candidate[] {
-    const have = new Set(cands.map((c) => c.titleDescTokens));
-    const extra: Candidate[] = [];
-    for (const h of hits) {
-      const c = this.retriever.candidate(h.key, filter);
-      if (!c || have.has(c.titleDescTokens)) continue;
-      have.add(c.titleDescTokens);
-      extra.push({ ...c, score: h.score, via: "vector" });
-    }
-    return extra.length === 0 ? cands : [...cands, ...extra];
-  }
+	/** 범위 안의 벡터 후보를 기존 add 또는 가중 RRF로 어휘 후보와 결합한다. */
+	private withVectorHits(cands: Candidate[], hits: { key: string; score: number }[], filter: ScopeFilter, fusion: "add" | "rrf" = "add", weight = 1): Candidate[] {
+		if (fusion === "rrf") {
+			const merged = new Map<string[], Candidate>();
+			[...cands].sort((a, b) => b.score - a.score).forEach((c, i) => merged.set(c.titleDescTokens, { ...c, score: 1 / (60 + i + 1) }));
+			const seen = new Set<string[]>();
+			hits.forEach((h, i) => {
+				const c = this.retriever.candidate(h.key, filter);
+				if (!c || seen.has(c.titleDescTokens) || !Number.isFinite(h.score) || !Number.isFinite(weight) || weight <= 0) return;
+				seen.add(c.titleDescTokens);
+				const previous = merged.get(c.titleDescTokens);
+				const score = weight / (60 + i + 1);
+				if (previous) previous.score += score;
+				else merged.set(c.titleDescTokens, { ...c, score, via: "vector" });
+			});
+			return [...merged.values()];
+		}
+		const have = new Set(cands.map((c) => c.titleDescTokens));
+		const extra: Candidate[] = [];
+		for (const h of hits) {
+			const c = this.retriever.candidate(h.key, filter);
+			if (!c || have.has(c.titleDescTokens) || !Number.isFinite(h.score)) continue;
+			have.add(c.titleDescTokens);
+			extra.push({ ...c, score: h.score, via: "vector" });
+		}
+		return extra.length === 0 ? cands : [...cands, ...extra];
+	}
 
   /**
    * 그림자 비교 — 같은 질의·변형을 bm25f 로 순위화해(연상·강화 없음) legacy 결과와 상위 k(= min(5, limit))건 slug 일치율을 낸다.
