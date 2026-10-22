@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import crypto from "node:crypto";
+import { usageLogMaxBytes } from "../env.js";
 import type { MemoryRecord, MemoryStatus, MemoryType } from "../types.js";
 import { Vault } from "../vault.js";
 import { assertSafeSlug, type RecommendationFeedback, type RuleStatistics, type MemoryIdentity, type MemoryStore, type StoreInspection, type StoreUsageEvent, type StoredEmbedding } from "./memory-store.js";
@@ -9,6 +10,8 @@ import { assertSafeSlug, type RecommendationFeedback, type RuleStatistics, type 
 const SCHEMA_VERSION = "1";
 const BUSY_TIMEOUT_MS = 5000;
 const JOURNAL_MODE = "DELETE";
+/** 상한 정리의 합산 비용을 줄이려고 이 건수마다만 페이로드 바이트 합을 계산한다. */
+const USAGE_TRIM_INTERVAL = 64;
 const RESERVED_BASENAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 
 type MemoryRow = {
@@ -67,6 +70,32 @@ const stableRecord = (record: MemoryRecord, archived: boolean): string => JSON.s
 });
 
 const recordHash = (record: MemoryRecord, archived: boolean): string => crypto.createHash("sha256").update(stableRecord(record, archived)).digest("hex");
+
+/** usage_events 에 한 행을 추가하고, 행 번호가 간격의 배수일 때 페이로드 바이트 합이 상한을 넘은 오래된 행을 같은 트랜잭션에서 지운다(최신 행 보존). */
+function insertUsageRow(db: DatabaseSync, ts: string, payload: string): void {
+	const insert = db.prepare("INSERT INTO usage_events(ts, payload) VALUES(?, ?)");
+	const nested = db.isTransaction;
+	if (!nested) db.exec("BEGIN IMMEDIATE");
+	try {
+		const { lastInsertRowid } = insert.run(ts, payload);
+		if (Number(lastInsertRowid) % USAGE_TRIM_INTERVAL === 0) {
+			db.prepare(`DELETE FROM usage_events WHERE sequence IN (
+				SELECT sequence FROM (SELECT sequence, SUM(LENGTH(CAST(payload AS BLOB))) OVER (ORDER BY sequence DESC) AS kept FROM usage_events)
+				WHERE kept > ? AND sequence < (SELECT MAX(sequence) FROM usage_events)
+			)`).run(usageLogMaxBytes());
+		}
+		if (!nested) db.exec("COMMIT");
+	} catch (error) {
+		if (!nested) {
+			try {
+				db.exec("ROLLBACK");
+			} catch {
+				/* 트랜잭션 본문 오류를 보존한다. */
+			}
+		}
+		throw error;
+	}
+}
 
 /** SQLite가 기억 레코드와 부속 데이터를 원자적으로 영속한다. */
 export class SqliteStore implements MemoryStore {
@@ -568,7 +597,7 @@ export class SqliteStore implements MemoryStore {
 		return slug;
 	}
 
-	/** 제한 시간 지정 시 usage만 별도 연결로 기록하고 즉시 닫는다. */
+	/** 제한 시간 지정 시 usage만 별도 연결로 기록하고 즉시 닫으며, 행 추가와 상한 정리는 한 트랜잭션에서 처리한다. */
 	appendUsageEvent(event: Omit<StoreUsageEvent, "ts"> & { ts?: string }, options: { timeoutMs?: number; throwOnError?: boolean } = {}): void {
 		const ts = event.ts ?? new Date().toISOString();
 		const payload = JSON.stringify({ ...event, ts: undefined });
@@ -580,7 +609,7 @@ export class SqliteStore implements MemoryStore {
 					db = new DatabaseSync(this.databasePath);
 					db.exec("PRAGMA busy_timeout = 0");
 				}
-				db.prepare("INSERT INTO usage_events(ts, payload) VALUES(?, ?)").run(ts, payload);
+				insertUsageRow(db, ts, payload);
 				return;
 			} catch (error) {
 				const code = (error as { errcode?: number }).errcode;

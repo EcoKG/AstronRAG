@@ -283,6 +283,35 @@ console.log("5) 리포트 집계");
   check("손상 줄을 보고", JSON.parse(out2).window.malformedLines === 1, out2.slice(0, 300));
 }
 
+// ── 상한 환경변수가 서버의 두 저장소에 모두 적용된다
+console.log("상한) ASTRONRAG_USAGE_LOG_MAX_BYTES");
+{
+	const vf = freshDir("cap-file");
+	await withServer(vf, async (call) => {
+		for (let n = 0; n < 12; n++) await call("list_memories", {});
+	}, { ASTRONRAG_USAGE_LOG_MAX_BYTES: "600" });
+	check("파일 저장소: 상한 초과 시 .old 로 회전", fs.existsSync(path.join(vf, ".bbm-usage.jsonl.old")));
+
+	const vs = freshDir("cap-sqlite");
+	await withServer(vs, async (call) => {
+		for (let n = 0; n < 64; n++) await call("list_memories", {});
+	}, { ASTRONRAG_STORE: "sqlite", ASTRONRAG_USAGE_LOG_MAX_BYTES: "2000" });
+	const sqliteStore = createMemoryStore(vs, { ASTRONRAG_STORE: "sqlite" });
+	try {
+		const kept = sqliteStore.readUsageEvents();
+		const bytes = kept.reduce((sum, e) => sum + Buffer.byteLength(JSON.stringify({ ...e, ts: undefined })), 0);
+		check("SQLite 저장소: 상한 초과분이 삭제됨", kept.length > 0 && kept.length < 64 && bytes <= 2000, `${kept.length}건 ${bytes}B`);
+	} finally {
+		sqliteStore.close();
+	}
+
+	const vd = freshDir("cap-default");
+	await withServer(vd, async (call) => {
+		for (let n = 0; n < 12; n++) await call("list_memories", {});
+	}, { ASTRONRAG_USAGE_LOG_MAX_BYTES: "abc" });
+	check("잘못된 값은 기본 5MiB 로 취급(회전 없음)", !fs.existsSync(path.join(vd, ".bbm-usage.jsonl.old")));
+}
+
 for (const d of cleanups) fs.rmSync(d, { recursive: true, force: true });
 
 if (failures > 0) {
