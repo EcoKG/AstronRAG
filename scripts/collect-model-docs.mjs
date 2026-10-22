@@ -222,10 +222,12 @@ export async function runCollector(args, { fetchImpl = globalThis.fetch } = {}) 
 	if (write && diffs.length > 0) {
 		const merged = collected.map((model) => ({ ...raw.models.find((previous) => previous.id === model.id), ...model }));
 		const dumpedModels = yaml.dump({ models: [...merged, ...preserved] }, { noRefs: true, sortKeys: true, lineWidth: 120 });
-		const modelStart = source.indexOf("models:\n");
-		const modelEnd = source.indexOf("efforts:\n", modelStart);
-		if (modelStart < 0 || modelEnd < 0) throw new Error("ontology model section is missing");
-		const updated = `${source.slice(0, modelStart)}${dumpedModels}${source.slice(modelEnd)}`;
+		const modelStart = /^models:(\r?\n)/m.exec(source);
+		const effortsPattern = /^efforts:\r?\n/gm;
+		effortsPattern.lastIndex = modelStart?.index ?? 0;
+		const modelEnd = modelStart && effortsPattern.exec(source);
+		if (!modelStart || !modelEnd) throw new Error("ontology model section is missing");
+		const updated = `${source.slice(0, modelStart.index)}${dumpedModels.replace(/\n/g, modelStart[1])}${source.slice(modelEnd.index)}`;
 		const temporary = `${ontologyFile}.tmp-${process.pid}`;
 		try {
 			fs.writeFileSync(temporary, updated, { encoding: "utf8", flag: "wx" });
