@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -606,6 +607,137 @@ test("test_smoke_active_recall_strength_uses_nonreinforcing_baseline", () => eac
 	service.search("baseline needle");
 	assert.ok(service.list().find((m) => m.slug === made.slug).storageStrength > baseline);
 }));
+
+const USAGE_MAX_ENV = "ASTRONRAG_USAGE_LOG_MAX_BYTES";
+const usageEvent = (n) => ({ tool: "usage_cap", ok: true, n, reason: "x".repeat(60) });
+
+/** 상한 환경변수를 지정한 채 실행하고 원래 값으로 되돌린다. */
+async function withUsageMax(value, run) {
+	const before = process.env[USAGE_MAX_ENV];
+	if (value === undefined) delete process.env[USAGE_MAX_ENV];
+	else process.env[USAGE_MAX_ENV] = value;
+	try {
+		return await run();
+	} finally {
+		if (before === undefined) delete process.env[USAGE_MAX_ENV];
+		else process.env[USAGE_MAX_ENV] = before;
+	}
+}
+
+/** SQLite usage_events 의 페이로드 바이트 합과 행 수·최대 sequence 를 읽는다. */
+function sqliteUsageStats(dir) {
+	const db = new DatabaseSync(path.join(dir, ".bbm", "store.sqlite"));
+	try {
+		return db.prepare("SELECT COALESCE(SUM(LENGTH(CAST(payload AS BLOB))), 0) AS bytes, COUNT(*) AS count, COALESCE(MAX(sequence), 0) AS maxSequence FROM usage_events").get();
+	} finally {
+		db.close();
+	}
+}
+
+test("test_usage_max_bytes_env_parses_alias_and_rejects_invalid_values", async () => {
+	const { usageLogMaxBytes } = await import(distUrl("env.js"));
+	assert.equal(usageLogMaxBytes({}), 5242880);
+	for (const bad of ["", " ", "0", "-5", "1.5", "abc", "1e3", "0x10", "99999999999999999999"]) {
+		assert.equal(usageLogMaxBytes({ [USAGE_MAX_ENV]: bad }), 5242880, JSON.stringify(bad));
+	}
+	assert.equal(usageLogMaxBytes({ [USAGE_MAX_ENV]: "2000" }), 2000);
+	assert.equal(usageLogMaxBytes({ BIGBRAIN_USAGE_LOG_MAX_BYTES: "3000" }), 3000);
+	assert.equal(usageLogMaxBytes({ [USAGE_MAX_ENV]: "2000", BIGBRAIN_USAGE_LOG_MAX_BYTES: "3000" }), 2000);
+});
+
+test("test_sqlite_usage_env_trims_oldest_rows_and_keeps_newest_in_order", () => withUsageMax("2000", () => {
+	const dir = temp("usage-trim");
+	const store = new stores.SqliteStore(dir);
+	try {
+		for (let n = 0; n < 192; n++) store.appendUsageEvent(usageEvent(n));
+		const stats = sqliteUsageStats(dir);
+		assert.ok(stats.bytes <= 2000, JSON.stringify(stats));
+		assert.ok(stats.count > 0, JSON.stringify(stats));
+		const ns = store.readUsageEvents().map((e) => e.n);
+		assert.equal(ns.at(-1), 191);
+		assert.ok(ns[0] > 0, `oldest rows must be trimmed: ${ns[0]}`);
+		assert.deepEqual(ns, Array.from({ length: ns.length }, (_, i) => 192 - ns.length + i));
+	} finally {
+		store.close();
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+}));
+
+test("test_sqlite_usage_trim_always_keeps_newest_row_when_single_row_exceeds_limit", () => withUsageMax("10", () => {
+	const dir = temp("usage-trim-one");
+	const store = new stores.SqliteStore(dir);
+	try {
+		for (let n = 0; n < 64; n++) store.appendUsageEvent(usageEvent(n));
+		assert.deepEqual(store.readUsageEvents().map((e) => e.n), [63]);
+	} finally {
+		store.close();
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+}));
+
+test("test_usage_below_limit_deletes_nothing_in_both_backends", () => withUsageMax("1000000", () => eachStore("usage-below", (store, dir, kind) => {
+	for (let n = 0; n < 160; n++) store.appendUsageEvent(usageEvent(n));
+	assert.equal(store.readUsageEvents().length, 160, kind);
+	if (kind === "file") assert.equal(fs.existsSync(path.join(dir, ".bbm-usage.jsonl.old")), false);
+})));
+
+test("test_usage_invalid_env_values_fall_back_to_default_limit_in_both_backends", async () => {
+	for (const bad of [undefined, "", "0", "-5", "1.5", "abc"]) {
+		await withUsageMax(bad, () => eachStore("usage-default", (store, dir, kind) => {
+			for (let n = 0; n < 160; n++) store.appendUsageEvent(usageEvent(n));
+			assert.equal(store.readUsageEvents().length, 160, `${kind} ${JSON.stringify(bad)}`);
+			if (kind === "file") assert.equal(fs.existsSync(path.join(dir, ".bbm-usage.jsonl.old")), false);
+		}));
+	}
+});
+
+test("test_file_usage_env_rotates_to_old_file_when_limit_exceeded", () => withUsageMax("1000", () => {
+	const dir = temp("usage-rotate");
+	const store = new stores.FileStore(dir);
+	try {
+		for (let n = 0; n < 40; n++) store.appendUsageEvent(usageEvent(n));
+		const current = path.join(dir, ".bbm-usage.jsonl");
+		assert.equal(fs.existsSync(`${current}.old`), true);
+		assert.ok(fs.statSync(current).size <= 1000 + 200, String(fs.statSync(current).size));
+		assert.equal(store.readUsageEvents().at(-1).n, 39);
+	} finally {
+		store.close();
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+}));
+
+test("test_sqlite_usage_trim_concurrent_writers_no_busy_no_lost_inserts", async () => {
+	const childCode = `
+		import { SqliteStore } from ${JSON.stringify(distUrl("stores/sqlite-store.js"))};
+		const [dir, worker] = process.argv.slice(1);
+		const store = new SqliteStore(dir);
+		try {
+			for (let n = 0; n < 48; n++) store.appendUsageEvent({ tool: "usage_cap", ok: true, n, worker, reason: "x".repeat(60) });
+			store.close();
+		} catch (error) { console.error(error.code, error.message); process.exit(1); }
+	`;
+	for (const limit of [undefined, "4000"]) {
+		await withUsageMax(limit, async () => {
+			const dir = temp("usage-concurrent");
+			new stores.SqliteStore(dir).close();
+			const outcomes = await Promise.all(Array.from({ length: 4 }, (_, worker) => new Promise((resolve) => {
+				const child = spawn(process.execPath, ["--input-type=module", "-e", childCode, dir, String(worker)], { env: process.env });
+				let stderr = "";
+				child.stderr.on("data", (chunk) => { stderr += chunk; });
+				child.on("close", (code) => resolve({ code, stderr }));
+			})));
+			for (const outcome of outcomes) {
+				assert.equal(outcome.code, 0, JSON.stringify(outcome));
+				assert.doesNotMatch(outcome.stderr, /SQLITE_BUSY|database is locked|ERR_SQLITE/i, outcome.stderr);
+			}
+			const stats = sqliteUsageStats(dir);
+			assert.equal(stats.maxSequence, 192, JSON.stringify(stats));
+			if (limit === undefined) assert.equal(stats.count, 192, JSON.stringify(stats));
+			else assert.ok(stats.bytes <= 4000 && stats.count > 0, JSON.stringify(stats));
+			fs.rmSync(dir, { recursive: true, force: true });
+		});
+	}
+});
 
 let failed = 0;
 for (const { name, run } of tests) {

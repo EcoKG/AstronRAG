@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { readEnv } from "./env.js";
+import { readEnv, usageLogMaxBytes } from "./env.js";
 import type { MemoryStore as Storage } from "./stores/memory-store.js";
 
 /**
@@ -26,11 +26,8 @@ import type { MemoryStore as Storage } from "./stores/memory-store.js";
 
 const DISABLED = readEnv("ASTRONRAG_USAGE_LOG", "BIGBRAIN_USAGE_LOG") === "0";
 const LOG_QUERIES = /^(1|true|yes)$/i.test(readEnv("ASTRONRAG_LOG_QUERIES", "BIGBRAIN_LOG_QUERIES") ?? "");
-/** 이 크기를 넘으면 .old 로 한 번 굴린다 (무한 증식 방지). 기본 5MB */
-const MAX_BYTES = (() => {
-  const v = Number(readEnv("ASTRONRAG_USAGE_LOG_MAX_BYTES", "BIGBRAIN_USAGE_LOG_MAX_BYTES"));
-  return Number.isFinite(v) && v > 0 ? v : 5 * 1024 * 1024;
-})();
+/** 문자열 대상 파일 로그가 이 크기를 넘으면 .old 로 한 번 굴린다. */
+const MAX_BYTES = usageLogMaxBytes();
 
 /** 프로세스 1개 = 세션 1개(stdio 는 클라이언트가 세션마다 spawn 한다)에 가까운 근사 식별자 */
 const PROCESS_ID = `${process.pid}-${Date.now().toString(36)}`;

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { usageLogMaxBytes } from "../env.js";
 import type { MemoryRecord } from "../types.js";
 import { Vault } from "../vault.js";
 import { assertSafeSlug, type MemoryIdentity, type MemoryStore, type StoreUsageEvent, type StoredEmbedding, type StoreInspection } from "./memory-store.js";
@@ -10,7 +11,6 @@ const META_FILE = "store-meta.json";
 const VECTOR_DIR = ".bbm-index";
 const VECTOR_BIN = "vectors.v1.bin";
 const VECTOR_META = "vectors.v1.meta.json";
-const MAX_USAGE_BYTES = 5 * 1024 * 1024;
 
 type VectorMeta = {
 	version: 1;
@@ -117,11 +117,11 @@ export class FileStore implements MemoryStore {
 		return this.vault.makeSlug(title);
 	}
 
-	/** 사용 이벤트를 파일에 추가하고 요청된 경우 쓰기 오류를 전달한다. */
+	/** 사용 이벤트를 파일에 추가하고 상한 초과 시 .old 로 회전하며, 요청된 경우 쓰기 오류를 전달한다. */
 	appendUsageEvent(event: Omit<StoreUsageEvent, "ts"> & { ts?: string }, options: { timeoutMs?: number; throwOnError?: boolean } = {}): void {
 		const fp = path.join(this.root, USAGE_FILE);
 		try {
-			if (fs.existsSync(fp) && fs.statSync(fp).size > MAX_USAGE_BYTES) fs.renameSync(fp, `${fp}.old`);
+			if (fs.existsSync(fp) && fs.statSync(fp).size > usageLogMaxBytes()) fs.renameSync(fp, `${fp}.old`);
 			fs.appendFileSync(fp, `${JSON.stringify({ ...event, ts: event.ts ?? new Date().toISOString() })}\n`, "utf8");
 		} catch (error) {
 			if (options.throwOnError) throw error;
