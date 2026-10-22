@@ -27,13 +27,41 @@ export const policyCases = [
 await test("test_recommend_owner_policy_cases", () => {
 	for (const { description, role, platform, signals, model, effort, rule } of policyCases) {
 		const result = rec(description, role, platform, signals);
-		assert.deepEqual([result.model, result.effort, result.rule_id, result.policy_version, result.catalog_revision], [model, effort, rule, "2026-10-21.1", "2026-10-21.1"], description);
+		assert.deepEqual([result.model, result.effort, result.rule_id, result.policy_version, result.catalog_revision], [model, effort, rule, "2026-10-22.1", "2026-10-22.1"], description);
 	}
 });
 await test("test_recommend_structured_signals_and_keyword_fallback", () => {
 	assert.equal(rec("일반 구현").effort, "high");
 	assert.equal(rec("한 파일 수정").effort, "medium");
 	assert.equal(rec("작업", "impl", "codex", { size: "small" }).effort, "medium");
+});
+await test("test_recommend_korean_small_keywords_classify_small", () => {
+	for (const description of ["설정 파일 한 줄 수정", "함수 주석 수정", "주석만 고친다", "README 오타 수정", "문서 오탈자 수정", "한 파일만 수정", "fix typo in README"]) {
+		const result = rec(description);
+		assert.deepEqual([result.size, result.rule_id, result.model, result.effort], ["small", "rule:small-confirmed-claude", "claude-sonnet-5-5", "medium"], description);
+		assert.equal(rec(description, "impl", "codex").rule_id, "rule:small-confirmed-codex", description);
+	}
+});
+await test("test_recommend_small_keywords_do_not_downgrade_large_work", () => {
+	for (const description of ["주석 처리 엔진 전체를 새로 구현", "한 줄 요약 기능 신규 구현", "오타 검사기 모듈 재작성", "아키텍처 전면 개편 후 주석 수정", "대형 코드 이전 중 한 줄 수정", "근본 원인 분석 후 오타 수정"]) {
+		const result = rec(description);
+		assert.notEqual(result.size, "small", description);
+		assert.notEqual(result.rule_id, "rule:small-confirmed-claude", description);
+	}
+});
+await test("test_recommend_explicit_size_signal_overrides_keywords", () => {
+	assert.deepEqual([rec("README 오타 수정", "impl", undefined, { size: "large" }).size, rec("README 오타 수정", "impl", undefined, { size: "medium" }).rule_id], ["large", "rule:default-sonnet"]);
+	const explicit = rec("아키텍처 전면 개편 후 주석 수정", "impl", undefined, { size: "small" });
+	assert.deepEqual([explicit.size, explicit.rule_id], ["small", "rule:small-confirmed-claude"]);
+});
+await test("test_recommend_rule_evidence_cites_official_docs", () => {
+	const claude = ["https://platform.claude.com/docs/en/about-claude/models/choosing-a-model", "https://platform.claude.com/docs/en/build-with-claude/effort", "ontology/evidence/owner-policy-2026-10-22.md"].sort();
+	const codex = ["https://developers.openai.com/api/docs/models/gpt-6.1-sol", "https://developers.openai.com/api/docs/guides/reasoning", "ontology/evidence/owner-policy-2026-10-22.md"].sort();
+	for (const { description, role, platform, signals } of policyCases) {
+		const result = rec(description, role, platform, signals);
+		assert.deepEqual(result.evidence, result.model.startsWith("gpt-") ? codex : claude, description);
+	}
+	assert.ok(!ontology().rules.some((rule) => rule.evidence.includes("evidence:codex-catalog")));
 });
 await test("test_recommend_small_existing_and_new_large_boundaries", () => {
 	for (const novelty of /** @type {const} */ ([undefined, "existing"])) assert.equal(rec("작업", "impl", "codex", { size: "small", novelty }).effort, "medium");
@@ -99,6 +127,23 @@ await test("test_ontology_validates_policy_catalog_invariants", () => {
 		(data) => data.rules[0].effort = "unknown",
 	]) { const data = ontology(); mutate(data); assert.throws(() => ontologySchema.parse(data)); }
 });
+await test("test_ontology_rejects_observed_only_effort_and_mixed_price_tiers", () => {
+	const codexRule = (data) => data.rules.find((rule) => rule["@id"] === "rule:codex-high-roles");
+	const model = (data, id) => data.models.find((item) => item.id === id);
+	for (const mutate of [
+		(data) => codexRule(data).effort = "ultra",
+		(data) => codexRule(data).effort = "none",
+		(data) => model(data, "gpt-6.1-sol").supportedEfforts.push("minimal"),
+		(data) => model(data, "gpt-6.1-sol").observed.evidence = "evidence:unknown",
+		(data) => model(data, "gpt-6.1-sol").observed.supportedEfforts.push("persistent"),
+		(data) => model(data, "gpt-6.1-sol").observed.confidence = 1.5,
+		(data) => model(data, "gpt-6.1-sol").pricing[0].cacheWrite5m = 1,
+		(data) => delete model(data, "gpt-6.1-sol").pricing[0].cacheWrite12h,
+		(data) => delete model(data, "claude-sonnet-5-5").defaultEffort,
+		(data) => delete model(data, "claude-sonnet-5-5").features,
+	]) { const data = ontology(); mutate(data); assert.throws(() => ontologySchema.parse(data)); }
+	assert.doesNotThrow(() => ontologySchema.parse(ontology()));
+});
 
 await server(async ({ call, ontologyPath, env }) => {
 	const recommend = (args) => call("recommend", { description: "ordinary", role: "impl", ...args });
@@ -134,7 +179,8 @@ await server(async ({ call, ontologyPath, env }) => {
 			const model = codex ? "gpt-6.1-sol" : high ? "claude-opus-5-5" : "claude-sonnet-5-5";
 			const effort = codex ? snapshot.output.effort : high || snapshot.role === "impl" ? "high" : "medium";
 			const reasons = { "rule:codex-high-risk": "High-risk Codex work uses high effort.", "rule:codex-high-roles": "Codex implementation, planning and review use high effort.", "rule:codex-medium-roles": "Routine Codex research, shipping and coordination use medium effort.", "rule:high-risk-opus": "Security and high-risk work use Opus high.", "rule:default-sonnet": "General implementation, documentation and tests use Sonnet high.", "rule:simple-work-sonnet": "Shipping and simple queries use Sonnet medium." };
-			const expected = { ...snapshot.output, model, effort, reasons: [reasons[rule]], appliedConstraints: [], evidence: ["ontology/evidence/owner-policy-2026-10-21.md"], candidates: [{ model, effort }], policy_version: "2026-10-21.1", catalog_revision: "2026-10-21.1", rule_id: rule };
+			const evidence = codex ? ["https://developers.openai.com/api/docs/guides/reasoning", "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "ontology/evidence/owner-policy-2026-10-22.md"] : ["https://platform.claude.com/docs/en/about-claude/models/choosing-a-model", "https://platform.claude.com/docs/en/build-with-claude/effort", "ontology/evidence/owner-policy-2026-10-22.md"];
+			const expected = { ...snapshot.output, model, effort, reasons: [reasons[rule]], appliedConstraints: [], evidence, candidates: [{ model, effort }], policy_version: "2026-10-22.1", catalog_revision: "2026-10-22.1", rule_id: rule };
 			assert.deepEqual(payload(await recommend({ description: snapshot.description, role: snapshot.role, ...(codex ? { platform: "codex" } : {}) })), expected, snapshot.name);
 		}
 	});

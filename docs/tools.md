@@ -26,7 +26,7 @@
 
 - 필수 입력: `description`은 앞뒤 공백 제거 후 1~4000자, `role`은 research/plan/impl/review/ship/ops/coordinator 중 하나입니다.
 - 선택 입력: `platform`은 claude/codex, `size`는 small/medium/large, `risk`는 normal/high, `novelty`는 new/existing입니다. `cross_review_of`는 검토 대상 모델의 등록된 ID 또는 유일한 별칭이며 앞뒤 공백 제거 후 1~100자입니다. ID·별칭은 대소문자를 구분하지 않으며 알 수 없거나 모호하면 오류입니다.
-- `size`·`novelty`를 생략하면 설명의 키워드로 분류하며 해당 키워드가 없으면 각각 medium·existing입니다. `risk`가 high이거나 보안 키워드가 있으면 위험도는 high입니다. `risk: normal`로 보안 키워드의 판정을 낮추지는 않습니다. 플랫폼 필터와 정책 우선순위 때문에 다른 계열의 교차 검토가 불가능하면 `reasons`에 사유를 돌려줍니다.
+- `size`·`novelty`를 생략하면 설명의 키워드로 분류하며 해당 키워드가 없으면 각각 medium·existing입니다. 작은 작업 키워드(예: 한 줄 수정, 주석 수정, 오타 수정, 한 파일 수정)는 부분 문자열로 비교하며, 어려운 작업 키워드(예: 아키텍처, 대형 코드)가 함께 있으면 small로 보지 않습니다. 명시한 `size`가 키워드 분류보다 우선합니다. `risk`가 high이거나 보안 키워드가 있으면 위험도는 high입니다. `risk: normal`로 보안 키워드의 판정을 낮추지는 않습니다. 플랫폼 필터와 정책 우선순위 때문에 다른 계열의 교차 검토가 불가능하면 `reasons`에 사유를 돌려줍니다.
 - 출력: `policy_version`, `catalog_revision`, `rule_id`, `model`, `effort`, `role`, 적용된 `size`·`novelty`, `classification`(taskType·difficulty·risk), `reasons`, `appliedConstraints`, `evidence`, `candidates`, `ruleConfidence`입니다. 같은 결과를 JSON 텍스트와 `structuredContent`로 반환합니다.
 - 피드백에는 추천 응답의 버전·규칙·모델·effort·역할과 적용된 `size`·`novelty`, `classification.risk`를 사용합니다. 교차 검토를 지정했다면 같은 `cross_review_of`도 보냅니다. 온톨로지 읽기·스키마 검증 실패, 유효하지 않은 교차 검토 식별자, 허용된 추천 규칙이 없는 경우는 `isError` 응답입니다.
 
@@ -36,11 +36,13 @@
 
 입력은 없습니다. 출력은 `catalog_revision`과 `models` 배열이며 JSON 텍스트와 `structuredContent`로 같은 결과를 반환합니다.
 
-각 모델의 필드는 `id`, `aliases`, `platform`(claude/codex), `contextTokens`, `maxOutputTokens`, `supportedEfforts`, `pricing`, `sourceUrls`, `evidence`, `checkedAt`, `excluded`, `recommendable`입니다. `pricing`은 가격 tier 배열이며 `promptTokens`는 토큰 구간을 나타내고, `input`·`cacheWrite5m`·`cacheWrite1h`·`cacheRead`·`output`의 단위는 **USD/100만 토큰**입니다. 미확인 최대 출력·가격·확인일은 `null`입니다.
+각 모델의 필드는 `id`, `aliases`, `platform`(claude/codex), `contextTokens`, `maxOutputTokens`, `supportedEfforts`, `pricing`, `sourceUrls`, `evidence`, `checkedAt`, `excluded`, `recommendable`, `observed`입니다. 값은 모델별 `sourceUrls`의 공식 문서(Claude는 platform.claude.com, Codex 모델은 developers.openai.com)에서 확인한 것만 담습니다. `supportedEfforts`는 공식 단계이며 OpenAI 모델에는 `none`이 있을 수 있습니다. `pricing`은 가격 tier 배열이며 `promptTokens`는 tier가 적용되는 프롬프트 토큰 상한(`null`은 상한 없음)입니다. 캐시 쓰기 가격은 Claude 모델이 `cacheWrite5m`·`cacheWrite1h`, OpenAI 모델이 `cacheWrite30m`·`cacheWrite12h`이고, `input`·캐시 쓰기·`cacheRead`·`output`의 단위는 **USD/100만 토큰**입니다. 미확인 최대 출력·가격·확인일은 `null`입니다.
+
+`observed`는 공식 문서로 확인되지 않은 Codex CLI 관측값(`contextTokens`·`defaultEffort`·`supportedEfforts`·`features`)과 그 근거 문서(`evidence`)·신뢰도(`confidence`)이며, 관측 기록이 없는 모델은 `null`입니다. 추천 규칙의 effort는 공식 `supportedEfforts` 안에서만 고르므로 관측값에만 있는 단계(예: `ultra`)는 추천에 쓰이지 않습니다.
 
 제외된 모델도 목록에 남으며 `excluded`가 true이면 `recommendable`은 항상 false입니다. 온톨로지 읽기·스키마 검증 실패는 `isError` 응답입니다.
 
-근거: `src/index.ts`의 `server.registerTool`의 `model_catalog` 등록, `src/ontology.ts`의 `modelCatalog`·`modelCatalogSchema`·`priceTier`·`isRecommendable`.
+근거: `src/index.ts`의 `server.registerTool`의 `model_catalog` 등록, `src/ontology.ts`의 `modelCatalog`·`modelCatalogSchema`·`priceTier`·`observationNode`·`isRecommendable`.
 
 ## record_recommendation_feedback
 
