@@ -6,7 +6,7 @@ import * as recommender from "../dist/recommender.js";
 import { SqliteStore } from "../dist/stores/sqlite-store.js";
 
 /** @param {Record<string, unknown>} [overrides] @returns {import('../dist/stores/memory-store.js').RecommendationFeedback} */
-const event = (overrides = {}) => ({ event_id: crypto.randomUUID(), policy_version: "2026-10-21.1", catalog_revision: "2026-10-21.1", rule_id: "rule:default-sonnet", model: "claude-sonnet-5-5", effort: "high", role: "impl", risk: "normal", input_tokens: 0, output_tokens: 0, cost_usd: null, duration_ms: 0, reverts: 0, verdict: "pass", ...overrides });
+const event = (overrides = {}) => ({ event_id: crypto.randomUUID(), policy_version: "2026-10-22.1", catalog_revision: "2026-10-22.1", rule_id: "rule:default-sonnet", model: "claude-sonnet-5-5", effort: "high", role: "impl", risk: "normal", input_tokens: 0, output_tokens: 0, cost_usd: null, duration_ms: 0, reverts: 0, verdict: "pass", ...overrides });
 await server(async ({ call, env }) => {
 	const record = (args) => call("record_recommendation_feedback", args);
 	await test("test_feedback_rejects_free_text_unknown_fields_and_invalid_ids", async () => {
@@ -126,15 +126,15 @@ try {
 	await test("test_rule_confidence_isolates_versions_rules_and_inconclusive_results", () => {
 		store = new SqliteStore(vault, database);
 		for (const value of [event(), event({ verdict: "inconclusive" }), event({ policy_version: "other" }), event({ catalog_revision: "other" }), event({ rule_id: "rule:other" })]) store.recordRecommendationFeedback(value);
-		assert.deepEqual(store.recommendationFeedbackStats("2026-10-21.1", "2026-10-21.1")["rule:default-sonnet"], { samples: 1, successes: 1 });
+		assert.deepEqual(store.recommendationFeedbackStats("2026-10-22.1", "2026-10-22.1")["rule:default-sonnet"], { samples: 1, successes: 1 });
 		store.close();
 	});
 	await test("test_feedback_changes_confidence_after_restart_without_overriding_policy", () => {
 		store = new SqliteStore(vault, database);
 		for (let i = 0; i < 20; i++) store.recordRecommendationFeedback(event({ rule_id: "rule:high-risk-opus", model: "claude-opus-5-5", verdict: "fail" }));
-		const before = store.recommendationFeedbackStats("2026-10-21.1", "2026-10-21.1"); store.close();
+		const before = store.recommendationFeedbackStats("2026-10-22.1", "2026-10-22.1"); store.close();
 		store = new SqliteStore(vault, database);
-		const after = store.recommendationFeedbackStats("2026-10-21.1", "2026-10-21.1");
+		const after = store.recommendationFeedbackStats("2026-10-22.1", "2026-10-22.1");
 		assert.deepEqual(after, before);
 		const result = recommender.recommendModel(ontology(), "보안 검토", "review", undefined, {}, after);
 		assert.equal(result.model, "claude-opus-5-5"); assert.equal(result.ruleConfidence, 0.1);

@@ -81,7 +81,8 @@ export function recommendModel(ontology: Ontology, description: string, role: Ro
 	const includes = (keywords: string[] = []) => keywords.some((keyword) => text.includes(keyword.toLowerCase()));
 	const source = signals.cross_review_of ? resolveModel(ontology, signals.cross_review_of) : undefined;
 	const sourcePlatform = source ? source.platforms.includes("platform:codex") ? "codex" : "claude" : "none";
-	const size = signals.size ?? (includes(ontology.classification?.smallKeywords) ? "small" : "medium");
+	// 작은 작업 키워드는 부분 문자열 일치라 어려운 작업 키워드가 함께 있으면 small 로 보지 않는다.
+	const size = signals.size ?? (includes(ontology.classification?.smallKeywords) && !includes(ontology.classification?.difficultKeywords) ? "small" : "medium");
 	const novelty = signals.novelty ?? (includes(ontology.classification?.newKeywords) ? "new" : "existing");
 	const context: ConditionContext = {
 		description, role, classification, size, novelty,

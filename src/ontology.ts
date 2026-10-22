@@ -17,13 +17,36 @@ const sourceNode = z.object({
 	checkedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 	fields: z.array(z.string().min(1)).min(1),
 }).strict();
-const priceTier = z.object({
-	promptTokens: z.number().int().positive().nullable(),
-	input: z.number().nonnegative(),
-	cacheWrite5m: z.number().nonnegative(),
-	cacheWrite1h: z.number().nonnegative(),
-	cacheRead: z.number().nonnegative(),
-	output: z.number().nonnegative(),
+/** 가격 tier는 Claude 캐시 쓰기(5분·1시간) 또는 OpenAI 캐시 쓰기(30분·12시간) 중 한 형식만 담는다. */
+const priceTier = z.union([
+	z.object({
+		promptTokens: z.number().int().positive().nullable(),
+		input: z.number().nonnegative(),
+		cacheWrite5m: z.number().nonnegative(),
+		cacheWrite1h: z.number().nonnegative(),
+		cacheRead: z.number().nonnegative(),
+		output: z.number().nonnegative(),
+	}).strict(),
+	z.object({
+		promptTokens: z.number().int().positive().nullable(),
+		input: z.number().nonnegative(),
+		cacheWrite30m: z.number().nonnegative(),
+		cacheWrite12h: z.number().nonnegative(),
+		cacheRead: z.number().nonnegative(),
+		output: z.number().nonnegative(),
+	}).strict(),
+]);
+/** 규칙 effort는 피드백 열거형과 같고, 모델 effort는 OpenAI 공식 단계 none 을 더한다. */
+const ruleEffort = z.enum(["low", "medium", "high", "xhigh", "max", "ultra"]);
+const modelEffort = z.enum(["none", ...ruleEffort.options]);
+/** 공식 문서로 확인되지 않은 CLI 관측값을 근거·낮은 신뢰도와 함께 담는다. */
+const observationNode = z.object({
+	evidence: id,
+	confidence: z.number().min(0).max(1),
+	contextTokens: z.number().int().positive().optional(),
+	defaultEffort: modelEffort.optional(),
+	supportedEfforts: z.array(modelEffort).min(1).optional(),
+	features: z.array(z.string().min(1)).min(1).optional(),
 }).strict();
 const modelNode = z.object({
 	"@id": id,
@@ -36,15 +59,16 @@ const modelNode = z.object({
 	checkedAt: z.string().date().optional(),
 	contextTokens: z.number().int().positive(),
 	maxOutputTokens: z.number().int().positive().optional(),
-	defaultEffort: z.enum(["low", "medium", "high", "xhigh", "max", "ultra"]),
-	supportedEfforts: z.array(z.enum(["low", "medium", "high", "xhigh", "max", "ultra"])).min(1),
-	features: z.array(z.string().min(1)).min(1),
+	defaultEffort: modelEffort.optional(),
+	supportedEfforts: z.array(modelEffort).min(1),
+	features: z.array(z.string().min(1)).min(1).optional(),
 	platforms: z.array(id).min(1),
 	pricing: z.array(priceTier).min(1).optional(),
 	sources: z.array(sourceNode).min(1).optional(),
+	observed: observationNode.optional(),
 }).strict().superRefine((model, context) => {
 	const codexOnly = model.platforms.length === 1 && model.platforms[0] === "platform:codex";
-	if (!codexOnly) for (const field of ["pricing", "maxOutputTokens", "sources"] as const) {
+	if (!codexOnly) for (const field of ["pricing", "maxOutputTokens", "sources", "defaultEffort", "features"] as const) {
 		if (model[field] === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} is required for non-Codex models` });
 	}
 });
@@ -84,7 +108,7 @@ const ruleNode = z.object({
 	priority: z.number().int(),
 	conditions: z.array(z.object({ type: z.enum(["role", "keyword", "difficulty", "risk", "size", "novelty", "cross_family", "analysis"]), values: z.array(z.string().min(1)).min(1) }).strict()),
 	model: z.string().min(1),
-	effort: z.enum(["low", "medium", "high", "xhigh", "max", "ultra"]),
+	effort: ruleEffort,
 	reason: z.string().min(1),
 	evidence: z.array(id).min(1),
 	confidence: z.number().min(0).max(1),
@@ -170,9 +194,9 @@ function validateReferences(ontology: Ontology): Ontology {
 	for (const model of ontology.models) {
 		if (model["@id"] !== `model:${model.id}`) throw new Error(`model @id does not match id: ${model.id}`);
 		for (const platform of model.platforms) if (!platformIds.has(platform)) throw new Error(`unregistered platform: ${platform}`);
-		if (!model.supportedEfforts.includes(model.defaultEffort)) throw new Error(`unsupported default effort for ${model.id}`);
-		for (const effort of model.supportedEfforts) if (!effortIds.has(`effort:${effort}`)) throw new Error(`unregistered effort: ${effort}`);
-		for (const ref of model.evidence ?? []) if (!evidenceIds.has(ref)) throw new Error(`unresolved model evidence: ${ref}`);
+		if (model.defaultEffort && !model.supportedEfforts.includes(model.defaultEffort)) throw new Error(`unsupported default effort for ${model.id}`);
+		for (const effort of [...model.supportedEfforts, ...model.observed?.supportedEfforts ?? []]) if (!effortIds.has(`effort:${effort}`)) throw new Error(`unregistered effort: ${effort}`);
+		for (const ref of [...model.evidence ?? [], ...model.observed ? [model.observed.evidence] : []]) if (!evidenceIds.has(ref)) throw new Error(`unresolved model evidence: ${ref}`);
 	}
 	for (const constraint of ontology.constraints) {
 		if ("evidence" in constraint) for (const ref of constraint.evidence ?? []) if (!evidenceIds.has(ref)) throw new Error(`unresolved constraint evidence: ${ref}`);
@@ -221,9 +245,10 @@ export const modelCatalogSchema = z.object({
 	models: z.array(z.object({
 		id: z.string().min(1), aliases: z.array(z.string().min(1)), platform: z.enum(["claude", "codex"]),
 		contextTokens: z.number().int().positive().nullable(), maxOutputTokens: z.number().int().positive().nullable(),
-		supportedEfforts: z.array(z.enum(["low", "medium", "high", "xhigh", "max", "ultra"])).min(1),
+		supportedEfforts: z.array(modelEffort).min(1),
 		pricing: z.array(priceTier).min(1).nullable(), sourceUrls: z.array(z.string().url()), evidence: z.array(z.string().min(1)),
 		checkedAt: z.string().date().nullable(), excluded: z.boolean(), recommendable: z.boolean(),
+		observed: observationNode.extend({ evidence: z.string().min(1) }).nullable(),
 	}).strict()),
 }).strict();
 
@@ -239,7 +264,7 @@ export function isRecommendable(ontology: Ontology, modelId: string, ruleId?: st
 	return true;
 }
 
-/** 같은 온톨로지의 모델 사양과 추천 가능 여부를 반환한다. */
+/** 같은 온톨로지의 모델 사양과 추천 가능 여부, CLI 관측값을 반환한다. */
 export function modelCatalog(ontology: Ontology): z.infer<typeof modelCatalogSchema> {
 	const links = new Map(ontology.evidence.map((item) => [item["@id"], item.link]));
 	return modelCatalogSchema.parse({
@@ -252,6 +277,7 @@ export function modelCatalog(ontology: Ontology): z.infer<typeof modelCatalogSch
 			checkedAt: model.checkedAt ?? model.sources?.map((source) => source.checkedAt).sort()[0] ?? null,
 			excluded: ontology.constraints.some((constraint) => constraint.kind === "exclude" && constraint.models.includes(model.id)),
 			recommendable: ontology.rules.some((rule) => rule.model === model.id && isRecommendable(ontology, model.id, rule["@id"])),
+			observed: model.observed ? { ...model.observed, evidence: links.get(model.observed.evidence) ?? model.observed.evidence } : null,
 		})),
 	});
 }
