@@ -675,6 +675,110 @@ test("test_sqlite_usage_trim_always_keeps_newest_row_when_single_row_exceeds_lim
 	}
 }));
 
+const sizedUsageEvent = (n, size) => ({ tool: "usage_cap", ok: true, n, reason: "x".repeat(size) });
+
+/** 시드 고정 의사난수(0 이상 1 미만)를 돌려주는 함수를 만든다. */
+function seededRandom(seed) {
+	let state = seed >>> 0;
+	return () => {
+		state = (state + 0x6d2b79f5) >>> 0;
+		let t = Math.imul(state ^ (state >>> 15), 1 | state);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+}
+
+/** 행 크기 목록대로 삽입하며 정리 간격(64건) 직후마다 보존 바이트를 모아 돌려준다. */
+function fillUsageSizes(limit, sizes) {
+	return withUsageMax(String(limit), () => {
+		const dir = temp("usage-approx");
+		const store = new stores.SqliteStore(dir);
+		try {
+			const snapshots = Array();
+			sizes.forEach((size, i) => {
+				store.appendUsageEvent(sizedUsageEvent(i, size));
+				if ((i + 1) % 64 === 0) snapshots.push({ inserted: i + 1, ...sqliteUsageStats(dir) });
+			});
+			return snapshots;
+		} finally {
+			store.close();
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+}
+
+test("test_sqlite_usage_trim_deletes_by_pk_range_without_full_table_scan", () => withUsageMax("2000", () => {
+	const dir = temp("usage-trim-sql");
+	const store = new stores.SqliteStore(dir);
+	const issued = Array();
+	const original = DatabaseSync.prototype.prepare;
+	DatabaseSync.prototype.prepare = function (sql) {
+		issued.push(String(sql));
+		return original.call(this, sql);
+	};
+	try {
+		for (let n = 0; n < 128; n++) store.appendUsageEvent(usageEvent(n));
+	} finally {
+		DatabaseSync.prototype.prepare = original;
+		store.close();
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+	const trims = issued.filter((sql) => /DELETE\s+FROM\s+usage_events/i.test(sql));
+	assert.ok(trims.length > 0, "trim DELETE must be issued");
+	for (const sql of trims) assert.match(sql, /^\s*DELETE\s+FROM\s+usage_events\s+WHERE\s+sequence\s*<=\s*\?\s*$/i, sql);
+	assert.equal(issued.filter((sql) => /OVER\s*\(|SUM\s*\(/i.test(sql) && /usage_events/i.test(sql)).length, 0, "no whole-table window sum");
+}));
+
+test("test_sqlite_usage_trim_uniform_rows_error_within_two_rows", async () => {
+	const limit = 20000;
+	const snapshots = await fillUsageSizes(limit, Array.from({ length: 640 }, () => 100));
+	const rowBytes = Math.round(snapshots.at(-1).bytes / snapshots.at(-1).count);
+	const steady = snapshots.filter((s) => s.inserted > 256);
+	assert.ok(steady.length > 0);
+	for (const s of steady) {
+		assert.ok(s.bytes <= limit, `uniform overshoot ${JSON.stringify(s)}`);
+		assert.ok(s.bytes >= limit - 2 * rowBytes, `uniform undershoot ${JSON.stringify(s)} row=${rowBytes}`);
+	}
+});
+
+test("test_sqlite_usage_trim_mixed_row_sizes_error_within_bound", async () => {
+	const limit = 200000;
+	for (const seed of [1, 2, 3]) {
+		const random = seededRandom(seed);
+		const sizes = Array.from({ length: 1536 }, () => (random() < 0.3 ? 2000 : 100));
+		const snapshots = await fillUsageSizes(limit, sizes);
+		for (const s of snapshots.filter((x) => x.inserted > 768)) {
+			assert.ok(s.bytes <= limit * 1.1, `seed ${seed} overshoot ${JSON.stringify(s)}`);
+			assert.ok(s.bytes >= limit * 0.7, `seed ${seed} undershoot ${JSON.stringify(s)}`);
+		}
+	}
+});
+
+test("test_sqlite_usage_trim_large_to_small_phase_shift_does_not_exceed_limit", async () => {
+	const limit = 200000;
+	const sizes = [...Array.from({ length: 512 }, () => 2000), ...Array.from({ length: 1536 }, () => 100)];
+	const snapshots = await fillUsageSizes(limit, sizes);
+	for (const s of snapshots.filter((x) => x.inserted > 256)) assert.ok(s.bytes <= limit * 1.05, `phase shift overshoot ${JSON.stringify(s)}`);
+	assert.ok(snapshots.at(-1).bytes >= limit * 0.7, `settles near limit ${JSON.stringify(snapshots.at(-1))}`);
+});
+
+test("test_sqlite_usage_trim_small_to_large_phase_shift_overshoot_is_transient", async () => {
+	const limit = 200000;
+	const sizes = [...Array.from({ length: 1536 }, () => 100), ...Array.from({ length: 512 }, () => 2000)];
+	const snapshots = await fillUsageSizes(limit, sizes);
+	for (const s of snapshots.filter((x) => x.inserted > 256)) assert.ok(s.bytes <= limit * 1.5, `phase shift overshoot ${JSON.stringify(s)}`);
+	assert.ok(snapshots.at(-1).bytes <= limit * 1.1 && snapshots.at(-1).bytes >= limit * 0.7, `settles near limit ${JSON.stringify(snapshots.at(-1))}`);
+});
+
+test("test_sqlite_usage_trim_mixed_rows_below_limit_deletes_nothing", async () => {
+	const limit = 800000;
+	const random = seededRandom(9);
+	const sizes = Array.from({ length: 640 }, () => (random() < 0.3 ? 2000 : 100));
+	const snapshots = await fillUsageSizes(limit, sizes);
+	assert.ok(snapshots.at(-1).bytes < limit * 0.7, `fixture must stay well below limit ${JSON.stringify(snapshots.at(-1))}`);
+	assert.equal(snapshots.at(-1).count, 640, JSON.stringify(snapshots.at(-1)));
+});
+
 test("test_usage_below_limit_deletes_nothing_in_both_backends", () => withUsageMax("1000000", () => eachStore("usage-below", (store, dir, kind) => {
 	for (let n = 0; n < 160; n++) store.appendUsageEvent(usageEvent(n));
 	assert.equal(store.readUsageEvents().length, 160, kind);
@@ -733,7 +837,7 @@ test("test_sqlite_usage_trim_concurrent_writers_no_busy_no_lost_inserts", async 
 			const stats = sqliteUsageStats(dir);
 			assert.equal(stats.maxSequence, 192, JSON.stringify(stats));
 			if (limit === undefined) assert.equal(stats.count, 192, JSON.stringify(stats));
-			else assert.ok(stats.bytes <= 4000 && stats.count > 0, JSON.stringify(stats));
+			else assert.ok(stats.bytes <= 4000 * 1.1 && stats.count > 0, JSON.stringify(stats));
 			fs.rmSync(dir, { recursive: true, force: true });
 		});
 	}

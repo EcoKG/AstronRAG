@@ -162,7 +162,7 @@ npm run usage:report -- --json
 npm run usage:report -- --since 2026-10-01
 ```
 
-파일 저장소는 `.bbm-usage.jsonl` append-only 로그를 쓰며 SQLite 저장소는 `usage_events` 테이블에 사용 이벤트를 기록합니다. 훅도 선택한 저장소에 위임합니다. 두 저장소 모두 `ASTRONRAG_USAGE_LOG_MAX_BYTES`(기본 5MiB)를 적용해 파일은 `.old`로 회전하고 SQLite는 오래된 행을 삭제하므로 로그가 무한히 커지지 않습니다([설정](configuration.md)). 로그는 볼트와 함께 옮깁니다. 근거: `src/stores/file-store.ts`의 `USAGE_FILE`·`FileStore.appendUsageEvent`, `src/stores/sqlite-store.ts`의 `SqliteStore.appendUsageEvent`·`insertUsageRow`, `src/env.ts`의 `usageLogMaxBytes`, `scripts/session-guard.mjs`의 `logUsage`.
+파일 저장소는 `.bbm-usage.jsonl` append-only 로그를 쓰며 SQLite 저장소는 `usage_events` 테이블에 사용 이벤트를 기록합니다. 훅도 선택한 저장소에 위임합니다. 두 저장소 모두 `ASTRONRAG_USAGE_LOG_MAX_BYTES`(기본 5MiB)를 적용해 파일은 `.old`로 회전하고 SQLite는 평균 행 크기로 허용 행 수를 추정해 오래된 행을 삭제하는 근사 상한이므로 정확한 바이트 한도는 아니지만 로그가 무한히 커지지 않습니다([설정](configuration.md)). 로그는 볼트와 함께 옮깁니다. 근거: `src/stores/file-store.ts`의 `USAGE_FILE`·`FileStore.appendUsageEvent`, `src/stores/sqlite-store.ts`의 `SqliteStore.appendUsageEvent`·`insertUsageRow`, `src/env.ts`의 `usageLogMaxBytes`, `scripts/session-guard.mjs`의 `logUsage`.
 
 훅은 세션 시작·종료·부호화 큐 이벤트와 자동 회상의 `tool: auto_recall` 이벤트를 기록합니다. `--prompt`의 검색은 읽기 경로이며, 자동 회상 검색이 완료되면(주입 0건 포함) 유효한 `session_id`에 대해 마커 추적 여부와 관계없이 사용 이벤트를 기록합니다(`astron:<id>` 포함). 빈 `session_id`는 기록하지 않습니다. 자동 회상 이벤트에는 `sessionId`·`injected` 건수·`topScore` 같은 식별자·수치와 이벤트 구분·시각만 남기며 질의 원문·기억 내용은 기록하지 않습니다. 근거: `scripts/session-guard.mjs`의 `selectedStore` 초기화·`autoRecall`·`logUsage`, `scripts/session-guard.mjs`의 `mode`의 prompt·start·stop 분기, `src/stores/sqlite-store.ts`의 `SqliteStore.appendUsageEvent`, `src/stores/file-store.ts`의 `FileStore.appendUsageEvent`.
 

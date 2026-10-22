@@ -10,8 +10,16 @@ import { assertSafeSlug, type RecommendationFeedback, type RuleStatistics, type 
 const SCHEMA_VERSION = "1";
 const BUSY_TIMEOUT_MS = 5000;
 const JOURNAL_MODE = "DELETE";
-/** 상한 정리의 합산 비용을 줄이려고 이 건수마다만 페이로드 바이트 합을 계산한다. */
+/** 상한 정리의 잠금 점유를 줄이려고 이 건수마다만 표본 조회와 삭제를 실행한다. */
 const USAGE_TRIM_INTERVAL = 64;
+/** 평균 행 크기를 추정할 때 최신 쪽과 가장 오래된 쪽에서 각각 읽는 행 수. */
+const USAGE_SAMPLE_ROWS = 256;
+/** 최신·가장 오래된 표본의 평균 페이로드 바이트 중 큰 값(불확실하면 더 지우는 쪽)을 구한다. */
+const USAGE_ROW_BYTES_SAMPLE = `SELECT MAX(avg) AS avg FROM (
+	SELECT AVG(n) AS avg FROM (SELECT LENGTH(CAST(payload AS BLOB)) AS n FROM usage_events ORDER BY sequence DESC LIMIT ${USAGE_SAMPLE_ROWS})
+	UNION ALL
+	SELECT AVG(n) FROM (SELECT LENGTH(CAST(payload AS BLOB)) AS n FROM usage_events ORDER BY sequence ASC LIMIT ${USAGE_SAMPLE_ROWS})
+)`;
 const RESERVED_BASENAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 
 type MemoryRow = {
@@ -71,18 +79,17 @@ const stableRecord = (record: MemoryRecord, archived: boolean): string => JSON.s
 
 const recordHash = (record: MemoryRecord, archived: boolean): string => crypto.createHash("sha256").update(stableRecord(record, archived)).digest("hex");
 
-/** usage_events 에 한 행을 추가하고, 행 번호가 간격의 배수일 때 페이로드 바이트 합이 상한을 넘은 오래된 행을 같은 트랜잭션에서 지운다(최신 행 보존). */
+/** usage_events 에 한 행을 추가하고, 행 번호가 간격의 배수일 때 양 끝 표본의 평균 행 크기로 허용 행 수를 추정해 넘치는 오래된 행을 PK 범위로 지운다(근사 상한, 최신 행 보존). */
 function insertUsageRow(db: DatabaseSync, ts: string, payload: string): void {
 	const insert = db.prepare("INSERT INTO usage_events(ts, payload) VALUES(?, ?)");
 	const nested = db.isTransaction;
 	if (!nested) db.exec("BEGIN IMMEDIATE");
 	try {
-		const { lastInsertRowid } = insert.run(ts, payload);
-		if (Number(lastInsertRowid) % USAGE_TRIM_INTERVAL === 0) {
-			db.prepare(`DELETE FROM usage_events WHERE sequence IN (
-				SELECT sequence FROM (SELECT sequence, SUM(LENGTH(CAST(payload AS BLOB))) OVER (ORDER BY sequence DESC) AS kept FROM usage_events)
-				WHERE kept > ? AND sequence < (SELECT MAX(sequence) FROM usage_events)
-			)`).run(usageLogMaxBytes());
+		const newest = Number(insert.run(ts, payload).lastInsertRowid);
+		if (newest % USAGE_TRIM_INTERVAL === 0) {
+			const { avg } = db.prepare(USAGE_ROW_BYTES_SAMPLE).get() as { avg: number | null };
+			const allowedRows = Math.max(1, Math.floor(usageLogMaxBytes() / Math.max(1, avg ?? 1)));
+			db.prepare("DELETE FROM usage_events WHERE sequence <= ?").run(newest - allowedRows);
 		}
 		if (!nested) db.exec("COMMIT");
 	} catch (error) {

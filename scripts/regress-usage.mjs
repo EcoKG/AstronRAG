@@ -300,7 +300,7 @@ console.log("상한) ASTRONRAG_USAGE_LOG_MAX_BYTES");
 	try {
 		const kept = sqliteStore.readUsageEvents();
 		const bytes = kept.reduce((sum, e) => sum + Buffer.byteLength(JSON.stringify({ ...e, ts: undefined })), 0);
-		check("SQLite 저장소: 상한 초과분이 삭제됨", kept.length > 0 && kept.length < 64 && bytes <= 2000, `${kept.length}건 ${bytes}B`);
+		check("SQLite 저장소: 상한 초과분이 삭제됨(근사 상한 110% 이내)", kept.length > 0 && kept.length < 64 && bytes <= 2000 * 1.1, `${kept.length}건 ${bytes}B`);
 	} finally {
 		sqliteStore.close();
 	}
