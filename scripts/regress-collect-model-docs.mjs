@@ -41,6 +41,34 @@ function verifyCache(directory) {
 	return manifest;
 }
 
+function ontologyVariant({ eol, at = "original", finalEol = true, effortsKey = "efforts", effortsFirst = false }) {
+	const source = fs.readFileSync(path.join(root, "ontology/ontology.yaml"), "utf8").replace(/\r\n/g, "\n").replace(/contextTokens: \d+/, "contextTokens: 42");
+	const blocks = Object.fromEntries(source.replace(/\n$/, "").split(/\n(?=\S)/).map((block) => [block.split(":", 1)[0], block]));
+	const middle = Object.keys(blocks).filter((key) => key !== "models" && key !== "efforts");
+	const order = effortsFirst ? ["efforts", ...middle, "models"] : at === "start" ? ["models", "efforts", ...middle] : at === "end" ? [...middle, "models", "efforts"] : Object.keys(blocks);
+	const text = order.map((key) => blocks[key].replace(/^efforts:/, `${effortsKey}:`)).join("\n") + (finalEol ? "\n" : "");
+	return text.replace(/\n/g, eol);
+}
+
+async function writeVariant(text, name) {
+	const target = path.join(scratch, name);
+	fs.writeFileSync(target, text);
+	const result = await collector.runCollector(["--write", "--ontology", target]);
+	return { result, written: fs.readFileSync(target, "utf8"), target };
+}
+
+function assertSectionRewritten(text, written, eol) {
+	const headEnd = text.indexOf(`models:${eol}`);
+	const tailStart = text.indexOf(`efforts:${eol}`);
+	assert.ok(headEnd >= 0 && tailStart > headEnd);
+	assert.equal(written.slice(0, headEnd), text.slice(0, headEnd));
+	assert.equal(written.slice(written.length - (text.length - tailStart)), text.slice(tailStart));
+	assert.equal(yaml.load(written).models[0].contextTokens === 42, false);
+	assert.ok(written.slice(headEnd).startsWith(`models:${eol}`));
+	if (eol === "\r\n") assert.ok(!/(?<!\r)\n/.test(written) && !/\r(?!\n)/.test(written));
+	else assert.ok(!written.includes("\r"));
+}
+
 async function test(name, body) {
 	try {
 		await body();
@@ -243,9 +271,61 @@ try {
 		assert.deepEqual(yaml.load(fs.readFileSync(target, "utf8")).models.find((model) => model.id === codex.id), codex);
 		assert.equal((await collector.runCollector(["--check", "--ontology", target])).output, "[]\n");
 	});
+
+	await test("test_write_models_section_lf_source", async () => {
+		const text = ontologyVariant({ eol: "\n" });
+		const { written } = await writeVariant(text, "write-lf.yaml");
+		assertSectionRewritten(text, written, "\n");
+	});
+
+	await test("test_write_models_section_crlf_source", async () => {
+		const text = ontologyVariant({ eol: "\r\n" });
+		const { written } = await writeVariant(text, "write-crlf.yaml");
+		assertSectionRewritten(text, written, "\r\n");
+	});
+
+	await test("test_write_models_section_at_file_edges", async () => {
+		for (const eol of ["\n", "\r\n"]) {
+			for (const at of ["start", "end"]) {
+				for (const finalEol of [true, false]) {
+					const text = ontologyVariant({ eol, at, finalEol });
+					assert.equal(text.startsWith(`models:${eol}`), at === "start");
+					const { written } = await writeVariant(text, `write-${at}-${eol.length}-${finalEol}.yaml`);
+					assertSectionRewritten(text, written, eol);
+					assert.equal(written.startsWith(`models:${eol}`), at === "start");
+					assert.equal(written.endsWith(eol), finalEol);
+				}
+			}
+		}
+	});
+
+	await test("test_write_without_efforts_boundary_keeps_error_message", async () => {
+		for (const eol of ["\n", "\r\n"]) {
+			for (const options of [{ effortsKey: "efforts " }, { effortsFirst: true }]) {
+				const text = ontologyVariant({ eol, ...options });
+				const target = path.join(scratch, `write-missing-${eol.length}-${Object.keys(options)[0]}.yaml`);
+				fs.writeFileSync(target, text);
+				await assert.rejects(collector.runCollector(["--write", "--ontology", target]), /^Error: ontology model section is missing$/);
+				assert.equal(fs.readFileSync(target, "utf8"), text);
+				assert.deepEqual(fs.readdirSync(scratch).filter((name) => name.startsWith(`${path.basename(target)}.tmp-`)), []);
+			}
+		}
+	});
+
+	await test("test_write_crlf_source_result_keeps_crlf_without_lf_mixing", async () => {
+		const target = path.join(scratch, "real-crlf.yaml");
+		const original = fs.readFileSync(path.join(root, "ontology/ontology.yaml"), "utf8");
+		assert.ok(original.includes("\r\n"));
+		fs.writeFileSync(target, original.replace(/contextTokens: \d+/, "contextTokens: 42"));
+		await collector.runCollector(["--write", "--ontology", target]);
+		const written = fs.readFileSync(target, "utf8");
+		assert.ok(!/(?<!\r)\n/.test(written));
+		assert.equal(written.split("\r\n").length, written.split("\n").length);
+		assert.deepEqual(await collector.runCollector(["--check", "--ontology", target]), { output: "[]\n", exitCode: 0 });
+	});
 } finally {
 	globalThis.fetch = originalFetch;
 	fs.rmSync(scratch, { recursive: true, force: true });
 }
-console.log(`10 tests, ${failed} failures`);
+console.log(`15 tests,${failed} failures`);
 process.exitCode = failed ? 1 : 0;
